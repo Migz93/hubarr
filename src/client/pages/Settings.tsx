@@ -556,7 +556,6 @@ function JobsTab() {
     if (!editingJob) return;
     setSaving(true);
     try {
-      const preset = JOB_PRESETS[editingJob.id];
       const body = { intervalMinutes: Number(editValue) };
       await apiPatch(`/api/settings/jobs/${editingJob.id}`, body);
       setEditingJob(null);
