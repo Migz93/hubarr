@@ -93,6 +93,12 @@ export interface PlexLibraryItemMatch {
   guids: string[];
 }
 
+const TRUSTED_PLEX_ORIGINS = new Set([
+  "https://community.plex.tv",
+  "https://discover.provider.plex.tv",
+  "https://plex.tv"
+]);
+
 export class PlexIntegration {
   private resolvedMachineIdentifier: string | null = null;
 
@@ -118,11 +124,59 @@ export class PlexIntegration {
     return machineIdentifier;
   }
 
+  private getTrustedServerOrigin() {
+    return new URL(this.settings.serverUrl).origin;
+  }
+
+  private assertTrustedOrigin(origin: string) {
+    if (origin === this.getTrustedServerOrigin()) {
+      return;
+    }
+    if (!TRUSTED_PLEX_ORIGINS.has(origin)) {
+      throw new Error(`Untrusted Plex origin: ${origin}`);
+    }
+  }
+
+  private buildTrustedPlexUrl(
+    input: string,
+    options: {
+      baseUrl?: string;
+      allowAbsolute?: boolean;
+    } = {}
+  ) {
+    const { baseUrl, allowAbsolute = false } = options;
+    const trimmed = input.trim();
+    if (!trimmed) {
+      throw new Error("Plex URL input cannot be empty.");
+    }
+
+    if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
+      if (!allowAbsolute) {
+        throw new Error(`Absolute Plex URLs are not allowed here: ${trimmed}`);
+      }
+      const absoluteUrl = new URL(trimmed);
+      this.assertTrustedOrigin(absoluteUrl.origin);
+      return absoluteUrl;
+    }
+
+    if (trimmed.startsWith("//")) {
+      throw new Error(`Protocol-relative Plex URLs are not allowed: ${trimmed}`);
+    }
+
+    const resolvedBase = new URL(baseUrl ?? `${this.getTrustedServerOrigin()}/`);
+    this.assertTrustedOrigin(resolvedBase.origin);
+
+    const normalizedPath = trimmed.replace(/^\/+/, "");
+    const resolvedUrl = new URL(normalizedPath, `${resolvedBase.origin}/`);
+    if (resolvedUrl.origin !== resolvedBase.origin) {
+      throw new Error(`Plex URL changed origin unexpectedly: ${trimmed}`);
+    }
+
+    return resolvedUrl;
+  }
+
   private async requestServer<T>(pathname: string, init?: RequestInit): Promise<T> {
-    const url = new URL(
-      pathname,
-      this.settings.serverUrl.endsWith("/") ? this.settings.serverUrl : `${this.settings.serverUrl}/`
-    );
+    const url = this.buildTrustedPlexUrl(pathname, { baseUrl: this.settings.serverUrl });
     const response = await fetch(url, {
       ...init,
       headers: {
@@ -159,7 +213,7 @@ export class PlexIntegration {
   }
 
   private async requestCommunity<T>(query: string, variables?: Record<string, unknown>) {
-    const response = await fetch("https://community.plex.tv/api", {
+    const response = await fetch(this.buildTrustedPlexUrl("https://community.plex.tv/api", { allowAbsolute: true }), {
       method: "POST",
       headers: {
         Accept: "application/json",
@@ -287,7 +341,7 @@ export class PlexIntegration {
 
     for (const endpoint of endpoints) {
       try {
-        const url = new URL(endpoint, "https://discover.provider.plex.tv/");
+        const url = this.buildTrustedPlexUrl(endpoint, { baseUrl: "https://discover.provider.plex.tv/" });
         url.searchParams.set("format", "json");
         const response = await fetch(url.toString(), {
           headers: {
@@ -340,7 +394,7 @@ export class PlexIntegration {
 
     for (const endpoint of endpoints) {
       try {
-        const url = new URL(endpoint, "https://discover.provider.plex.tv/");
+        const url = this.buildTrustedPlexUrl(endpoint, { baseUrl: "https://discover.provider.plex.tv/" });
         url.searchParams.set("format", "json");
         const response = await fetch(url.toString(), {
           headers: {
@@ -938,7 +992,7 @@ export class PlexIntegration {
     displayName: string;
     avatarUrl: string | null;
   }> {
-    const response = await fetch("https://plex.tv/users/account.json", {
+    const response = await fetch(this.buildTrustedPlexUrl("https://plex.tv/users/account.json", { allowAbsolute: true }), {
       headers: {
         "User-Agent": PLEX_USER_AGENT,
         "X-Plex-Token": this.settings.token,
@@ -1007,7 +1061,7 @@ export class PlexIntegration {
    * is a cloud endpoint that requires the personal account token.
    */
   async fetchRssUrl(feedType: "watchlist" | "friendsWatchlist", ownerToken: string): Promise<string | null> {
-    const url = new URL("https://discover.provider.plex.tv/rss");
+    const url = this.buildTrustedPlexUrl("https://discover.provider.plex.tv/rss", { allowAbsolute: true });
     url.searchParams.set("X-Plex-Client-Identifier", "hubarr");
     url.searchParams.set("format", "json");
 
@@ -1041,7 +1095,7 @@ export class PlexIntegration {
   async fetchRssFeedItems(
     url: string
   ): Promise<{ ok: true; items: RssFeedItem[] } | { ok: false; authError: boolean; message: string }> {
-    const urlObj = new URL(url);
+    const urlObj = this.buildTrustedPlexUrl(url, { allowAbsolute: true });
     urlObj.searchParams.set("format", "json");
 
     try {

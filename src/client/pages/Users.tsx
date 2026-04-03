@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Edit2, Play, RefreshCw, X } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "../lib/api";
+import { getPlexImageSrc } from "../lib/plexImage";
 import { Field, ToggleField } from "../components/FormControls";
 import type { UserRecord, SettingsResponse, VisibilityConfig } from "../../shared/types";
 
@@ -222,7 +223,7 @@ function UserRow({
 
       {user.avatarUrl ? (
         <img
-          src={`/api/plex/image?path=${encodeURIComponent(user.avatarUrl)}`}
+          src={getPlexImageSrc(user.avatarUrl) ?? undefined}
           alt={user.displayName}
           className={`${compact ? "w-8 h-8" : "w-10 h-10"} rounded-full object-cover`}
         />

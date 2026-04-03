@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Film, Tv, ChevronLeft, ChevronRight, CheckCircle, XCircle } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { apiGet } from "../lib/api";
+import { getPlexImageSrc } from "../lib/plexImage";
 import { WatchlistItemModal } from "../components/WatchlistItemModal";
 import type {
   MediaType,
@@ -223,7 +224,7 @@ function FilterChip({
     >
       {avatarUrl && (
         <img
-          src={`/api/plex/image?path=${encodeURIComponent(avatarUrl)}`}
+          src={getPlexImageSrc(avatarUrl) ?? undefined}
           alt=""
           className="w-5 h-5 rounded-full object-cover"
         />
@@ -247,9 +248,7 @@ function WatchlistPoster({
   selectedUserId: number | null;
   onClick: () => void;
 }) {
-  const posterSrc = item.posterUrl
-    ? `/api/plex/image?path=${encodeURIComponent(item.posterUrl)}`
-    : null;
+  const posterSrc = getPlexImageSrc(item.posterUrl);
   // When filtering by a specific user, show that user's watchlist date.
   // In "All users" mode, show the most recent date across all users.
   const displayAddedAt =

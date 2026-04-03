@@ -10,6 +10,7 @@ import {
   Server
 } from "lucide-react";
 import { apiGet } from "../lib/api";
+import { getPlexImageSrc } from "../lib/plexImage";
 import type { AboutInfo, SessionUser } from "../../shared/types";
 
 const NAV_ITEMS = [
@@ -107,7 +108,7 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: S
             >
               {user.avatarUrl ? (
                 <img
-                  src={`/api/plex/image?path=${encodeURIComponent(user.avatarUrl)}`}
+                  src={getPlexImageSrc(user.avatarUrl) ?? undefined}
                   alt={user.displayName}
                   className="w-8 h-8 rounded-full object-cover flex-shrink-0"
                 />

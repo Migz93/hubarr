@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { RefreshCw, Film, Tv, Users, Library, CheckCircle, XCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { apiGet, apiPost } from "../lib/api";
+import { getPlexImageSrc } from "../lib/plexImage";
 import { formatRelativeTime } from "../lib/utils";
 import { WatchlistItemModal } from "../components/WatchlistItemModal";
 import type { DashboardResponse, RecentlyAddedItem, SyncRun } from "../../shared/types";
@@ -238,9 +239,7 @@ function PosterCard({
   item: RecentlyAddedItem;
   onClick: () => void;
 }) {
-  const posterSrc = item.posterUrl
-    ? `/api/plex/image?path=${encodeURIComponent(item.posterUrl)}`
-    : null;
+  const posterSrc = getPlexImageSrc(item.posterUrl);
 
   const addedDate = new Date(item.addedAt).toLocaleDateString("en-GB");
 

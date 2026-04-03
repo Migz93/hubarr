@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Film, Tv, X, Star, Clock, Tag } from "lucide-react";
 import { formatRelativeTime } from "../lib/utils";
 import { apiGet } from "../lib/api";
+import { getPlexImageSrc } from "../lib/plexImage";
 import type { RichItemMetadata, WatchlistUser } from "../../shared/types";
 
 interface ModalItem {
@@ -39,9 +40,7 @@ export function WatchlistItemModal({
       .finally(() => setEnrichLoading(false));
   }, [item.plexItemId]);
 
-  const posterSrc = item.posterUrl
-    ? `/api/plex/image?path=${encodeURIComponent(item.posterUrl)}`
-    : null;
+  const posterSrc = getPlexImageSrc(item.posterUrl);
 
   return (
     <div
@@ -179,7 +178,7 @@ export function WatchlistItemModal({
                   <div key={user.userId} className="flex items-center gap-2.5">
                     {user.avatarUrl ? (
                       <img
-                        src={`/api/plex/image?path=${encodeURIComponent(user.avatarUrl)}`}
+                        src={getPlexImageSrc(user.avatarUrl) ?? undefined}
                         alt={user.displayName}
                         className="w-6 h-6 rounded-full object-cover flex-shrink-0"
                       />
