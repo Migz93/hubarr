@@ -1,0 +1,122 @@
+import type Database from "better-sqlite3";
+
+interface Migration {
+  version: number;
+  up(db: Database.Database): void;
+}
+
+const migrations: Migration[] = [
+  {
+    version: 1,
+    up(db) {
+      db.exec(`
+        CREATE TABLE settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          plex_user_id TEXT NOT NULL UNIQUE,
+          username TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          display_name_override TEXT,
+          avatar_url TEXT,
+          is_self INTEGER NOT NULL DEFAULT 0,
+          enabled INTEGER NOT NULL DEFAULT 0,
+          movie_library_id TEXT,
+          show_library_id TEXT,
+          visibility_mode TEXT NOT NULL DEFAULT 'shared-home',
+          visibility_override TEXT,
+          collection_name_override TEXT,
+          collection_name TEXT NOT NULL,
+          last_synced_at TEXT,
+          last_sync_error TEXT
+        );
+
+        CREATE TABLE watchlist_cache (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          plex_item_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          type TEXT NOT NULL,
+          year INTEGER,
+          thumb TEXT,
+          source TEXT NOT NULL,
+          added_at TEXT NOT NULL,
+          matched_rating_key TEXT,
+          raw_payload TEXT NOT NULL,
+          UNIQUE(user_id, plex_item_id),
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE plex_collections (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          media_type TEXT NOT NULL,
+          collection_rating_key TEXT,
+          visible_name TEXT NOT NULL,
+          label_name TEXT,
+          hub_identifier TEXT,
+          last_synced_hash TEXT,
+          last_synced_at TEXT,
+          last_sync_error TEXT,
+          UNIQUE(user_id, media_type),
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE sync_runs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          kind TEXT NOT NULL,
+          status TEXT NOT NULL,
+          started_at TEXT NOT NULL,
+          completed_at TEXT,
+          summary TEXT NOT NULL,
+          error TEXT
+        );
+
+        CREATE TABLE sync_run_items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          run_id INTEGER NOT NULL,
+          user_id INTEGER,
+          action TEXT NOT NULL,
+          status TEXT NOT NULL,
+          details TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (run_id) REFERENCES sync_runs(id) ON DELETE CASCADE,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE job_run_state (
+          job_id TEXT PRIMARY KEY,
+          last_run_at TEXT,
+          last_run_status TEXT,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          username TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+      `);
+    }
+  }
+];
+
+export function runMigrations(db: Database.Database): void {
+  const currentVersion = db.pragma("user_version", { simple: true }) as number;
+
+  for (const migration of migrations) {
+    if (migration.version <= currentVersion) {
+      continue;
+    }
+
+    db.transaction(() => {
+      migration.up(db);
+      db.pragma(`user_version = ${migration.version}`);
+    })();
+  }
+}
