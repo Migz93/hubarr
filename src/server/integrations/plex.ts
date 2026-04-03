@@ -96,9 +96,12 @@ export interface PlexLibraryItemMatch {
 const COMMUNITY_API_URL = "https://community.plex.tv/api";
 const DISCOVER_ORIGIN = "https://discover.provider.plex.tv";
 const DISCOVER_RSS_PATH = "/rss";
+const RSS_PLEX_ORIGIN = "https://rss.plex.tv";
 const PLEX_TV_ACCOUNT_URL = "https://plex.tv/users/account.json";
 const PLEX_TV_PING_URL = "https://plex.tv/api/v2/ping";
 const PLEX_TV_RESOURCES_URL = "https://plex.tv/api/v2/resources";
+
+const RSS_PLEX_UUID_PATH = /^\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 
 export class PlexIntegration {
   private resolvedMachineIdentifier: string | null = null;
@@ -154,19 +157,29 @@ export class PlexIntegration {
 
   private buildDiscoverRssRequestUrl(rawUrl: string) {
     const parsed = new URL(rawUrl);
-    if (parsed.origin !== DISCOVER_ORIGIN || parsed.pathname !== DISCOVER_RSS_PATH) {
-      throw new Error(`Unsupported discover RSS URL: ${rawUrl}`);
+
+    // Plex returns RSS feed URLs as https://rss.plex.tv/{uuid}
+    if (parsed.origin === RSS_PLEX_ORIGIN) {
+      if (!RSS_PLEX_UUID_PATH.test(parsed.pathname)) {
+        throw new Error(`Unsupported rss.plex.tv path: ${rawUrl}`);
+      }
+      return new URL(rawUrl);
     }
 
-    const url = new URL(`${DISCOVER_ORIGIN}${DISCOVER_RSS_PATH}`);
-    for (const [key, value] of parsed.searchParams) {
-      if (key.toLowerCase() === "x-plex-token") {
-        continue;
+    // Legacy discover.provider.plex.tv/rss format
+    if (parsed.origin === DISCOVER_ORIGIN && parsed.pathname === DISCOVER_RSS_PATH) {
+      const url = new URL(`${DISCOVER_ORIGIN}${DISCOVER_RSS_PATH}`);
+      for (const [key, value] of parsed.searchParams) {
+        if (key.toLowerCase() === "x-plex-token") {
+          continue;
+        }
+        url.searchParams.set(key, value);
       }
-      url.searchParams.set(key, value);
+      url.searchParams.set("format", "json");
+      return url;
     }
-    url.searchParams.set("format", "json");
-    return url;
+
+    throw new Error(`Unsupported RSS URL: ${rawUrl}`);
   }
 
   private async requestServer<T>(pathname: string, init?: RequestInit): Promise<T> {
