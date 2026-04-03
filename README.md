@@ -2,6 +2,11 @@
 
 ![Hubarr cover](./public/cover.png)
 
+[![GitHub Activity][commits-shield]][commits]
+[![License][license-shield]][license]
+[![Project Maintainer][maintainer-shield]][user_profile]
+[![Buy me a coffee][buymecoffeebadge]][buymecoffee]
+
 Hubarr is a self-hosted Plex companion that turns watchlists into managed Plex collections and hub rows.
 
 It keeps your own Plex watchlist and selected friends' watchlists in sync with Plex, matches items against what is already in your libraries, and keeps per-user collections updated automatically through a simple web UI.
@@ -148,3 +153,12 @@ Those projects were helpful references for thinking about user experience, backg
     </td>
   </tr>
 </table>
+
+[buymecoffee]: https://www.buymeacoffee.com/Migz93
+[buymecoffeebadge]: https://img.shields.io/badge/buy%20me%20a%20coffee-donate-yellow.svg?style=for-the-badge
+[commits-shield]: https://img.shields.io/github/commit-activity/y/Migz93/hubarr.svg?style=for-the-badge
+[commits]: https://github.com/Migz93/hubarr/commits/main
+[license]: https://github.com/Migz93/hubarr/blob/main/LICENSE
+[license-shield]: https://img.shields.io/github/license/Migz93/hubarr.svg?style=for-the-badge
+[maintainer-shield]: https://img.shields.io/badge/maintainer-Migz93-blue.svg?style=for-the-badge
+[user_profile]: https://github.com/Migz93

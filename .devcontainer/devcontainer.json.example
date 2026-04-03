@@ -16,7 +16,8 @@
       "enableNonRootDocker": true,
       "installZsh": true,
       "upgradePackages": false
-    }
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {}
   },
   "containerEnv": {
     "HOME": "/home/node",
