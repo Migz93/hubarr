@@ -542,6 +542,7 @@ export class HubarrServices {
       return { run: this.db.listSyncRuns(1)[0], items };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      this.logger.error("Manual sync failed", { label, message });
       this.db.markUserSyncResult(friend.id, message);
       this.db.completeSyncRun(runId, "error", `Manual sync failed for ${label}.`, message);
       throw error;
@@ -748,6 +749,7 @@ export class HubarrServices {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      this.logger.error("RSS sync failed", { message });
       this.db.completeSyncRun(runId, "error", "RSS sync failed.", message);
       throw error;
     }
