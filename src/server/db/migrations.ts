@@ -5,6 +5,33 @@ interface Migration {
   up(db: Database.Database): void;
 }
 
+const v1Tables = [
+  "settings",
+  "users",
+  "watchlist_cache",
+  "plex_collections",
+  "sync_runs",
+  "sync_run_items",
+  "job_run_state",
+  "sessions"
+] as const;
+
+function tableExists(db: Database.Database, name: string): boolean {
+  const row = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(name) as { 1: number } | undefined;
+
+  return Boolean(row);
+}
+
+function inferSchemaVersion(db: Database.Database): number {
+  if (v1Tables.every((table) => tableExists(db, table))) {
+    return 1;
+  }
+
+  return 0;
+}
+
 const migrations: Migration[] = [
   {
     version: 1,
@@ -107,7 +134,15 @@ const migrations: Migration[] = [
 ];
 
 export function runMigrations(db: Database.Database): void {
-  const currentVersion = db.pragma("user_version", { simple: true }) as number;
+  let currentVersion = db.pragma("user_version", { simple: true }) as number;
+
+  if (currentVersion === 0) {
+    const inferredVersion = inferSchemaVersion(db);
+    if (inferredVersion > 0) {
+      db.pragma(`user_version = ${inferredVersion}`);
+      currentVersion = inferredVersion;
+    }
+  }
 
   for (const migration of migrations) {
     if (migration.version <= currentVersion) {
