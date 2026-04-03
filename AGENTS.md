@@ -75,133 +75,120 @@ Do not use `host`, `none`, or custom named networks unless explicitly requested.
 
 ## GitHub Workflow And Release Process
 
-When working on GitHub-related tasks for Hubarr, assume this repository uses a simple branch flow:
+### The Full Development Flow
 
-- day-to-day work goes to `develop`
-- once `develop` is ready, it is promoted to `main`
-- actual releases are cut from `main`
-- stable releases are created by pushing a version tag like `v0.1.0`
+This is the required workflow for all changes. Follow it every time, in order:
 
-Do not guess the user's release intent when it matters. If a task could reasonably target either `develop` or `main`, pause and ask the user which branch they want the change prepared for.
+```
+feature/fix branch → PR into develop → develop → PR into main → tag → release
+```
 
-Use these defaults unless the user explicitly says otherwise:
+**Step by step:**
 
-- normal feature work, bug fixes, experiments, and testing changes: target `develop`
-- production-ready promotion or release-prep work: target `main`
-- release publishing work: only from `main`
+1. **Start a new branch** from `develop` for every piece of work — features, bug fixes, chores, CI changes, everything. Never commit new work directly to `develop` or `main`.
+   - Branch naming: `feat/short-description`, `fix/short-description`, `chore/short-description`, `ci/short-description`, `docs/short-description`
+
+2. **Do the work** on that branch. Commit as many times as needed. Push the branch to GitHub.
+
+3. **Open a PR** from that branch into `develop` using `gh pr create`. This is what feeds the release notes — the PR title becomes the changelog entry. Use a semantic title (`feat:`, `fix:`, `chore:`, etc.).
+
+4. **Merge the PR** into `develop`. Delete the branch after merging.
+
+5. **Repeat** steps 1–4 for each piece of work. `develop` accumulates all the merged PRs.
+
+6. **When ready to release**, open a PR from `develop` into `main`. Merge it. This triggers the release-drafter to generate release notes from all the PR titles since the last release.
+
+7. **Bump the version** in `package.json` and `package-lock.json`, commit directly to `main`.
+
+8. **Tag `main`** with `vX.Y.Z` and push the tag. This triggers the Docker build workflow.
+
+9. **Publish the GitHub release** — review the auto-generated draft and publish it.
+
+---
+
+### How The Agent Should Interpret The User's Instructions
+
+The user will not always use precise git terminology. They may say things like:
+
+- *"that's ready, push it"* — this means open a PR from the current branch into `develop`, not push directly to `develop`
+- *"commit that to develop"* — this means open a PR into `develop`, not a direct commit
+- *"let's get this into develop"* — same as above, open a PR
+- *"merge develop into main"* or *"push to main"* — this is a release step, see release flow above
+
+**When the user's instruction is ambiguous**, the agent should either:
+- Interpret it charitably as the correct workflow step and proceed, explaining what it's doing ("your workflow says we open a PR to develop from this branch, so I'll do that now"), or
+- Push back briefly if genuinely unclear ("just to check — did you want me to open a PR into develop, or push directly? Your workflow normally uses PRs.")
+
+**Never silently commit directly to `develop` or `main`** when the user is describing work on a feature or fix. That bypasses PRs and breaks the release notes.
+
+---
 
 ### GitHub CLI Usage
 
-For GitHub-related work in this repository, prefer using the GitHub CLI (`gh`) whenever it is available and authenticated.
+For all GitHub-related work, use `gh` as the default tool. Use it for:
 
-Use `gh` as the default tool for tasks such as:
+- opening PRs (`gh pr create`)
+- checking PR status, checks, and mergeability
+- merging PRs (`gh pr merge`)
+- inspecting workflow runs and CodeQL alerts
+- creating and publishing releases
 
-- inspecting pull requests, branches, checks, workflow runs, and releases
-- viewing PR metadata, comments, review state, and mergeability
-- checking CodeQL and GitHub code scanning alerts
-- pushing branches when the user has asked for GitHub changes to be published
-- opening PRs or gathering the exact PR URL after a branch is pushed
+Prefer `gh` over inferring GitHub state from local git — it gives the authoritative picture of what is open, merged, or failing on GitHub.
 
-Prefer `gh` over guessing from local git state when the task depends on what GitHub currently knows, for example:
+---
 
-- whether a PR is open, merged, failing, or obsolete
-- whether Dependabot has raised or refreshed a PR
-- whether code scanning alerts are open or fixed
-- whether a branch already exists on the remote
+### Branch Rules Summary
 
-When pushing work, still follow the branch rules in this file:
+| Branch | Purpose | How things get in |
+|--------|---------|-------------------|
+| `feat/*`, `fix/*`, `chore/*` etc. | Active work | Direct commits |
+| `develop` | Integration | PRs from feature/fix branches only |
+| `main` | Stable/released | PRs from `develop` only |
 
-- push `develop` for normal day-to-day work when the user wants the remote updated
-- push feature or chore branches when the user wants a PR prepared
-- do not push extra scratch or temporary branches unless the user clearly wants them published
+- Do not push new feature or fix work directly to `develop` or `main`
+- Do not open PRs directly from feature branches into `main`
 
-If the user asks about GitHub-side security or automation results, prefer checking them with `gh` first rather than assuming the local repository tells the full story.
+---
 
-### Branch And Release Rules
+### Pull Request Conventions
 
-- Treat `develop` as the default integration branch.
-- Treat `main` as the stable branch.
-- Do not suggest releasing directly from `develop` unless the user explicitly asks for that workflow.
-- If the user asks to "release" Hubarr, confirm whether they mean:
-  - prepare changes on `main`
-  - create/push the release tag
-  - or both
-- If the user asks for a change on `main` and it is not clearly release-related, confirm that they really want it on `main` instead of `develop`.
+- Use semantic PR titles: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `ci:`
+- Keep descriptions concise: what changed, why, anything to verify
+- Call out explicitly if the change affects: release behaviour, Docker publishing, auth, database schema, or user-visible setup
 
-### Pull Requests
+---
 
-When preparing PR-related work:
+### Release Process
 
-- prefer semantic PR titles such as `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `ci:`
-- keep PR descriptions concise and practical
-- include:
-  - what changed
-  - why it changed
-  - anything the reviewer should verify
-  - release impact if relevant
-- if the work affects release behavior, Docker publishing, auth, database schema, or user-visible setup, call that out explicitly in the PR description
+When the user says it's time to release:
 
-If the user asks for help writing a PR title or description, follow the semantic title convention and keep the body focused on reviewer usefulness rather than long changelog prose.
+1. Open a PR from `develop` into `main` and merge it
+2. Bump the version — ask the user for patch / minor / major if not stated
+3. Update `package.json` and `package-lock.json`, commit to `main`
+4. Push the tag `vX.Y.Z` from `main`
+5. Review the release-drafter draft on GitHub and publish it
 
-### Releases
-
-For Hubarr, assume a release means:
-
-1. the intended release changes are already on `main`
-2. version numbers are updated in the app where needed
-3. the user chooses the release bump type if it is not obvious
-4. the release tag is created from `main` in the form `vX.Y.Z`
-
-If the user asks for a release and the next version is not explicitly given, the agent should ask a short clarifying question such as:
-
-- `Do you want this to be a patch, minor, or major release?`
-- `Should I bump from v0.1.0 to v0.1.1, v0.2.0, or v1.0.0?`
-
-Do not invent the next version if the bump level is ambiguous.
-
-### Version Bump Checklist
-
-Before creating a release tag, verify the current version and check whether it needs updating in the app.
-
-At minimum, review and update these places if needed:
-
+**Version files to update:**
 - `package.json`
 - `package-lock.json`
-- `src/server/version.ts`
 
-Also verify version usage in UI/API surfaces before releasing. At the time these instructions were written, version display is surfaced from the backend and shown in places such as:
+Note: `src/server/version.ts` reads dynamically from `package.json` at runtime — no separate update needed there.
 
-- `src/server/app.ts`
-- `src/server/integrations/plex.ts`
-- `src/client/components/Sidebar.tsx`
-- `src/client/pages/Settings.tsx`
+If the version bump size is unclear, ask:
+> "Should this be a patch (bug fixes only), minor (new features), or major (breaking changes)?"
 
-When doing a release-prep pass, the agent should:
+Do not invent the version — always confirm with the user if ambiguous.
 
-- identify the current version
-- identify every location that appears to require a version bump
-- tell the user what will be updated
-- update the version consistently before tagging if the user wants the release completed
+**Tag format:** `vX.Y.Z` — always from `main`, never from `develop`.
 
-If version references appear to be duplicated or hard-coded in a risky way, mention that clearly to the user instead of silently assuming only one file matters.
+---
 
-### Tagging
+### Agent Behaviour Expectations
 
-- Release tags should use the form `vX.Y.Z`
-- Tags should be created from `main`
-- If the user asks for an actual release, confirm whether they want the agent to create the tag now
-- If the user only wants release prep, do not create the tag unless asked
+Actively guide the workflow rather than waiting for perfect instructions:
 
-### Agent Behavior Expectations
-
-When helping with GitHub workflow or release tasks, the agent should actively guide the process instead of waiting for perfect instructions.
-
-That means:
-
-- if branch choice is unclear, ask whether this belongs on `develop` or `main`
-- if release scope is unclear, ask whether this is release prep or an actual release
-- if version bump size is unclear, ask the user to choose patch/minor/major
-- if a main-branch change has release consequences, mention them
-- if a release is requested, verify version-related files before tagging
-
-The agent is allowed to ask concise clarifying questions when needed for branch selection, release intent, or version bump choice.
+- When the user starts new work: create a branch from `develop` automatically
+- When the user says the work is ready: open a PR to `develop`, don't push directly
+- When the user asks about releasing: confirm whether they mean prep, tag, or both
+- When the user asks for a version bump: confirm patch/minor/major if not stated
+- When the user's language conflicts with the workflow: interpret charitably or push back clearly — never silently do the wrong thing
