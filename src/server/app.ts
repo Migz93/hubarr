@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
+import { rateLimit } from "express-rate-limit";
 import type {
   HealthResponse,
   PlexConfigPayload,
@@ -40,44 +41,6 @@ function parseCookies(rawCookie = "") {
 
 function signedValue(secret: string, value: string) {
   return crypto.createHmac("sha256", secret).update(value).digest("hex");
-}
-
-function createRateLimiter({
-  windowMs,
-  maxRequests
-}: {
-  windowMs: number;
-  maxRequests: number;
-}) {
-  const buckets = new Map<string, { count: number; resetAt: number }>();
-
-  return (req: Request, res: Response, next: NextFunction) => {
-    const now = Date.now();
-    const key = req.ip || req.socket.remoteAddress || "unknown";
-    const current = buckets.get(key);
-
-    if (!current || current.resetAt <= now) {
-      buckets.set(key, { count: 1, resetAt: now + windowMs });
-    } else {
-      current.count += 1;
-      if (current.count > maxRequests) {
-        const retryAfterSeconds = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
-        res.setHeader("Retry-After", String(retryAfterSeconds));
-        res.status(429).json({ error: "Too many requests. Please try again later." });
-        return;
-      }
-    }
-
-    if (buckets.size > 5000) {
-      for (const [bucketKey, bucket] of buckets) {
-        if (bucket.resetAt <= now) {
-          buckets.delete(bucketKey);
-        }
-      }
-    }
-
-    next();
-  };
 }
 
 const PLEX_LIBRARY_IMAGE_PATH = /^\/library\/metadata\/([A-Za-z0-9:-]+)\/(thumb|art|clearLogo|squareArt|theme)(?:\/(\d+))?$/;
@@ -147,8 +110,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   const services = new HubarrServices(db, logger);
   const app = express();
   const clientDir = path.resolve(process.cwd(), "dist/client");
-  const logsRateLimiter = createRateLimiter({ windowMs: 60_000, maxRequests: 30 });
-  const staticRateLimiter = createRateLimiter({ windowMs: 60_000, maxRequests: 240 });
+  const logsRateLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 60,
+    standardHeaders: "draft-8",
+    legacyHeaders: false
+  });
 
   app.use(express.json());
 
@@ -749,8 +716,10 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     }
   });
 
+  app.use("/api/settings/logs", logsRateLimiter);
+
   /** Log viewer */
-  app.get("/api/settings/logs", requireAuth, logsRateLimiter, (req, res) => {
+  app.get("/api/settings/logs", requireAuth, (req, res) => {
     const page = Math.max(1, Number(req.query["page"] ?? 1));
     const pageSize = Math.min(100, Math.max(1, Number(req.query["pageSize"] ?? 25)));
     const filterParam = (req.query["filter"] as string) ?? "debug";
@@ -1019,7 +988,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   if (fs.existsSync(clientDir)) {
     app.use(express.static(clientDir));
-    app.get("*", staticRateLimiter, (req, res, next) => {
+    app.get("*", (req, res, next) => {
       if (req.path.startsWith("/api/")) {
         next();
         return;
