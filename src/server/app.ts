@@ -116,6 +116,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     standardHeaders: "draft-8",
     legacyHeaders: false
   });
+  const staticRateLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 600,
+    standardHeaders: "draft-8",
+    legacyHeaders: false
+  });
 
   app.use(express.json());
 
@@ -988,7 +994,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   if (fs.existsSync(clientDir)) {
     app.use(express.static(clientDir));
-    app.get("*", (req, res, next) => {
+    app.get("*", staticRateLimiter, (req, res, next) => {
       if (req.path.startsWith("/api/")) {
         next();
         return;
