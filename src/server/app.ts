@@ -30,16 +30,80 @@ function parseCookies(rawCookie = "") {
     .split(";")
     .map((part) => part.trim())
     .filter(Boolean)
-    .reduce<Record<string, string>>((acc, pair) => {
+    .reduce<Map<string, string>>((acc, pair) => {
       const index = pair.indexOf("=");
       if (index === -1) return acc;
-      acc[pair.slice(0, index)] = decodeURIComponent(pair.slice(index + 1));
+      acc.set(pair.slice(0, index), decodeURIComponent(pair.slice(index + 1)));
       return acc;
-    }, {});
+    }, new Map());
 }
 
 function signedValue(secret: string, value: string) {
   return crypto.createHmac("sha256", secret).update(value).digest("hex");
+}
+
+function createRateLimiter({
+  windowMs,
+  maxRequests
+}: {
+  windowMs: number;
+  maxRequests: number;
+}) {
+  const buckets = new Map<string, { count: number; resetAt: number }>();
+
+  return (req: Request, res: Response, next: NextFunction) => {
+    const now = Date.now();
+    const key = req.ip || req.socket.remoteAddress || "unknown";
+    const current = buckets.get(key);
+
+    if (!current || current.resetAt <= now) {
+      buckets.set(key, { count: 1, resetAt: now + windowMs });
+    } else {
+      current.count += 1;
+      if (current.count > maxRequests) {
+        const retryAfterSeconds = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
+        res.setHeader("Retry-After", String(retryAfterSeconds));
+        res.status(429).json({ error: "Too many requests. Please try again later." });
+        return;
+      }
+    }
+
+    if (buckets.size > 5000) {
+      for (const [bucketKey, bucket] of buckets) {
+        if (bucket.resetAt <= now) {
+          buckets.delete(bucketKey);
+        }
+      }
+    }
+
+    next();
+  };
+}
+
+function buildTrustedPlexImageUrl(serverUrl: string, rawPath: string) {
+  if (!rawPath.startsWith("/")) {
+    throw new Error("Plex image path must start with '/'.");
+  }
+
+  const parsedPath = new URL(rawPath, "http://hubarr.local");
+  if (parsedPath.origin !== "http://hubarr.local") {
+    throw new Error("Absolute Plex image URLs are not allowed.");
+  }
+
+  const serverOrigin = new URL(serverUrl).origin;
+  const upstream = new URL(parsedPath.pathname, `${serverOrigin}/`);
+  if (upstream.origin !== serverOrigin) {
+    throw new Error("Plex image request must target the configured Plex server.");
+  }
+
+  for (const [key, value] of parsedPath.searchParams) {
+    if (key.toLowerCase() === "x-plex-token") {
+      continue;
+    }
+    upstream.searchParams.append(key, value);
+  }
+
+  return upstream;
 }
 
 export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
@@ -48,13 +112,15 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   const services = new HubarrServices(db, logger);
   const app = express();
   const clientDir = path.resolve(process.cwd(), "dist/client");
+  const logsRateLimiter = createRateLimiter({ windowMs: 60_000, maxRequests: 30 });
+  const staticRateLimiter = createRateLimiter({ windowMs: 60_000, maxRequests: 240 });
 
   app.use(express.json());
 
   // Session middleware
   app.use((req, _res, next) => {
     const cookies = parseCookies(req.headers.cookie);
-    const raw = cookies[config.sessionCookieName];
+    const raw = cookies.get(config.sessionCookieName);
     if (!raw) {
       req.sessionUser = null;
       return next();
@@ -241,7 +307,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   app.post("/api/auth/logout", (req, res) => {
     const cookies = parseCookies(req.headers.cookie);
-    const raw = cookies[config.sessionCookieName];
+    const raw = cookies.get(config.sessionCookieName);
     if (raw) {
       const [sessionId] = raw.split(".");
       if (sessionId) db.deleteSession(sessionId);
@@ -369,7 +435,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       return;
     }
     try {
-      const url = new URL(plexPath.startsWith("http") ? plexPath : `${plexSettings.serverUrl}${plexPath}`);
+      const url = buildTrustedPlexImageUrl(plexSettings.serverUrl, plexPath);
       url.searchParams.set("X-Plex-Token", plexSettings.token);
       const upstream = await fetch(url.toString());
       if (!upstream.ok) {
@@ -646,7 +712,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   });
 
   /** Log viewer */
-  app.get("/api/settings/logs", requireAuth, (req, res) => {
+  app.get("/api/settings/logs", requireAuth, logsRateLimiter, (req, res) => {
     const page = Math.max(1, Number(req.query["page"] ?? 1));
     const pageSize = Math.min(100, Math.max(1, Number(req.query["pageSize"] ?? 25)));
     const filterParam = (req.query["filter"] as string) ?? "debug";
@@ -915,7 +981,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   if (fs.existsSync(clientDir)) {
     app.use(express.static(clientDir));
-    app.get("*", (req, res, next) => {
+    app.get("*", staticRateLimiter, (req, res, next) => {
       if (req.path.startsWith("/api/")) {
         next();
         return;

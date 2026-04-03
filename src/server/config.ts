@@ -16,12 +16,23 @@ function resolveSessionSecret(dataDir: string): string {
     return process.env.SESSION_SECRET;
   }
   const secretFile = path.join(dataDir, ".session_secret");
-  if (fs.existsSync(secretFile)) {
+  const generated = crypto.randomBytes(48).toString("hex");
+
+  try {
+    const handle = fs.openSync(secretFile, "wx", 0o600);
+    try {
+      fs.writeFileSync(handle, generated, "utf8");
+    } finally {
+      fs.closeSync(handle);
+    }
+    return generated;
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException;
+    if (nodeError.code !== "EEXIST") {
+      throw error;
+    }
     return fs.readFileSync(secretFile, "utf8").trim();
   }
-  const generated = crypto.randomBytes(48).toString("hex");
-  fs.writeFileSync(secretFile, generated, { mode: 0o600 });
-  return generated;
 }
 
 export function loadRuntimeConfig(): RuntimeConfig {
