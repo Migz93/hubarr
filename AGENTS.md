@@ -90,6 +90,33 @@ Use these defaults unless the user explicitly says otherwise:
 - production-ready promotion or release-prep work: target `main`
 - release publishing work: only from `main`
 
+### GitHub CLI Usage
+
+For GitHub-related work in this repository, prefer using the GitHub CLI (`gh`) whenever it is available and authenticated.
+
+Use `gh` as the default tool for tasks such as:
+
+- inspecting pull requests, branches, checks, workflow runs, and releases
+- viewing PR metadata, comments, review state, and mergeability
+- checking CodeQL and GitHub code scanning alerts
+- pushing branches when the user has asked for GitHub changes to be published
+- opening PRs or gathering the exact PR URL after a branch is pushed
+
+Prefer `gh` over guessing from local git state when the task depends on what GitHub currently knows, for example:
+
+- whether a PR is open, merged, failing, or obsolete
+- whether Dependabot has raised or refreshed a PR
+- whether code scanning alerts are open or fixed
+- whether a branch already exists on the remote
+
+When pushing work, still follow the branch rules in this file:
+
+- push `develop` for normal day-to-day work when the user wants the remote updated
+- push feature or chore branches when the user wants a PR prepared
+- do not push extra scratch or temporary branches unless the user clearly wants them published
+
+If the user asks about GitHub-side security or automation results, prefer checking them with `gh` first rather than assuming the local repository tells the full story.
+
 ### Branch And Release Rules
 
 - Treat `develop` as the default integration branch.
