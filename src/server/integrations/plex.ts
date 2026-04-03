@@ -93,11 +93,12 @@ export interface PlexLibraryItemMatch {
   guids: string[];
 }
 
-const TRUSTED_PLEX_ORIGINS = new Set([
-  "https://community.plex.tv",
-  "https://discover.provider.plex.tv",
-  "https://plex.tv"
-]);
+const COMMUNITY_API_URL = "https://community.plex.tv/api";
+const DISCOVER_ORIGIN = "https://discover.provider.plex.tv";
+const DISCOVER_RSS_PATH = "/rss";
+const PLEX_TV_ACCOUNT_URL = "https://plex.tv/users/account.json";
+const PLEX_TV_PING_URL = "https://plex.tv/api/v2/ping";
+const PLEX_TV_RESOURCES_URL = "https://plex.tv/api/v2/resources";
 
 export class PlexIntegration {
   private resolvedMachineIdentifier: string | null = null;
@@ -124,59 +125,52 @@ export class PlexIntegration {
     return machineIdentifier;
   }
 
-  private getTrustedServerOrigin() {
-    return new URL(this.settings.serverUrl).origin;
+  private buildServerUrl(pathname: string) {
+    return new URL(
+      pathname,
+      this.settings.serverUrl.endsWith("/") ? this.settings.serverUrl : `${this.settings.serverUrl}/`
+    );
   }
 
-  private assertTrustedOrigin(origin: string) {
-    if (origin === this.getTrustedServerOrigin()) {
-      return;
+  private normalizeMetadataId(rawId: string) {
+    const trimmed = rawId.trim();
+    if (!/^[a-f0-9]{24}$/.test(trimmed)) {
+      throw new Error(`Invalid Plex metadata ID: ${rawId}`);
     }
-    if (!TRUSTED_PLEX_ORIGINS.has(origin)) {
-      throw new Error(`Untrusted Plex origin: ${origin}`);
-    }
+    return trimmed;
   }
 
-  private buildTrustedPlexUrl(
-    input: string,
-    options: {
-      baseUrl?: string;
-      allowAbsolute?: boolean;
-    } = {}
-  ) {
-    const { baseUrl, allowAbsolute = false } = options;
-    const trimmed = input.trim();
-    if (!trimmed) {
-      throw new Error("Plex URL input cannot be empty.");
+  private buildDiscoverMetadataUrl(rawEndpoint: string) {
+    const match = rawEndpoint.trim().match(/^\/?library\/metadata\/(.+)$/);
+    if (!match) {
+      throw new Error(`Unsupported discover metadata endpoint: ${rawEndpoint}`);
     }
 
-    if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
-      if (!allowAbsolute) {
-        throw new Error(`Absolute Plex URLs are not allowed here: ${trimmed}`);
+    const url = new URL(DISCOVER_ORIGIN);
+    url.pathname = `/library/metadata/${this.normalizeMetadataId(match[1])}`;
+    url.searchParams.set("format", "json");
+    return url;
+  }
+
+  private buildDiscoverRssRequestUrl(rawUrl: string) {
+    const parsed = new URL(rawUrl);
+    if (parsed.origin !== DISCOVER_ORIGIN || parsed.pathname !== DISCOVER_RSS_PATH) {
+      throw new Error(`Unsupported discover RSS URL: ${rawUrl}`);
+    }
+
+    const url = new URL(`${DISCOVER_ORIGIN}${DISCOVER_RSS_PATH}`);
+    for (const [key, value] of parsed.searchParams) {
+      if (key.toLowerCase() === "x-plex-token") {
+        continue;
       }
-      const absoluteUrl = new URL(trimmed);
-      this.assertTrustedOrigin(absoluteUrl.origin);
-      return absoluteUrl;
+      url.searchParams.set(key, value);
     }
-
-    if (trimmed.startsWith("//")) {
-      throw new Error(`Protocol-relative Plex URLs are not allowed: ${trimmed}`);
-    }
-
-    const resolvedBase = new URL(baseUrl ?? `${this.getTrustedServerOrigin()}/`);
-    this.assertTrustedOrigin(resolvedBase.origin);
-
-    const normalizedPath = trimmed.replace(/^\/+/, "");
-    const resolvedUrl = new URL(normalizedPath, `${resolvedBase.origin}/`);
-    if (resolvedUrl.origin !== resolvedBase.origin) {
-      throw new Error(`Plex URL changed origin unexpectedly: ${trimmed}`);
-    }
-
-    return resolvedUrl;
+    url.searchParams.set("format", "json");
+    return url;
   }
 
   private async requestServer<T>(pathname: string, init?: RequestInit): Promise<T> {
-    const url = this.buildTrustedPlexUrl(pathname, { baseUrl: this.settings.serverUrl });
+    const url = this.buildServerUrl(pathname);
     const response = await fetch(url, {
       ...init,
       headers: {
@@ -213,7 +207,7 @@ export class PlexIntegration {
   }
 
   private async requestCommunity<T>(query: string, variables?: Record<string, unknown>) {
-    const response = await fetch(this.buildTrustedPlexUrl("https://community.plex.tv/api", { allowAbsolute: true }), {
+    const response = await fetch(COMMUNITY_API_URL, {
       method: "POST",
       headers: {
         Accept: "application/json",
@@ -341,9 +335,7 @@ export class PlexIntegration {
 
     for (const endpoint of endpoints) {
       try {
-        const url = this.buildTrustedPlexUrl(endpoint, { baseUrl: "https://discover.provider.plex.tv/" });
-        url.searchParams.set("format", "json");
-        const response = await fetch(url.toString(), {
+        const response = await fetch(this.buildDiscoverMetadataUrl(endpoint), {
           headers: {
             "User-Agent": PLEX_USER_AGENT,
             "X-Plex-Token": this.settings.token,
@@ -394,9 +386,7 @@ export class PlexIntegration {
 
     for (const endpoint of endpoints) {
       try {
-        const url = this.buildTrustedPlexUrl(endpoint, { baseUrl: "https://discover.provider.plex.tv/" });
-        url.searchParams.set("format", "json");
-        const response = await fetch(url.toString(), {
+        const response = await fetch(this.buildDiscoverMetadataUrl(endpoint), {
           headers: {
             "User-Agent": PLEX_USER_AGENT,
             "X-Plex-Token": this.settings.token,
@@ -992,7 +982,7 @@ export class PlexIntegration {
     displayName: string;
     avatarUrl: string | null;
   }> {
-    const response = await fetch(this.buildTrustedPlexUrl("https://plex.tv/users/account.json", { allowAbsolute: true }), {
+    const response = await fetch(PLEX_TV_ACCOUNT_URL, {
       headers: {
         "User-Agent": PLEX_USER_AGENT,
         "X-Plex-Token": this.settings.token,
@@ -1061,7 +1051,7 @@ export class PlexIntegration {
    * is a cloud endpoint that requires the personal account token.
    */
   async fetchRssUrl(feedType: "watchlist" | "friendsWatchlist", ownerToken: string): Promise<string | null> {
-    const url = this.buildTrustedPlexUrl("https://discover.provider.plex.tv/rss", { allowAbsolute: true });
+    const url = new URL(`${DISCOVER_ORIGIN}${DISCOVER_RSS_PATH}`);
     url.searchParams.set("X-Plex-Client-Identifier", "hubarr");
     url.searchParams.set("format", "json");
 
@@ -1095,8 +1085,7 @@ export class PlexIntegration {
   async fetchRssFeedItems(
     url: string
   ): Promise<{ ok: true; items: RssFeedItem[] } | { ok: false; authError: boolean; message: string }> {
-    const urlObj = this.buildTrustedPlexUrl(url, { allowAbsolute: true });
-    urlObj.searchParams.set("format", "json");
+    const urlObj = this.buildDiscoverRssRequestUrl(url);
 
     try {
       const response = await fetch(urlObj.toString(), {
@@ -1468,7 +1457,7 @@ export class PlexIntegration {
     email: string | null;
     avatarUrl: string | null;
   }> {
-    const response = await fetch("https://plex.tv/users/account.json", {
+    const response = await fetch(PLEX_TV_ACCOUNT_URL, {
       headers: {
         "User-Agent": PLEX_USER_AGENT,
         "X-Plex-Token": token,
@@ -1506,7 +1495,7 @@ export class PlexIntegration {
   }
 
   static async pingToken(token: string): Promise<void> {
-    const response = await fetch("https://plex.tv/api/v2/ping", {
+    const response = await fetch(PLEX_TV_PING_URL, {
       headers: {
         "User-Agent": PLEX_USER_AGENT,
         "X-Plex-Token": token,
@@ -1545,7 +1534,7 @@ export class PlexIntegration {
       }>;
     }>
   > {
-    const url = new URL("https://plex.tv/api/v2/resources");
+    const url = new URL(PLEX_TV_RESOURCES_URL);
     url.searchParams.set("includeHttps", "1");
     url.searchParams.set("includeRelay", "1");
     url.searchParams.set("includeIPv6", "1");

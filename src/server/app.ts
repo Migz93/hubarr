@@ -80,30 +80,65 @@ function createRateLimiter({
   };
 }
 
-function buildTrustedPlexImageUrl(serverUrl: string, rawPath: string) {
-  if (!rawPath.startsWith("/")) {
-    throw new Error("Plex image path must start with '/'.");
-  }
+const PLEX_LIBRARY_IMAGE_PATH = /^\/library\/metadata\/([A-Za-z0-9:-]+)\/(thumb|art|clearLogo|squareArt|theme)(?:\/(\d+))?$/;
+const PLEX_RESOURCE_IMAGE_PATH = /^\/:\/resources\/([A-Za-z0-9._-]+)$/;
+const ALLOWED_PLEX_IMAGE_QUERY_PARAMS = new Set(["width", "height", "minSize", "upscale", "format"]);
 
-  const parsedPath = new URL(rawPath, "http://hubarr.local");
-  if (parsedPath.origin !== "http://hubarr.local") {
-    throw new Error("Absolute Plex image URLs are not allowed.");
-  }
+function sanitizePlexImageQuery(search: string) {
+  const parsed = new URLSearchParams(search);
+  const sanitized = new URLSearchParams();
 
-  const serverOrigin = new URL(serverUrl).origin;
-  const upstream = new URL(parsedPath.pathname, `${serverOrigin}/`);
-  if (upstream.origin !== serverOrigin) {
-    throw new Error("Plex image request must target the configured Plex server.");
-  }
-
-  for (const [key, value] of parsedPath.searchParams) {
+  for (const [key, value] of parsed) {
     if (key.toLowerCase() === "x-plex-token") {
       continue;
     }
-    upstream.searchParams.append(key, value);
+    if (!ALLOWED_PLEX_IMAGE_QUERY_PARAMS.has(key)) {
+      throw new Error(`Unsupported Plex image query parameter: ${key}`);
+    }
+    if (key === "format") {
+      if (!/^[a-z0-9-]+$/i.test(value)) {
+        throw new Error("Invalid Plex image format parameter.");
+      }
+      sanitized.set(key, value.toLowerCase());
+      continue;
+    }
+    if (!/^\d{1,4}$/.test(value)) {
+      throw new Error(`Invalid Plex image query parameter value for ${key}.`);
+    }
+    sanitized.set(key, value);
   }
 
-  return upstream;
+  return sanitized;
+}
+
+function buildTrustedPlexImageRequest(serverUrl: string, rawPath: string) {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(rawPath) || rawPath.startsWith("//")) {
+    throw new Error("Absolute Plex image URLs are not allowed.");
+  }
+
+  const [pathname, search = ""] = rawPath.split("?", 2);
+  if (!pathname.startsWith("/")) {
+    throw new Error("Plex image path must start with '/'.");
+  }
+
+  const serverOrigin = new URL(serverUrl).origin;
+  const upstream = new URL(serverOrigin);
+  const libraryMatch = pathname.match(PLEX_LIBRARY_IMAGE_PATH);
+  const resourceMatch = pathname.match(PLEX_RESOURCE_IMAGE_PATH);
+
+  if (libraryMatch) {
+    const [, ratingKey, assetKind, version] = libraryMatch;
+    upstream.pathname = version
+      ? `/library/metadata/${ratingKey}/${assetKind}/${version}`
+      : `/library/metadata/${ratingKey}/${assetKind}`;
+  } else if (resourceMatch) {
+    upstream.pathname = `/:/resources/${resourceMatch[1]}`;
+  } else {
+    throw new Error("Unsupported Plex image path.");
+  }
+
+  upstream.search = sanitizePlexImageQuery(search).toString();
+  return upstream.toString();
 }
 
 export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
@@ -435,9 +470,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       return;
     }
     try {
-      const url = buildTrustedPlexImageUrl(plexSettings.serverUrl, plexPath);
-      url.searchParams.set("X-Plex-Token", plexSettings.token);
-      const upstream = await fetch(url.toString());
+      const imageUrl = buildTrustedPlexImageRequest(plexSettings.serverUrl, plexPath);
+      const upstream = await fetch(imageUrl, {
+        headers: {
+          "X-Plex-Token": plexSettings.token
+        }
+      });
       if (!upstream.ok) {
         res.status(upstream.status).end();
         return;
