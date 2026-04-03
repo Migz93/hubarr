@@ -547,8 +547,7 @@ function JobsTab() {
   }
 
   function openEdit(job: JobInfo) {
-    const preset = JOB_PRESETS[job.id];
-    if (!preset) return;
+    if (!JOB_PRESETS[job.id]) return;
     setEditValue(parseCurrentIntervalValue(job));
     setEditingJob(job);
   }
