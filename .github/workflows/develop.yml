@@ -52,7 +52,7 @@ jobs:
             org.opencontainers.image.version=develop
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
