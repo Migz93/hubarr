@@ -80,7 +80,7 @@ Do not use `host`, `none`, or custom named networks unless explicitly requested.
 This is the required workflow for all changes. Follow it every time, in order:
 
 ```
-feature/fix branch → PR into develop → develop → PR into main → tag → release
+type/branch-name branch → PR into develop → develop → chore/bump-version → PR into develop → PR into main → tag → release
 ```
 
 **Step by step:**
@@ -96,13 +96,15 @@ feature/fix branch → PR into develop → develop → PR into main → tag → 
 
 5. **Repeat** steps 1–4 for each piece of work. `develop` accumulates all the merged PRs.
 
-6. **When ready to release**, open a PR from `develop` into `main`. Merge it. This triggers the release-drafter to generate release notes from all the PR titles since the last release.
+6. **When ready to release**, create a `chore/bump-version-X.Y.Z` branch from `develop`.
 
-7. **Bump the version** in `package.json` and `package-lock.json`, commit directly to `main`.
+7. **Bump the version** in `package.json` and `package-lock.json`, open a PR from that branch into `develop`, and merge it.
 
-8. **Tag `main`** with `vX.Y.Z` and push the tag. This triggers the Docker build workflow.
+8. **Open a PR** from `develop` into `main`. Merge it. This triggers the release-drafter to generate release notes from all the PR titles since the last release.
 
-9. **Publish the GitHub release** — review the auto-generated draft and publish it.
+9. **Tag `main`** with `vX.Y.Z` and push the tag. This triggers the Docker build workflow.
+
+10. **Publish the GitHub release** — review the auto-generated draft and publish it.
 
 ---
 
