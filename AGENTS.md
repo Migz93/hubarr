@@ -110,7 +110,7 @@ feature/fix branch → PR into develop → develop → PR into main → tag → 
 
 The user will not always use precise git terminology. They may say things like:
 
-- *"that's ready, push it"* — this means open a PR from the current branch into `develop`, not push directly to `develop`
+- *"that's ready, push it"* — this means push the current branch to GitHub if not already pushed, then open a PR from it into `develop`
 - *"commit that to develop"* — this means open a PR into `develop`, not a direct commit
 - *"let's get this into develop"* — same as above, open a PR
 - *"merge develop into main"* or *"push to main"* — this is a release step, see release flow above
@@ -142,7 +142,7 @@ Prefer `gh` over inferring GitHub state from local git — it gives the authorit
 | Branch | Purpose | How things get in |
 |--------|---------|-------------------|
 | `feat/*`, `fix/*`, `chore/*` etc. | Active work | Direct commits |
-| `develop` | Integration | PRs from feature/fix branches only |
+| `develop` | Integration | PRs from `feat/*`, `fix/*`, `chore/*`, `ci/*`, `docs/*` etc. |
 | `main` | Stable/released | PRs from `develop` only |
 
 - Do not push new feature or fix work directly to `develop` or `main`
@@ -162,20 +162,19 @@ Prefer `gh` over inferring GitHub state from local git — it gives the authorit
 
 When the user says it's time to release:
 
-1. Open a PR from `develop` into `main` and merge it
-2. Bump the version — ask the user for patch / minor / major if not stated
-3. Update `package.json` and `package-lock.json`, commit to `main`
-4. Push the tag `vX.Y.Z` from `main`
-5. Review the release-drafter draft on GitHub and publish it
+1. Confirm the version bump size — ask for patch / minor / major if not stated
+2. Create a `chore/bump-version-X.Y.Z` branch from `develop`
+3. Update `package.json` and `package-lock.json` with the new version
+4. Open a PR from that branch into `develop` and merge it
+5. Open a PR from `develop` into `main` and merge it
+6. Push the tag `vX.Y.Z` from `main`
+7. Review the release-drafter draft on GitHub and publish it
 
 **Version files to update:**
 - `package.json`
 - `package-lock.json`
 
 Note: `src/server/version.ts` reads dynamically from `package.json` at runtime — no separate update needed there.
-
-If the version bump size is unclear, ask:
-> "Should this be a patch (bug fixes only), minor (new features), or major (breaking changes)?"
 
 Do not invent the version — always confirm with the user if ambiguous.
 
