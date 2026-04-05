@@ -48,6 +48,26 @@ const PLEX_LIBRARY_IMAGE_PATH = /^\/library\/metadata\/([A-Za-z0-9:-]+)\/(thumb|
 const PLEX_RESOURCE_IMAGE_PATH = /^\/:\/resources\/([A-Za-z0-9._-]+)$/;
 const ALLOWED_PLEX_IMAGE_QUERY_PARAMS = new Set(["width", "height", "minSize", "upscale", "format"]);
 
+const PRIVATE_IP_RE = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|::1$|fd[0-9a-f]{2}:|localhost)/i;
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+const AVATAR_TIMEOUT_MS = 10_000;
+const AVATAR_MAX_REDIRECTS = 3;
+
+function isSafeAvatarUrl(rawUrl: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  return (
+    url.protocol === "https:" &&
+    !url.username &&
+    !url.password &&
+    !PRIVATE_IP_RE.test(url.hostname)
+  );
+}
+
 function sanitizePlexImageQuery(search: string) {
   const parsed = new URLSearchParams(search);
   const sanitized = new URLSearchParams();
@@ -470,6 +490,73 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       res.send(buf);
     } catch {
       res.status(502).end();
+    }
+  });
+
+  // Avatar proxy (safe passthrough for absolute Plex user avatar URLs)
+  app.get("/api/avatar", requireAuth, async (req, res) => {
+    const rawUrl = typeof req.query["url"] === "string" ? req.query["url"] : undefined;
+    if (!rawUrl || !isSafeAvatarUrl(rawUrl)) {
+      res.status(400).json({ error: "Invalid or disallowed avatar URL." });
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), AVATAR_TIMEOUT_MS);
+
+    try {
+      let currentUrl = rawUrl;
+      let fetchRes: Awaited<ReturnType<typeof fetch>> | null = null;
+
+      for (let i = 0; i <= AVATAR_MAX_REDIRECTS; i++) {
+        fetchRes = await fetch(currentUrl, {
+          method: "GET",
+          redirect: "manual",
+          signal: controller.signal
+        });
+
+        if (fetchRes.status >= 300 && fetchRes.status < 400) {
+          const location = fetchRes.headers.get("location");
+          if (!location || !isSafeAvatarUrl(location)) {
+            res.status(502).end();
+            return;
+          }
+          currentUrl = location;
+          continue;
+        }
+        break;
+      }
+
+      if (!fetchRes || !fetchRes.ok) {
+        res.status(fetchRes?.status ?? 502).end();
+        return;
+      }
+
+      const contentType = fetchRes.headers.get("content-type") ?? "";
+      if (!contentType.startsWith("image/")) {
+        res.status(502).end();
+        return;
+      }
+
+      const contentLength = Number(fetchRes.headers.get("content-length") ?? 0);
+      if (contentLength > MAX_AVATAR_BYTES) {
+        res.status(502).end();
+        return;
+      }
+
+      const buf = Buffer.from(await fetchRes.arrayBuffer());
+      if (buf.length > MAX_AVATAR_BYTES) {
+        res.status(502).end();
+        return;
+      }
+
+      res.setHeader("content-type", contentType);
+      res.setHeader("cache-control", "public, max-age=86400");
+      res.send(buf);
+    } catch {
+      res.status(502).end();
+    } finally {
+      clearTimeout(timeout);
     }
   });
 
