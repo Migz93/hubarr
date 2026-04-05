@@ -147,10 +147,17 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     contentSecurityPolicy: {
       directives: {
         ...helmet.contentSecurityPolicy.getDefaultDirectives(),
-        "connect-src": ["'self'", "https://plex.tv", "https://api.github.com"]
+        "connect-src": ["'self'", "https://plex.tv", "https://api.github.com"],
+        // Disable upgrade-insecure-requests: this app runs over plain HTTP in
+        // the default Docker setup, so this directive would cause browsers to
+        // rewrite HTTP sub-requests to HTTPS and break the UI. Must be set to
+        // null (not deleted) so Helmet's useDefaults logic doesn't re-add it.
+        "upgrade-insecure-requests": null
       }
     },
-    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" }
+    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+    // Disable HSTS: not appropriate for a plain-HTTP self-hosted deployment.
+    hsts: false
   }));
   const clientDir = path.resolve(process.cwd(), "dist/client");
   const logsRateLimiter = rateLimit({
@@ -545,8 +552,10 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         break;
       }
 
+      // Treat redirect-loop exhaustion (still 3xx after max hops) as a
+      // proxy failure rather than forwarding the redirect to the client.
       if (!fetchRes || !fetchRes.ok) {
-        res.status(fetchRes?.status ?? 502).end();
+        res.status(502).end();
         return;
       }
 
@@ -556,17 +565,34 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         return;
       }
 
+      // Reject based on Content-Length if the server provides it.
       const contentLength = Number(fetchRes.headers.get("content-length") ?? 0);
       if (contentLength > MAX_AVATAR_BYTES) {
         res.status(502).end();
         return;
       }
 
-      const buf = Buffer.from(await fetchRes.arrayBuffer());
-      if (buf.length > MAX_AVATAR_BYTES) {
+      // Stream the body with a hard byte cap so an upstream server that omits
+      // or lies about Content-Length cannot force excessive memory allocation.
+      const reader = fetchRes.body?.getReader();
+      if (!reader) {
         res.status(502).end();
         return;
       }
+      const chunks: Buffer[] = [];
+      let totalBytes = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        totalBytes += value.length;
+        if (totalBytes > MAX_AVATAR_BYTES) {
+          await reader.cancel();
+          res.status(502).end();
+          return;
+        }
+        chunks.push(Buffer.from(value));
+      }
+      const buf = Buffer.concat(chunks);
 
       res.setHeader("content-type", contentType);
       res.setHeader("cache-control", "public, max-age=86400");
