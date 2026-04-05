@@ -110,7 +110,14 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   const db = new HubarrDatabase(config);
   const services = new HubarrServices(db, logger);
   const app = express();
-  app.use(helmet());
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+        "connect-src": ["'self'", "https://plex.tv", "https://api.github.com"]
+      }
+    }
+  }));
   const clientDir = path.resolve(process.cwd(), "dist/client");
   const logsRateLimiter = rateLimit({
     windowMs: 60_000,
