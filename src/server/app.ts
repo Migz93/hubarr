@@ -59,27 +59,26 @@ const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 const AVATAR_TIMEOUT_MS = 10_000;
 const AVATAR_MAX_REDIRECTS = 3;
 
-function isSafeAvatarUrl(rawUrl: string): boolean {
+// Validates and sanitizes an avatar URL (or a redirect location resolved against
+// a base URL). Returns url.href reconstructed from the parsed URL object —
+// never the raw input string — so that static analysis sees a clean value
+// rather than a tainted user-supplied string flowing into fetch().
+function sanitizeAvatarUrl(raw: string, base?: string): string | null {
   let url: URL;
   try {
-    url = new URL(rawUrl);
-  } catch {
-    return false;
-  }
-  return (
-    url.protocol === "https:" &&
-    !url.username &&
-    !url.password &&
-    !PRIVATE_IP_RE.test(url.hostname)
-  );
-}
-
-function resolveRedirectUrl(location: string, base: string): string | null {
-  try {
-    return new URL(location, base).toString();
+    url = new URL(raw, base);
   } catch {
     return null;
   }
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    PRIVATE_IP_RE.test(url.hostname)
+  ) {
+    return null;
+  }
+  return url.href;
 }
 
 function sanitizePlexImageQuery(search: string) {
@@ -510,7 +509,8 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   // Avatar proxy (safe passthrough for absolute Plex user avatar URLs)
   app.get("/api/avatar", requireAuth, async (req, res) => {
     const rawUrl = typeof req.query["url"] === "string" ? req.query["url"] : undefined;
-    if (!rawUrl || !isSafeAvatarUrl(rawUrl)) {
+    const initialUrl = rawUrl ? sanitizeAvatarUrl(rawUrl) : null;
+    if (!initialUrl) {
       res.status(400).json({ error: "Invalid or disallowed avatar URL." });
       return;
     }
@@ -519,7 +519,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     const timeout = setTimeout(() => controller.abort(), AVATAR_TIMEOUT_MS);
 
     try {
-      let currentUrl = rawUrl;
+      let currentUrl = initialUrl;
       let fetchRes: Awaited<ReturnType<typeof fetch>> | null = null;
 
       for (let i = 0; i <= AVATAR_MAX_REDIRECTS; i++) {
@@ -531,12 +531,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
         if (fetchRes.status >= 300 && fetchRes.status < 400) {
           const location = fetchRes.headers.get("location");
-          const resolved = location ? resolveRedirectUrl(location, currentUrl) : null;
-          if (!resolved || !isSafeAvatarUrl(resolved)) {
+          const next = location ? sanitizeAvatarUrl(location, currentUrl) : null;
+          if (!next) {
             res.status(502).end();
             return;
           }
-          currentUrl = resolved;
+          currentUrl = next;
           continue;
         }
         break;
