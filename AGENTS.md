@@ -75,6 +75,21 @@ Do not use `host`, `none`, or custom named networks unless explicitly requested.
 
 ## GitHub Workflow And Release Process
 
+### Before Starting Any Work — Branch Check (Mandatory)
+
+Before writing or editing any code, **always check the current branch** with `git branch --show-current`. Then act on what you find:
+
+| Current branch | Situation | Action |
+|---|---|---|
+| `develop` | On the integration branch | Create a new `type/description` branch from `develop` and switch to it |
+| `main` | On the stable branch | Create a new `type/description` branch from `develop` (not main) and switch to it |
+| `feat/*`, `fix/*`, `chore/*` etc. | Already on a work branch | Continue work here — no new branch needed |
+| Something unexpected | Unfamiliar branch | Ask the user before proceeding |
+
+Do this **before** making any edits, installs, or file changes. Never start work and then create the branch after the fact.
+
+---
+
 ### The Full Development Flow
 
 This is the required workflow for all changes. Follow it every time, in order:
