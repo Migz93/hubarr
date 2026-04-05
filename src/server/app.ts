@@ -48,9 +48,13 @@ const PLEX_LIBRARY_IMAGE_PATH = /^\/library\/metadata\/([A-Za-z0-9:-]+)\/(thumb|
 const PLEX_RESOURCE_IMAGE_PATH = /^\/:\/resources\/([A-Za-z0-9._-]+)$/;
 const ALLOWED_PLEX_IMAGE_QUERY_PARAMS = new Set(["width", "height", "minSize", "upscale", "format"]);
 
-// Matches bare and bracket-wrapped private/loopback IPv4 and IPv6 addresses.
+// Matches private/loopback addresses in both bare and bracket-wrapped forms.
 // Node's WHATWG URL parser returns IPv6 hostnames with brackets, e.g. [::1].
-const PRIVATE_IP_RE = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|::1$|\[::1\]$|fd[0-9a-f]{2}:|\[fd[0-9a-f]{2}|localhost)/i;
+// Covers: IPv4 private ranges, IPv4 link-local, IPv6 loopback, IPv4-mapped IPv6
+// (::ffff:... normalized by URL parser to [::ffff:7f00:1] etc.), IPv6 ULA
+// (fc00::/7 = fc and fd prefixes), IPv6 link-local (fe80::/10).
+const PRIVATE_IP_RE =
+  /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|::1$|\[::1\]|::ffff:|\[::ffff:|f[cd][0-9a-f]{2}:|\[f[cd][0-9a-f]{2}|fe80:|\[fe80:|localhost)/i;
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 const AVATAR_TIMEOUT_MS = 10_000;
 const AVATAR_MAX_REDIRECTS = 3;
