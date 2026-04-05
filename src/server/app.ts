@@ -523,6 +523,9 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       let fetchRes: Awaited<ReturnType<typeof fetch>> | null = null;
 
       for (let i = 0; i <= AVATAR_MAX_REDIRECTS; i++) {
+        // codeql[js/request-forgery] - currentUrl is always the return value of
+        // sanitizeAvatarUrl(), which enforces https:, blocks private/loopback IPs,
+        // strips credentials, and returns url.href from the parsed URL object.
         fetchRes = await fetch(currentUrl, {
           method: "GET",
           redirect: "manual",
