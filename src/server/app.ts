@@ -204,7 +204,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     const signed = `${sessionId}.${signedValue(config.sessionSecret, sessionId)}`;
     res.setHeader(
       "Set-Cookie",
-      `${config.sessionCookieName}=${encodeURIComponent(signed)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${Math.floor(config.sessionTtlMs / 1000)}`
+      `${config.sessionCookieName}=${encodeURIComponent(signed)}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${Math.floor(config.sessionTtlMs / 1000)}`
     );
   }
 
@@ -482,7 +482,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   // Plex image proxy (keeps token server-side)
   app.get("/api/plex/image", requireAuth, async (req, res) => {
-    const plexPath = req.query["path"] as string | undefined;
+    const plexPath = typeof req.query["path"] === "string" ? req.query["path"] : undefined;
     if (!plexPath) {
       res.status(400).json({ error: "path query param required." });
       return;
