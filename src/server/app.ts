@@ -229,7 +229,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       };
     }
 
-    const hostname = payload.hostname?.trim();
+    const hostname = typeof payload.hostname === "string" ? payload.hostname.trim() : undefined;
     const port = payload.port;
     const useSsl = Boolean(payload.useSsl);
 
@@ -869,8 +869,8 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   app.get("/api/settings/logs", requireAuth, (req, res) => {
     const page = Math.max(1, Number(req.query["page"] ?? 1));
     const pageSize = Math.min(100, Math.max(1, Number(req.query["pageSize"] ?? 25)));
-    const filterParam = (req.query["filter"] as string) ?? "debug";
-    const search = (req.query["search"] as string) ?? "";
+    const filterParam = typeof req.query["filter"] === "string" ? req.query["filter"] : "debug";
+    const search = typeof req.query["search"] === "string" ? req.query["search"] : "";
 
     // Cascade: debug=all, info=info+warn+error, warn=warn+error, error=error only
     const LEVEL_ORDER = ["debug", "info", "warn", "error"];

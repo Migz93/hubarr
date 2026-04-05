@@ -851,7 +851,7 @@ function AboutTab() {
                 Close
               </button>
               <a
-                href={changelogRelease.html_url}
+                href={changelogRelease.html_url.startsWith("https://github.com/") ? changelogRelease.html_url : "#"}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="px-4 py-2 text-sm rounded-xl bg-primary hover:bg-primary-dim text-on-primary font-medium transition-colors"
