@@ -116,7 +116,8 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         ...helmet.contentSecurityPolicy.getDefaultDirectives(),
         "connect-src": ["'self'", "https://plex.tv", "https://api.github.com"]
       }
-    }
+    },
+    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" }
   }));
   const clientDir = path.resolve(process.cwd(), "dist/client");
   const logsRateLimiter = rateLimit({
