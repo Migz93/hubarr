@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
+import helmet from "helmet";
 import type {
   HealthResponse,
   PlexConfigPayload,
@@ -109,6 +110,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   const db = new HubarrDatabase(config);
   const services = new HubarrServices(db, logger);
   const app = express();
+  app.use(helmet());
   const clientDir = path.resolve(process.cwd(), "dist/client");
   const logsRateLimiter = rateLimit({
     windowMs: 60_000,
