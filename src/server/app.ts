@@ -48,7 +48,9 @@ const PLEX_LIBRARY_IMAGE_PATH = /^\/library\/metadata\/([A-Za-z0-9:-]+)\/(thumb|
 const PLEX_RESOURCE_IMAGE_PATH = /^\/:\/resources\/([A-Za-z0-9._-]+)$/;
 const ALLOWED_PLEX_IMAGE_QUERY_PARAMS = new Set(["width", "height", "minSize", "upscale", "format"]);
 
-const PRIVATE_IP_RE = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|::1$|fd[0-9a-f]{2}:|localhost)/i;
+// Matches bare and bracket-wrapped private/loopback IPv4 and IPv6 addresses.
+// Node's WHATWG URL parser returns IPv6 hostnames with brackets, e.g. [::1].
+const PRIVATE_IP_RE = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|::1$|\[::1\]$|fd[0-9a-f]{2}:|\[fd[0-9a-f]{2}|localhost)/i;
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 const AVATAR_TIMEOUT_MS = 10_000;
 const AVATAR_MAX_REDIRECTS = 3;
@@ -66,6 +68,14 @@ function isSafeAvatarUrl(rawUrl: string): boolean {
     !url.password &&
     !PRIVATE_IP_RE.test(url.hostname)
   );
+}
+
+function resolveRedirectUrl(location: string, base: string): string | null {
+  try {
+    return new URL(location, base).toString();
+  } catch {
+    return null;
+  }
 }
 
 function sanitizePlexImageQuery(search: string) {
@@ -517,11 +527,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
         if (fetchRes.status >= 300 && fetchRes.status < 400) {
           const location = fetchRes.headers.get("location");
-          if (!location || !isSafeAvatarUrl(location)) {
+          const resolved = location ? resolveRedirectUrl(location, currentUrl) : null;
+          if (!resolved || !isSafeAvatarUrl(resolved)) {
             res.status(502).end();
             return;
           }
-          currentUrl = location;
+          currentUrl = resolved;
           continue;
         }
         break;
