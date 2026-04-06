@@ -62,7 +62,7 @@ Always use bridge networking — it is the only mode that works reliably with Do
 
 - `docker run`: include `--network bridge`
 - Compose services: set `network_mode: bridge`
-- `docker build`: do **not** pass `--network` — BuildKit does not accept it and will error
+- `docker build`: do **not** pass `--network`
 
 Do not use `host`, `none`, or custom named networks unless explicitly requested.
 
