@@ -200,6 +200,24 @@ Do not invent the version — always confirm with the user if ambiguous.
 
 ---
 
+### Agent Behaviour — Snyk
+
+When working through Snyk findings:
+
+1. **Always explain the finding first** — describe what Snyk flagged, why it flagged it, and whether it is a genuine issue or a false positive before suggesting any action.
+
+2. **Recommend Fix or Won't Fix honestly** — if fixing the issue would require writing worse code (less readable, against best practice, or purely to satisfy static analysis), say so clearly and recommend Won't Fix instead.
+
+3. **When recommending Won't Fix**, always provide:
+   - A plain-English comment the user can paste into the Snyk GUI (explaining why the code is safe)
+   - The correct Snyk category to select: **Won't Fix** for false positives or deliberate decisions, **Ignore Temporarily** only if there is a genuine plan to revisit
+
+4. **Never suggest a change purely to appease Snyk** if it doesn't improve actual security or code quality.
+
+See `SECURITY.md` for the full Snyk tooling guide, scan commands, and philosophy.
+
+---
+
 ### Agent Behaviour Expectations
 
 Actively guide the workflow rather than waiting for perfect instructions:
