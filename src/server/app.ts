@@ -1141,7 +1141,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   if (fs.existsSync(clientDir)) {
     app.use(express.static(clientDir));
-    app.get("*", staticRateLimiter, (req, res, next) => {
+    app.get("/*path", staticRateLimiter, (req, res, next) => {
       if (req.path.startsWith("/api/")) {
         next();
         return;
