@@ -874,13 +874,14 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
     // Cascade: debug=all, info=info+warn+error, warn=warn+error, error=error only
     const LEVEL_ORDER = ["debug", "info", "warn", "error"] as const;
-    const rawFilter = typeof req.query["filter"] === "string" ? req.query["filter"] : "";
-    const filterParam = (LEVEL_ORDER as readonly string[]).includes(rawFilter) ? rawFilter : "debug";
-    const filterIndex = LEVEL_ORDER.indexOf(filterParam as (typeof LEVEL_ORDER)[number]);
+    type LogLevel = (typeof LEVEL_ORDER)[number];
+    const isLogLevel = (v: unknown): v is LogLevel => typeof v === "string" && (LEVEL_ORDER as readonly string[]).includes(v);
+    const filterParam: LogLevel = isLogLevel(req.query["filter"]) ? req.query["filter"] : "debug";
+    const filterIndex = LEVEL_ORDER.indexOf(filterParam);
     const allowed = new Set<string>(LEVEL_ORDER.slice(filterIndex));
 
-    const rawSearch = typeof req.query["search"] === "string" ? req.query["search"] : "";
-    const search = rawSearch.slice(0, 200);
+    const rawSearch = req.query["search"];
+    const search: string = typeof rawSearch === "string" ? rawSearch.slice(0, 200) : "";
 
     const LOG_FIELDS = new Set(["timestamp", "level", "message"]);
     const logFile = path.join(config.dataDir, "logs", ".machinelogs.json");
