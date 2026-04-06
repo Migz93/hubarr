@@ -877,7 +877,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     const rawFilter = typeof req.query["filter"] === "string" ? req.query["filter"] : "";
     const filterParam = (LEVEL_ORDER as readonly string[]).includes(rawFilter) ? rawFilter : "debug";
     const filterIndex = LEVEL_ORDER.indexOf(filterParam as (typeof LEVEL_ORDER)[number]);
-    const allowed = new Set(LEVEL_ORDER.slice(filterIndex));
+    const allowed = new Set<string>(LEVEL_ORDER.slice(filterIndex));
 
     const rawSearch = typeof req.query["search"] === "string" ? req.query["search"] : "";
     const search = rawSearch.slice(0, 200);
