@@ -867,15 +867,20 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   /** Log viewer */
   app.get("/api/settings/logs", requireAuth, (req, res) => {
-    const page = Math.max(1, Number(req.query["page"] ?? 1));
-    const pageSize = Math.min(100, Math.max(1, Number(req.query["pageSize"] ?? 25)));
-    const filterParam = typeof req.query["filter"] === "string" ? req.query["filter"] : "debug";
-    const search = typeof req.query["search"] === "string" ? req.query["search"] : "";
+    const rawPage = typeof req.query["page"] === "string" ? Number(req.query["page"]) : 1;
+    const page = Math.max(1, Number.isFinite(rawPage) ? rawPage : 1);
+    const rawPageSize = typeof req.query["pageSize"] === "string" ? Number(req.query["pageSize"]) : 25;
+    const pageSize = Math.min(100, Math.max(1, Number.isFinite(rawPageSize) ? rawPageSize : 25));
 
     // Cascade: debug=all, info=info+warn+error, warn=warn+error, error=error only
-    const LEVEL_ORDER = ["debug", "info", "warn", "error"];
-    const filterIndex = LEVEL_ORDER.indexOf(filterParam);
-    const allowed = new Set(filterIndex >= 0 ? LEVEL_ORDER.slice(filterIndex) : LEVEL_ORDER);
+    const LEVEL_ORDER = ["debug", "info", "warn", "error"] as const;
+    const rawFilter = typeof req.query["filter"] === "string" ? req.query["filter"] : "";
+    const filterParam = (LEVEL_ORDER as readonly string[]).includes(rawFilter) ? rawFilter : "debug";
+    const filterIndex = LEVEL_ORDER.indexOf(filterParam as (typeof LEVEL_ORDER)[number]);
+    const allowed = new Set<string>(LEVEL_ORDER.slice(filterIndex));
+
+    const rawSearch = typeof req.query["search"] === "string" ? req.query["search"] : "";
+    const search = rawSearch.slice(0, 200);
 
     const LOG_FIELDS = new Set(["timestamp", "level", "message"]);
     const logFile = path.join(config.dataDir, "logs", ".machinelogs.json");
