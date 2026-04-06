@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
+import helmet from "helmet";
 import type {
   HealthResponse,
   PlexConfigPayload,
@@ -46,6 +47,39 @@ function signedValue(secret: string, value: string) {
 const PLEX_LIBRARY_IMAGE_PATH = /^\/library\/metadata\/([A-Za-z0-9:-]+)\/(thumb|art|clearLogo|squareArt|theme)(?:\/(\d+))?$/;
 const PLEX_RESOURCE_IMAGE_PATH = /^\/:\/resources\/([A-Za-z0-9._-]+)$/;
 const ALLOWED_PLEX_IMAGE_QUERY_PARAMS = new Set(["width", "height", "minSize", "upscale", "format"]);
+
+// Matches private/loopback addresses in both bare and bracket-wrapped forms.
+// Node's WHATWG URL parser returns IPv6 hostnames with brackets, e.g. [::1].
+// Covers: IPv4 private ranges, IPv4 link-local, IPv6 loopback, IPv4-mapped IPv6
+// (::ffff:... normalized by URL parser to [::ffff:7f00:1] etc.), IPv6 ULA
+// (fc00::/7 = fc and fd prefixes), IPv6 link-local (fe80::/10).
+const PRIVATE_IP_RE =
+  /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|::1$|\[::1\]|::ffff:|\[::ffff:|f[cd][0-9a-f]{2}:|\[f[cd][0-9a-f]{2}|fe80:|\[fe80:|localhost)/i;
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+const AVATAR_TIMEOUT_MS = 10_000;
+const AVATAR_MAX_REDIRECTS = 3;
+
+// Validates and sanitizes an avatar URL (or a redirect location resolved against
+// a base URL). Returns url.href reconstructed from the parsed URL object —
+// never the raw input string — so that static analysis sees a clean value
+// rather than a tainted user-supplied string flowing into fetch().
+function sanitizeAvatarUrl(raw: string, base?: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(raw, base);
+  } catch {
+    return null;
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    PRIVATE_IP_RE.test(url.hostname)
+  ) {
+    return null;
+  }
+  return url.href;
+}
 
 function sanitizePlexImageQuery(search: string) {
   const parsed = new URLSearchParams(search);
@@ -109,6 +143,22 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   const db = new HubarrDatabase(config);
   const services = new HubarrServices(db, logger);
   const app = express();
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+        "connect-src": ["'self'", "https://plex.tv", "https://api.github.com"],
+        // Disable upgrade-insecure-requests: this app runs over plain HTTP in
+        // the default Docker setup, so this directive would cause browsers to
+        // rewrite HTTP sub-requests to HTTPS and break the UI. Must be set to
+        // null (not deleted) so Helmet's useDefaults logic doesn't re-add it.
+        "upgrade-insecure-requests": null
+      }
+    },
+    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+    // Disable HSTS: not appropriate for a plain-HTTP self-hosted deployment.
+    hsts: false
+  }));
   const clientDir = path.resolve(process.cwd(), "dist/client");
   const logsRateLimiter = rateLimit({
     windowMs: 60_000,
@@ -154,7 +204,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     const signed = `${sessionId}.${signedValue(config.sessionSecret, sessionId)}`;
     res.setHeader(
       "Set-Cookie",
-      `${config.sessionCookieName}=${encodeURIComponent(signed)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${Math.floor(config.sessionTtlMs / 1000)}`
+      `${config.sessionCookieName}=${encodeURIComponent(signed)}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${Math.floor(config.sessionTtlMs / 1000)}`
     );
   }
 
@@ -179,7 +229,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       };
     }
 
-    const hostname = payload.hostname?.trim();
+    const hostname = typeof payload.hostname === "string" ? payload.hostname.trim() : undefined;
     const port = payload.port;
     const useSsl = Boolean(payload.useSsl);
 
@@ -432,7 +482,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   // Plex image proxy (keeps token server-side)
   app.get("/api/plex/image", requireAuth, async (req, res) => {
-    const plexPath = req.query["path"] as string | undefined;
+    const plexPath = typeof req.query["path"] === "string" ? req.query["path"] : undefined;
     if (!plexPath) {
       res.status(400).json({ error: "path query param required." });
       return;
@@ -460,6 +510,97 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       res.send(buf);
     } catch {
       res.status(502).end();
+    }
+  });
+
+  // Avatar proxy (safe passthrough for absolute Plex user avatar URLs)
+  app.get("/api/avatar", requireAuth, async (req, res) => {
+    const rawUrl = typeof req.query["url"] === "string" ? req.query["url"] : undefined;
+    const initialUrl = rawUrl ? sanitizeAvatarUrl(rawUrl) : null;
+    if (!initialUrl) {
+      res.status(400).json({ error: "Invalid or disallowed avatar URL." });
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), AVATAR_TIMEOUT_MS);
+
+    try {
+      let currentUrl = initialUrl;
+      let fetchRes: Awaited<ReturnType<typeof fetch>> | null = null;
+
+      for (let i = 0; i <= AVATAR_MAX_REDIRECTS; i++) {
+        // codeql[js/request-forgery] - currentUrl is always the return value of
+        // sanitizeAvatarUrl(), which enforces https:, blocks private/loopback IPs,
+        // strips credentials, and returns url.href from the parsed URL object.
+        fetchRes = await fetch(currentUrl, {
+          method: "GET",
+          redirect: "manual",
+          signal: controller.signal
+        });
+
+        if (fetchRes.status >= 300 && fetchRes.status < 400) {
+          const location = fetchRes.headers.get("location");
+          const next = location ? sanitizeAvatarUrl(location, currentUrl) : null;
+          if (!next) {
+            res.status(502).end();
+            return;
+          }
+          currentUrl = next;
+          continue;
+        }
+        break;
+      }
+
+      // Treat redirect-loop exhaustion (still 3xx after max hops) as a
+      // proxy failure rather than forwarding the redirect to the client.
+      if (!fetchRes || !fetchRes.ok) {
+        res.status(502).end();
+        return;
+      }
+
+      const contentType = fetchRes.headers.get("content-type") ?? "";
+      if (!contentType.startsWith("image/")) {
+        res.status(502).end();
+        return;
+      }
+
+      // Reject based on Content-Length if the server provides it.
+      const contentLength = Number(fetchRes.headers.get("content-length") ?? 0);
+      if (contentLength > MAX_AVATAR_BYTES) {
+        res.status(502).end();
+        return;
+      }
+
+      // Stream the body with a hard byte cap so an upstream server that omits
+      // or lies about Content-Length cannot force excessive memory allocation.
+      const reader = fetchRes.body?.getReader();
+      if (!reader) {
+        res.status(502).end();
+        return;
+      }
+      const chunks: Buffer[] = [];
+      let totalBytes = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        totalBytes += value.length;
+        if (totalBytes > MAX_AVATAR_BYTES) {
+          await reader.cancel();
+          res.status(502).end();
+          return;
+        }
+        chunks.push(Buffer.from(value));
+      }
+      const buf = Buffer.concat(chunks);
+
+      res.setHeader("content-type", contentType);
+      res.setHeader("cache-control", "public, max-age=86400");
+      res.send(buf);
+    } catch {
+      res.status(502).end();
+    } finally {
+      clearTimeout(timeout);
     }
   });
 
@@ -726,15 +867,21 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   /** Log viewer */
   app.get("/api/settings/logs", requireAuth, (req, res) => {
-    const page = Math.max(1, Number(req.query["page"] ?? 1));
-    const pageSize = Math.min(100, Math.max(1, Number(req.query["pageSize"] ?? 25)));
-    const filterParam = (req.query["filter"] as string) ?? "debug";
-    const search = (req.query["search"] as string) ?? "";
+    const rawPage = typeof req.query["page"] === "string" ? Number(req.query["page"]) : 1;
+    const page = Math.max(1, Number.isFinite(rawPage) ? rawPage : 1);
+    const rawPageSize = typeof req.query["pageSize"] === "string" ? Number(req.query["pageSize"]) : 25;
+    const pageSize = Math.min(100, Math.max(1, Number.isFinite(rawPageSize) ? rawPageSize : 25));
 
     // Cascade: debug=all, info=info+warn+error, warn=warn+error, error=error only
-    const LEVEL_ORDER = ["debug", "info", "warn", "error"];
+    const LEVEL_ORDER = ["debug", "info", "warn", "error"] as const;
+    type LogLevel = (typeof LEVEL_ORDER)[number];
+    const isLogLevel = (v: unknown): v is LogLevel => typeof v === "string" && (LEVEL_ORDER as readonly string[]).includes(v);
+    const filterParam: LogLevel = isLogLevel(req.query["filter"]) ? req.query["filter"] : "debug";
     const filterIndex = LEVEL_ORDER.indexOf(filterParam);
-    const allowed = new Set(filterIndex >= 0 ? LEVEL_ORDER.slice(filterIndex) : LEVEL_ORDER);
+    const allowed = new Set<string>(LEVEL_ORDER.slice(filterIndex));
+
+    const rawSearch = req.query["search"];
+    const search: string = typeof rawSearch === "string" ? rawSearch.slice(0, 200) : "";
 
     const LOG_FIELDS = new Set(["timestamp", "level", "message"]);
     const logFile = path.join(config.dataDir, "logs", ".machinelogs.json");
@@ -994,7 +1141,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   if (fs.existsSync(clientDir)) {
     app.use(express.static(clientDir));
-    app.get("*", staticRateLimiter, (req, res, next) => {
+    app.get("/*path", staticRateLimiter, (req, res, next) => {
       if (req.path.startsWith("/api/")) {
         next();
         return;
