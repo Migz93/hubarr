@@ -33,30 +33,34 @@ test.describe("Page smoke tests", () => {
 
   test("Sidebar navigation links are present", async ({ page }) => {
     await page.goto("/dashboard");
-    await expect(page.getByRole("link", { name: /dashboard/i })).toBeVisible();
-    await expect(page.getByRole("link", { name: /watchlists/i })).toBeVisible();
-    await expect(page.getByRole("link", { name: /users/i })).toBeVisible();
-    await expect(page.getByRole("link", { name: /history/i })).toBeVisible();
-    await expect(page.getByRole("link", { name: /settings/i })).toBeVisible();
+    // Scope to the <nav> element to avoid matching same-named links in the page body
+    // (e.g. the dashboard stat chips also have a "Users" link)
+    const nav = page.locator("nav");
+    await expect(nav.getByRole("link", { name: /dashboard/i })).toBeVisible();
+    await expect(nav.getByRole("link", { name: /watchlists/i })).toBeVisible();
+    await expect(nav.getByRole("link", { name: /users/i })).toBeVisible();
+    await expect(nav.getByRole("link", { name: /history/i })).toBeVisible();
+    await expect(nav.getByRole("link", { name: /settings/i })).toBeVisible();
   });
 
   test("Sidebar navigation works", async ({ page }) => {
     await page.goto("/dashboard");
+    const nav = page.locator("nav");
 
-    await page.getByRole("link", { name: /watchlists/i }).click();
+    await nav.getByRole("link", { name: /watchlists/i }).click();
     await expect(page).toHaveURL(/\/watchlists/);
     await expect(page.getByRole("heading", { name: "Watchlists" })).toBeVisible();
 
-    await page.getByRole("link", { name: /users/i }).click();
+    await nav.getByRole("link", { name: /users/i }).click();
     await expect(page).toHaveURL(/\/users/);
 
-    await page.getByRole("link", { name: /history/i }).click();
+    await nav.getByRole("link", { name: /history/i }).click();
     await expect(page).toHaveURL(/\/history/);
 
-    await page.getByRole("link", { name: /settings/i }).click();
+    await nav.getByRole("link", { name: /settings/i }).click();
     await expect(page).toHaveURL(/\/settings/);
 
-    await page.getByRole("link", { name: /dashboard/i }).click();
+    await nav.getByRole("link", { name: /dashboard/i }).click();
     await expect(page).toHaveURL(/\/dashboard/);
   });
 
