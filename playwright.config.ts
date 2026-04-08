@@ -13,20 +13,22 @@ export default defineConfig({
 
   use: {
     baseURL,
-    storageState: "tests/playwright/.auth/storageState.json",
     trace: "on-first-retry"
   },
 
   projects: [
-    // Auth setup runs first — opens a browser for you to log in manually
+    // Auth setup — skipped automatically once storageState.json exists
     {
       name: "auth-setup",
       testMatch: /auth\.setup\.ts/
     },
-    // All other tests depend on auth being done
+    // All other tests load the saved session and depend on auth being done
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: "tests/playwright/.auth/storageState.json"
+      },
       dependencies: ["auth-setup"]
     }
   ]

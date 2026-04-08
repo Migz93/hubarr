@@ -1,37 +1,93 @@
-import { test as setup, expect } from "@playwright/test";
+import { test as setup } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 
 const authFile = "tests/playwright/.auth/storageState.json";
+const baseURL = process.env.BASE_URL ?? "http://localhost:3000";
 
-setup("authenticate", async ({ page, context }) => {
+/**
+ * Auth setup for Playwright tests.
+ *
+ * Running inside a devcontainer means no headed browser window is available,
+ * so we can't drive a real Plex OAuth flow. Instead, grab your session cookie
+ * from the browser you're already logged in with:
+ *
+ *   1. Open your Hubarr instance in Chrome/Firefox
+ *   2. DevTools → Application → Cookies → find "hubarr_session"
+ *   3. Copy the cookie value
+ *   4. Set it in .env.playwright:  SESSION_COOKIE=<paste here>
+ *   5. Run:  npm run test:e2e
+ *
+ * The session will be saved to tests/playwright/.auth/storageState.json and
+ * reused on every subsequent run. When it expires, repeat steps 2-5.
+ */
+setup("authenticate", async ({ request }) => {
   // If we already have a saved session, check it's still valid
   if (fs.existsSync(authFile)) {
-    await page.goto("/api/auth/session");
-    const body = await page.evaluate(() => document.body.innerText);
-    const session = JSON.parse(body) as { authenticated: boolean };
+    const response = await request.get("/api/auth/session", {
+      headers: { Cookie: buildCookieHeader() }
+    });
+    const session = await response.json() as { authenticated: boolean };
     if (session.authenticated) {
       console.log("  Existing session is still valid, skipping login.");
       return;
     }
-    console.log("  Saved session has expired, re-authenticating...");
+    console.log("  Saved session has expired — re-run with a fresh SESSION_COOKIE.");
   }
 
-  // No valid session — open the login page and wait for you to complete Plex OAuth
-  console.log("\n  ┌─────────────────────────────────────────────────────────────────┐");
-  console.log("  │  ACTION REQUIRED: A browser window will open.                  │");
-  console.log("  │  Log in with Plex, then come back here — tests will continue.  │");
-  console.log("  └─────────────────────────────────────────────────────────────────┘\n");
+  const cookie = process.env.SESSION_COOKIE?.trim();
+  if (!cookie) {
+    throw new Error(
+      "\n\n  SESSION_COOKIE is not set.\n" +
+      "  Grab your hubarr_session cookie value from your browser's DevTools and\n" +
+      "  add it to .env.playwright:\n\n" +
+      "    SESSION_COOKIE=<your cookie value here>\n\n" +
+      "  Then re-run the tests.\n"
+    );
+  }
 
-  await page.goto("/login");
+  // Verify the provided cookie actually works before saving it
+  const response = await request.get("/api/auth/session", {
+    headers: { Cookie: `hubarr_session=${encodeURIComponent(cookie)}` }
+  });
+  const session = await response.json() as { authenticated: boolean; user?: { username: string } };
 
-  // Wait for Plex OAuth to complete and the app to land on /dashboard
-  // Timeout is 3 minutes to give you time to log in
-  await page.waitForURL("**/dashboard", { timeout: 180_000 });
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  if (!session.authenticated) {
+    throw new Error(
+      "\n\n  The SESSION_COOKIE value did not authenticate successfully.\n" +
+      "  Make sure you copied the full hubarr_session cookie value from DevTools.\n"
+    );
+  }
 
-  // Save the session so future runs skip login
+  console.log(`  Authenticated as: ${session.user?.username}`);
+
+  // Save storageState with this cookie so all tests can use it
   fs.mkdirSync(path.dirname(authFile), { recursive: true });
-  await context.storageState({ path: authFile });
+  const url = new URL(baseURL);
+  fs.writeFileSync(
+    authFile,
+    JSON.stringify({
+      cookies: [
+        {
+          name: "hubarr_session",
+          value: encodeURIComponent(cookie),
+          domain: url.hostname,
+          path: "/",
+          httpOnly: true,
+          secure: url.protocol === "https:",
+          sameSite: "Strict"
+        }
+      ],
+      origins: []
+    }, null, 2)
+  );
   console.log("  Session saved to", authFile);
 });
+
+function buildCookieHeader(): string {
+  if (!fs.existsSync(authFile)) return "";
+  const state = JSON.parse(fs.readFileSync(authFile, "utf-8")) as {
+    cookies: Array<{ name: string; value: string }>
+  };
+  return state.cookies.map(c => `${c.name}=${c.value}`).join("; ");
+}
