@@ -41,65 +41,7 @@ The app is designed to run with persistent data stored under `/config` in contai
 
 ## Testing
 
-Hubarr uses [Playwright](https://playwright.dev/) for end-to-end tests. Tests run against a **live, fully set-up Hubarr instance** — there is no mocking or test database. This means you need a running app with a real Plex connection before the tests are useful.
-
-### First-time setup
-
-1. Copy the env template:
-   ```bash
-   cp .env.playwright.example .env.playwright
-   ```
-
-2. Edit `.env.playwright` and set `BASE_URL` to your running instance:
-   ```
-   BASE_URL=http://your-hubarr-host:3000
-   ```
-
-3. Grab your session cookie from the browser:
-   - Open your Hubarr instance in Chrome or Firefox
-   - DevTools → Application → Cookies → find `hubarr_session`
-   - Copy the **Value** and paste it into `.env.playwright`:
-   ```
-   SESSION_COOKIE=<paste here>
-   ```
-
-4. Run the tests:
-   ```bash
-   npm run test:e2e
-   ```
-
-   The first run validates the cookie and saves the session to `tests/playwright/.auth/storageState.json` (gitignored). All subsequent runs reuse the saved session automatically.
-
-### Re-authenticating
-
-When your session expires, the auth setup will tell you. Clear the saved session and re-run with a fresh cookie:
-
-```bash
-rm tests/playwright/.auth/storageState.json
-# update SESSION_COOKIE in .env.playwright with a fresh value
-npm run test:e2e
-```
-
-### Commands
-
-| Command | What it does |
-|---|---|
-| `npm run test:e2e` | Run all tests (auth check + test suite) |
-| `npm run test:e2e:auth` | Run the auth setup step only |
-
-### What is tested
-
-| File | Tests |
-|---|---|
-| `tests/playwright/pages.spec.ts` | Every main page loads, sidebar links are present and navigate correctly, unauthenticated requests redirect to login |
-
-Tests are read-only and safe to run against a live instance. Adding more test files follows the same pattern — create a `*.spec.ts` file in `tests/playwright/` and it will be picked up automatically.
-
-### Devcontainer note
-
-The tests run inside the VS Code devcontainer. Because the devcontainer has no display, a headed browser window cannot be opened — which is why auth uses the `SESSION_COOKIE` env var rather than a Playwright-driven OAuth flow.
-
----
+See [TESTING.md](TESTING.md) for the full guide — setup, authentication, commands, and a breakdown of every test.
 
 ## Coding Notes
 
