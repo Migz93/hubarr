@@ -218,6 +218,19 @@ See `SECURITY.md` for the full Snyk tooling guide, scan commands, and philosophy
 
 ---
 
+### End-to-End Tests — Playwright
+
+This repo has a Playwright e2e test suite. See `CONTRIBUTING.md` → **Testing** for the full setup guide. Key points for the agent:
+
+- Tests live in `tests/playwright/` and run with `npm run test:e2e`
+- Tests hit a **live running Hubarr instance** — no mocking, no test database
+- Auth uses a `SESSION_COOKIE` env var in `.env.playwright` (gitignored), not a browser-driven OAuth flow, because the devcontainer has no display
+- Session state is saved to `tests/playwright/.auth/storageState.json` (gitignored) after the first successful auth
+- New test files go in `tests/playwright/` as `*.spec.ts` — they are picked up automatically
+- `playwright.config.ts` and `tsconfig.playwright.json` control the test runner configuration
+
+---
+
 ### Agent Behaviour Expectations
 
 Actively guide the workflow rather than waiting for perfect instructions:
