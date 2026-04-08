@@ -55,7 +55,10 @@ const ALLOWED_PLEX_IMAGE_QUERY_PARAMS = new Set(["width", "height", "minSize", "
 // (fc00::/7 = fc and fd prefixes), IPv6 link-local (fe80::/10).
 const PRIVATE_IP_RE =
   /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|::1$|\[::1\]|::ffff:|\[::ffff:|f[cd][0-9a-f]{2}:|\[f[cd][0-9a-f]{2}|fe80:|\[fe80:|localhost)/i;
-const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+// The image proxy serves both small user avatars (<500 KB) and full-resolution
+// Plex Gracenote poster art which can exceed 5 MB. 20 MB gives ample headroom
+// for any realistic poster while still capping runaway upstream responses.
+const MAX_IMAGE_PROXY_BYTES = 20 * 1024 * 1024;
 const AVATAR_TIMEOUT_MS = 10_000;
 const AVATAR_MAX_REDIRECTS = 3;
 
@@ -567,7 +570,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
       // Reject based on Content-Length if the server provides it.
       const contentLength = Number(fetchRes.headers.get("content-length") ?? 0);
-      if (contentLength > MAX_AVATAR_BYTES) {
+      if (contentLength > MAX_IMAGE_PROXY_BYTES) {
         res.status(502).end();
         return;
       }
@@ -585,7 +588,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         const { done, value } = await reader.read();
         if (done) break;
         totalBytes += value.length;
-        if (totalBytes > MAX_AVATAR_BYTES) {
+        if (totalBytes > MAX_IMAGE_PROXY_BYTES) {
           await reader.cancel();
           res.status(502).end();
           return;
