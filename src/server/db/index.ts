@@ -184,6 +184,19 @@ export class HubarrDatabase {
     usersRepo.markUserSyncResult(this.db, userId, error);
   }
 
+  updateUserCachedAvatar(plexUserId: string, localPath: string): void {
+    usersRepo.updateUserCachedAvatar(this.db, plexUserId, localPath);
+  }
+
+  updateManagedUserCachedAvatar(plexUserId: string, localPath: string): void {
+    usersRepo.updateManagedUserCachedAvatar(this.db, plexUserId, localPath);
+  }
+
+  clearAllCachedImagePaths(): void {
+    usersRepo.clearUserCachedAvatars(this.db);
+    watchlistRepo.clearWatchlistCachedThumbs(this.db);
+  }
+
   // -------------------------------------------------------------------------
   // Watchlist
   // -------------------------------------------------------------------------
@@ -217,6 +230,10 @@ export class HubarrDatabase {
 
   computeWatchlistHash(userId: number, mediaType: "movie" | "show"): string {
     return watchlistRepo.computeWatchlistHash(this.db, userId, mediaType);
+  }
+
+  updateWatchlistItemCachedThumb(plexItemId: string, localPath: string): void {
+    watchlistRepo.updateWatchlistItemCachedThumb(this.db, plexItemId, localPath);
   }
 
   // -------------------------------------------------------------------------

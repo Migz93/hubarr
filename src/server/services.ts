@@ -5,6 +5,7 @@ import type {
   WatchlistItem
 } from "../shared/types.js";
 import { HubarrDatabase } from "./db/index.js";
+import { ImageCacheService } from "./image-cache.js";
 import { Logger } from "./logger.js";
 import { PlexIntegration, type PlexLibraryItemMatch, type ResolvedWatchlistItem } from "./integrations/plex.js";
 import { RssCache, type RssFeedItem } from "./rss-cache.js";
@@ -22,7 +23,8 @@ export class HubarrServices {
 
   constructor(
     private readonly db: HubarrDatabase,
-    private readonly logger: Logger
+    private readonly logger: Logger,
+    private readonly imageCache: ImageCacheService
   ) {}
 
   getPlexIntegration() {
@@ -51,6 +53,10 @@ export class HubarrServices {
         plexUserId: account.plexUserId,
         displayName: account.displayName
       });
+      if (account.avatarUrl) {
+        const localPath = await this.imageCache.cacheAvatarImage(account.avatarUrl);
+        if (localPath) this.db.updateUserCachedAvatar(account.plexUserId, localPath);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn("Could not upsert self user", { message });
@@ -68,12 +74,25 @@ export class HubarrServices {
 
     if (managedResult.status === "fulfilled") {
       this.db.upsertManagedUsers(managedResult.value);
+      for (const user of managedResult.value) {
+        if (user.avatarUrl) {
+          const localPath = await this.imageCache.cacheAvatarImage(user.avatarUrl);
+          if (localPath) this.db.updateManagedUserCachedAvatar(user.plexUserId, localPath);
+        }
+      }
     } else {
       const message = managedResult.reason instanceof Error ? managedResult.reason.message : String(managedResult.reason);
       this.logger.warn("Managed user fetch failed during discover — cache not updated", { message });
     }
 
-    return this.db.upsertUsers(friendsResult.value);
+    const users = this.db.upsertUsers(friendsResult.value);
+    for (const user of friendsResult.value) {
+      if (user.avatarUrl) {
+        const localPath = await this.imageCache.cacheAvatarImage(user.avatarUrl);
+        if (localPath) this.db.updateUserCachedAvatar(user.plexUserId, localPath);
+      }
+    }
+    return users;
   }
 
   getManagedUsers() {
@@ -348,6 +367,22 @@ export class HubarrServices {
     const merged = this.mergeFetchedWatchlistItems(existingItems, fetched);
 
     this.db.replaceWatchlistItems(friend.id, merged);
+
+    const plexSettings = this.db.getPlexSettings();
+    if (plexSettings) {
+      for (const item of merged) {
+        let localPath: string | null = null;
+        if (item.thumb?.startsWith("/")) {
+          // Relative Plex library path — requires server auth
+          localPath = await this.imageCache.cachePosterImage(item.thumb, plexSettings.serverUrl, plexSettings.token);
+        } else if (item.thumb?.startsWith("https://")) {
+          // Absolute CDN URL (TMDB, Plex metadata CDN, etc.) — public, no auth needed
+          localPath = await this.imageCache.cachePosterImageFromUrl(item.thumb);
+        }
+        if (localPath) this.db.updateWatchlistItemCachedThumb(item.plexItemId, localPath);
+      }
+    }
+
     this.db.addSyncRunItem(
       runId,
       "watchlist.fetch",
@@ -508,6 +543,9 @@ export class HubarrServices {
     const failures: string[] = [];
 
     this.logger.info("Full sync started", { userCount: friends.length });
+
+    // Refresh self user account info (including avatar) on every full sync
+    await this.upsertSelfUser();
 
     for (const friend of friends) {
       try {

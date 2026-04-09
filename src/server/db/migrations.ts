@@ -144,6 +144,16 @@ const migrations: Migration[] = [
         );
       `);
     }
+  },
+  {
+    version: 3,
+    up(db) {
+      db.exec(`
+        ALTER TABLE watchlist_cache ADD COLUMN cached_thumb TEXT;
+        ALTER TABLE users ADD COLUMN cached_avatar_url TEXT;
+        ALTER TABLE managed_users ADD COLUMN cached_avatar_url TEXT;
+      `);
+    }
   }
 ];
 

@@ -75,11 +75,13 @@ Read-only. Safe to run against a live instance.
 
 ---
 
-### `tests/playwright/posters.spec.ts` — Poster image loading
+### `tests/playwright/posters.spec.ts` — Image cache
 
-Requires a working Plex connection. Poster images are served through the `/api/plex/image` proxy — failures here typically mean the Plex connection is broken or a specific poster URL is bad. Items with no poster URL render a fallback icon rather than an `<img>`, so they are naturally excluded from these checks.
+Tests that cached images are served correctly from `/images/`, that the route is protected, and that user avatars load. Images are cached at sync time — tests log and skip gracefully if no images have been cached yet (run a full sync first).
 
 | Test | What it checks |
 |---|---|
-| Dashboard recently added posters all load | Waits for the dashboard to finish loading, then checks every `img.object-cover` element has loaded successfully (`complete && naturalWidth > 0`). Logs and skips gracefully if there are no poster images yet. |
-| Watchlists page 1 posters all load | Same check on the first page of the Watchlists grid. |
+| `/images/` route requires authentication | Opens a fresh context with no session and requests `/images/test.jpg` — expects a 401 or redirect to login |
+| Dashboard recently added posters all load | Waits for the dashboard to finish loading, then checks every `img.object-cover[src*='/images/']` has loaded successfully (`complete && naturalWidth > 0`) |
+| Watchlists page 1 posters all load | Same check on the first page of the Watchlists grid |
+| Users page avatar images load from /images/ or show fallback | Checks every `img[src*='/images/']` on the Users page has loaded successfully |

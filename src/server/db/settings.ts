@@ -129,12 +129,18 @@ export function getSession(db: Database.Database, id: string): SessionUser | nul
   const owner = getPlexOwner(db);
   if (!owner || owner.plexId !== row.plexId) return null;
 
+  // Prefer the locally cached avatar path over the raw external URL
+  const selfUser = db
+    .prepare("SELECT cached_avatar_url FROM users WHERE plex_user_id = ? AND is_self = 1")
+    .get(owner.plexId) as { cached_avatar_url: string | null } | undefined;
+  const avatarUrl = selfUser?.cached_avatar_url ?? owner.avatarUrl;
+
   return {
     plexId: owner.plexId,
     username: owner.username,
     displayName: owner.displayName,
     email: owner.email ?? null,
-    avatarUrl: owner.avatarUrl
+    avatarUrl
   };
 }
 

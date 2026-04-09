@@ -106,10 +106,12 @@ export function getWatchlistGrouped(
 
   const rawRows = db
     .prepare(`
-      SELECT w.plex_item_id, w.title, w.type, w.year, w.thumb, w.added_at, w.matched_rating_key, w.raw_payload,
+      SELECT w.plex_item_id, w.title, w.type, w.year,
+             COALESCE(w.cached_thumb, w.thumb) AS thumb,
+             w.added_at, w.matched_rating_key, w.raw_payload,
              f.id AS user_id,
-                   COALESCE(f.display_name_override, f.username) AS friend_display_name,
-                   f.avatar_url AS friend_avatar_url
+             COALESCE(f.display_name_override, f.username) AS friend_display_name,
+             COALESCE(f.cached_avatar_url, f.avatar_url) AS friend_avatar_url
       FROM watchlist_cache w
       JOIN users f ON f.id = w.user_id
       WHERE f.enabled = 1
@@ -119,7 +121,8 @@ export function getWatchlistGrouped(
 
   const enabledUsers = db
     .prepare(`
-      SELECT id AS userId, COALESCE(display_name_override, username) AS displayName, avatar_url AS avatarUrl
+      SELECT id AS userId, COALESCE(display_name_override, username) AS displayName,
+             COALESCE(cached_avatar_url, avatar_url) AS avatarUrl
       FROM users
       WHERE enabled = 1
       ORDER BY is_self DESC, LOWER(display_name) ASC
@@ -277,6 +280,14 @@ export function getWatchlistGrouped(
       media: mediaCounts
     }
   };
+}
+
+export function updateWatchlistItemCachedThumb(db: Database.Database, plexItemId: string, localPath: string): void {
+  db.prepare("UPDATE watchlist_cache SET cached_thumb = ? WHERE plex_item_id = ?").run(localPath, plexItemId);
+}
+
+export function clearWatchlistCachedThumbs(db: Database.Database): void {
+  db.prepare("UPDATE watchlist_cache SET cached_thumb = NULL").run();
 }
 
 export function computeWatchlistHash(db: Database.Database, userId: number, mediaType: "movie" | "show"): string {

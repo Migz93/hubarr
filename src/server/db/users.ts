@@ -64,6 +64,19 @@ export function upsertSelfUser(
   `).run({ ...account, collectionName });
 }
 
+export function updateUserCachedAvatar(db: Database.Database, plexUserId: string, localPath: string): void {
+  db.prepare("UPDATE users SET cached_avatar_url = ? WHERE plex_user_id = ?").run(localPath, plexUserId);
+}
+
+export function updateManagedUserCachedAvatar(db: Database.Database, plexUserId: string, localPath: string): void {
+  db.prepare("UPDATE managed_users SET cached_avatar_url = ? WHERE plex_user_id = ?").run(localPath, plexUserId);
+}
+
+export function clearUserCachedAvatars(db: Database.Database): void {
+  db.prepare("UPDATE users SET cached_avatar_url = NULL").run();
+  db.prepare("UPDATE managed_users SET cached_avatar_url = NULL").run();
+}
+
 export function listUsers(db: Database.Database): UserRecord[] {
   return db
     .prepare(`
@@ -73,7 +86,7 @@ export function listUsers(db: Database.Database): UserRecord[] {
         username,
         display_name_override AS displayNameOverride,
         COALESCE(display_name_override, username) AS displayName,
-        avatar_url AS avatarUrl,
+        COALESCE(cached_avatar_url, avatar_url) AS avatarUrl,
         is_self AS isSelf,
         enabled,
         movie_library_id AS movieLibraryId,
@@ -235,7 +248,7 @@ export function listManagedUsers(db: Database.Database): ManagedUserRecord[] {
       SELECT
         plex_user_id AS plexUserId,
         display_name AS displayName,
-        avatar_url AS avatarUrl,
+        COALESCE(cached_avatar_url, avatar_url) AS avatarUrl,
         has_restriction_profile AS hasRestrictionProfile
       FROM managed_users
       ORDER BY LOWER(display_name) ASC

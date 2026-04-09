@@ -58,6 +58,7 @@ export function WatchlistItemModal({
               src={posterSrc}
               alt={item.title}
               className="w-full h-full object-cover object-top"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).src = "/poster-fallback.svg"; }}
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center">

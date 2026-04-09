@@ -127,6 +127,8 @@ function GeneralTab({
   const [resetting, setResetting] = useState(false);
   const [resetMessage, setResetMessage] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [clearingCache, setClearingCache] = useState(false);
+  const [clearCacheMessage, setClearCacheMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setForm({ ...settings.general });
@@ -168,6 +170,21 @@ function GeneralTab({
       setResetMessage(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setResetting(false);
+    }
+  }
+
+  async function clearImageCache() {
+    setClearingCache(true);
+    setClearCacheMessage(null);
+    try {
+      const result = await apiPost<{ removed: number }>("/api/settings/image-cache/clear");
+      setClearCacheMessage(
+        `Cleared ${result.removed} cached image${result.removed !== 1 ? "s" : ""}. Images will be re-downloaded on next sync.`
+      );
+    } catch (caught) {
+      setClearCacheMessage(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setClearingCache(false);
     }
   }
 
@@ -224,6 +241,20 @@ function GeneralTab({
           </button>
           {resetMessage && <div className="text-xs text-on-surface-variant mt-3">{resetMessage}</div>}
         </div>
+      </SectionCard>
+
+      <SectionCard title="Image Cache">
+        <p className="text-xs text-on-surface-variant mb-3">
+          Hubarr caches poster art and user avatars locally to avoid repeated network requests. Cached images are refreshed automatically after 7 days. Clearing the cache forces a re-download on the next sync.
+        </p>
+        <button
+          disabled={clearingCache}
+          onClick={() => void clearImageCache()}
+          className="text-sm font-semibold rounded-xl px-4 py-2 min-w-[160px] transition-colors disabled:opacity-50 bg-surface-container-high hover:bg-surface-bright border border-outline-variant/30 text-on-surface"
+        >
+          {clearingCache ? "Clearing…" : "Clear Image Cache"}
+        </button>
+        {clearCacheMessage && <div className="text-xs text-on-surface-variant mt-3">{clearCacheMessage}</div>}
       </SectionCard>
     </div>
   );

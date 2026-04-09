@@ -164,11 +164,13 @@ export function buildDashboard(db: Database.Database): DashboardResponse {
 
   const recentRows = db
     .prepare(`
-      SELECT w.plex_item_id AS plexItemId, w.title, w.year, w.type, w.thumb AS posterUrl, w.added_at AS addedAt,
+      SELECT w.plex_item_id AS plexItemId, w.title, w.year, w.type,
+             COALESCE(w.cached_thumb, w.thumb) AS posterUrl,
+             w.added_at AS addedAt,
              w.matched_rating_key AS matchedRatingKey,
              f.id AS userId,
              COALESCE(f.display_name_override, f.username) AS userDisplayName,
-             f.avatar_url AS userAvatarUrl
+             COALESCE(f.cached_avatar_url, f.avatar_url) AS userAvatarUrl
       FROM watchlist_cache w
       JOIN users f ON f.id = w.user_id
       WHERE f.enabled = 1
