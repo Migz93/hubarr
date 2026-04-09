@@ -110,15 +110,6 @@ Plex Home managed users (sub-accounts with no independent Plex account) have two
 - **Label exclusions are applied automatically.** Even though their watchlist can't be synced, Hubarr will still apply label exclusion filters to managed users so that other users' watchlist collections don't appear for them. This happens as part of the normal collection sync.
 - **Restriction Profiles block label exclusions.** If a managed user has a Plex restriction profile set (e.g. Younger Kid, Older Kid, Teen), Plex prevents label-based filter changes for that account. Hubarr skips those users entirely — the restriction profile itself is usually sufficient exclusion anyway.
 
-### Plex Friends Home Privacy Caveat
-
-Plex currently does not properly respect label-based restrictions for collections shown on Home and Recommended pages.
-
-Because of that, publishing friends' watchlists to **Friends Home** is not currently recommended. If you enable it, friends may be able to see each other's watchlist collections on the Plex home screen.
-
-More information:
-- https://forums.plex.tv/t/privacy-issue-label-restrictions-not-respected-for-collections-on-the-home-recommended-pages/933544/9
-
 ## AI Transparency
 
 Hubarr was created with heavy AI assistance.
