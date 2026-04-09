@@ -245,7 +245,7 @@ function GeneralTab({
 
       <SectionCard title="Image Cache">
         <p className="text-xs text-on-surface-variant mb-3">
-          Hubarr caches poster art and user avatars locally to avoid repeated network requests. Cached images are refreshed automatically after 7 days. Clearing the cache forces a re-download on the next sync.
+          Hubarr caches poster art and user avatars locally to make loading faster. Clearing the cache forces a re-download on the next sync.
         </p>
         <button
           disabled={clearingCache}

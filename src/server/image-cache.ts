@@ -459,26 +459,18 @@ export class ImageCacheService {
       return null;
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    try {
-      const upstream = await fetch(imageUrl, {
-        headers: { "X-Plex-Token": token },
-        signal: controller.signal
+    const upstream = await this.fetchFollowingRedirects(imageUrl, { "X-Plex-Token": token });
+    if (!upstream) return null; // redirect issue already logged
+    if (!upstream.ok) {
+      this.logger.warn("ImageCache: Plex fetch failed", {
+        sourceValue: thumbPath, status: upstream.status
       });
-      if (!upstream.ok) {
-        this.logger.warn("ImageCache: Plex fetch failed", {
-          sourceValue: thumbPath, status: upstream.status
-        });
-        return null;
-      }
-      const maxAgeSeconds = this.parseCacheControlMaxAge(upstream.headers.get("cache-control"));
-      const data = await this.streamBodyWithCap(upstream, POSTER_MAX_BYTES, thumbPath);
-      if (!data) return null;
-      return { data, maxAgeSeconds };
-    } finally {
-      clearTimeout(timeout);
+      return null;
     }
+    const maxAgeSeconds = this.parseCacheControlMaxAge(upstream.headers.get("cache-control"));
+    const data = await this.streamBodyWithCap(upstream, POSTER_MAX_BYTES, thumbPath);
+    if (!data) return null;
+    return { data, maxAgeSeconds };
   }
 
   private async fetchPublicUrlBuffer(imageUrl: string): Promise<FetchResult | null> {
@@ -490,30 +482,25 @@ export class ImageCacheService {
       return null;
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    try {
-      const upstream = await fetch(safe, { signal: controller.signal });
-      if (!upstream.ok) {
-        this.logger.warn("ImageCache: public URL fetch failed", {
-          sourceValue: imageUrl, status: upstream.status
-        });
-        return null;
-      }
-      const contentType = upstream.headers.get("content-type") ?? "";
-      if (!contentType.startsWith("image/")) {
-        this.logger.warn("ImageCache: poster response is not an image", {
-          action: "lookup", sourceType: "public-url", sourceValue: imageUrl, contentType
-        });
-        return null;
-      }
-      const maxAgeSeconds = this.parseCacheControlMaxAge(upstream.headers.get("cache-control"));
-      const data = await this.streamBodyWithCap(upstream, POSTER_MAX_BYTES, imageUrl);
-      if (!data) return null;
-      return { data, maxAgeSeconds };
-    } finally {
-      clearTimeout(timeout);
+    const upstream = await this.fetchFollowingRedirects(safe);
+    if (!upstream) return null; // redirect issue already logged
+    if (!upstream.ok) {
+      this.logger.warn("ImageCache: public URL fetch failed", {
+        sourceValue: imageUrl, status: upstream.status
+      });
+      return null;
     }
+    const contentType = upstream.headers.get("content-type") ?? "";
+    if (!contentType.startsWith("image/")) {
+      this.logger.warn("ImageCache: poster response is not an image", {
+        action: "lookup", sourceType: "public-url", sourceValue: imageUrl, contentType
+      });
+      return null;
+    }
+    const maxAgeSeconds = this.parseCacheControlMaxAge(upstream.headers.get("cache-control"));
+    const data = await this.streamBodyWithCap(upstream, POSTER_MAX_BYTES, imageUrl);
+    if (!data) return null;
+    return { data, maxAgeSeconds };
   }
 
   private async fetchAvatarBuffer(avatarUrl: string): Promise<FetchResult | null> {
@@ -525,53 +512,81 @@ export class ImageCacheService {
       return null;
     }
 
+    const upstream = await this.fetchFollowingRedirects(safe);
+    if (!upstream) return null; // redirect issue already logged
+    if (!upstream.ok) {
+      this.logger.warn("ImageCache: avatar fetch failed", {
+        sourceValue: avatarUrl, status: upstream.status
+      });
+      return null;
+    }
+    const contentType = upstream.headers.get("content-type") ?? "";
+    if (!contentType.startsWith("image/")) {
+      this.logger.warn("ImageCache: avatar response is not an image", {
+        sourceValue: avatarUrl, contentType
+      });
+      return null;
+    }
+    const maxAgeSeconds = this.parseCacheControlMaxAge(upstream.headers.get("cache-control"));
+    const data = await this.streamBodyWithCap(upstream, AVATAR_MAX_BYTES, avatarUrl);
+    if (!data) return null;
+    return { data: data, maxAgeSeconds };
+  }
+
+  /**
+   * Fetch a URL following redirects manually, re-validating each Location
+   * header through sanitizeAvatarUrl to prevent SSRF via redirect hops.
+   * Returns the final non-redirect Response, or null if a hop fails validation
+   * or the redirect limit is exceeded.
+   */
+  private async fetchFollowingRedirects(
+    initialUrl: string,
+    headers?: Record<string, string>
+  ): Promise<Response | null> {
+    const MAX_REDIRECTS = 5;
+    let url = initialUrl;
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
     try {
-      const upstream = await fetch(safe, { signal: controller.signal });
-      if (!upstream.ok) {
-        this.logger.warn("ImageCache: avatar fetch failed", {
-          sourceValue: avatarUrl, status: upstream.status
+      for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+        const response = await fetch(url, {
+          redirect: "manual",
+          signal: controller.signal,
+          ...(headers ? { headers } : {})
         });
-        return null;
-      }
 
-      const contentType = upstream.headers.get("content-type") ?? "";
-      if (!contentType.startsWith("image/")) {
-        this.logger.warn("ImageCache: avatar response is not an image", {
-          sourceValue: avatarUrl, contentType
-        });
-        return null;
-      }
+        if (response.status < 300 || response.status >= 400) {
+          return response;
+        }
 
-      const contentLength = Number(upstream.headers.get("content-length") ?? 0);
-      if (contentLength > AVATAR_MAX_BYTES) {
-        this.logger.warn("ImageCache: avatar too large", { sourceValue: avatarUrl, contentLength });
-        return null;
-      }
-
-      const maxAgeSeconds = this.parseCacheControlMaxAge(upstream.headers.get("cache-control"));
-
-      const reader = upstream.body?.getReader();
-      if (!reader) return null;
-
-      const chunks: Buffer[] = [];
-      let totalBytes = 0;
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        totalBytes += value.length;
-        if (totalBytes > AVATAR_MAX_BYTES) {
-          await reader.cancel();
-          this.logger.warn("ImageCache: avatar exceeded byte cap mid-stream", { sourceValue: avatarUrl });
+        if (hop === MAX_REDIRECTS) {
+          this.logger.warn("ImageCache: too many redirects", { url: initialUrl });
           return null;
         }
-        chunks.push(Buffer.from(value));
+
+        const location = response.headers.get("location");
+        if (!location) {
+          this.logger.warn("ImageCache: redirect with no Location header", { url });
+          return null;
+        }
+
+        const next = sanitizeAvatarUrl(location, url);
+        if (!next) {
+          this.logger.warn("ImageCache: redirect to disallowed URL blocked", {
+            action: "lookup", from: url, location
+          });
+          return null;
+        }
+
+        url = next;
       }
-      return { data: Buffer.concat(chunks), maxAgeSeconds };
     } finally {
       clearTimeout(timeout);
     }
+
+    return null;
   }
 
   // ---------------------------------------------------------------------------
