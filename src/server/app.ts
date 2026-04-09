@@ -635,6 +635,15 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     res.json({ updated });
   });
 
+  app.get("/api/users/managed", requireAuth, async (_req, res) => {
+    try {
+      const users = await services.getManagedUsers();
+      res.json(users);
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   app.patch("/api/users/:id", requireAuth, (req, res) => {
     try {
       const user = db.updateUser(Number(req.params.id), req.body);

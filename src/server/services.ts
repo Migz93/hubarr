@@ -63,6 +63,11 @@ export class HubarrServices {
     return this.db.upsertUsers(friends);
   }
 
+  async getManagedUsers() {
+    const plex = this.getPlexIntegration();
+    return plex.fetchManagedUsers();
+  }
+
   async refreshPlexToken() {
     const owner = this.db.getPlexOwner();
     if (!owner?.plexToken) {
