@@ -310,21 +310,12 @@ function ManagedUserRow({ user }: { user: ManagedUserRecord }) {
       )}
 
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-medium text-on-surface text-sm truncate">{user.displayName}</span>
-          <span className="text-xs bg-surface-container-high text-on-surface-variant px-1.5 py-0.5 rounded font-medium">
-            Managed Account
-          </span>
-          {user.hasRestrictionProfile && (
-            <span className="text-xs bg-on-surface/10 text-on-surface-variant px-1.5 py-0.5 rounded font-medium">
-              Restriction Profile
-            </span>
-          )}
-        </div>
+        <span className="font-medium text-on-surface text-sm truncate">{user.displayName}</span>
         <p className="text-xs text-on-surface-variant mt-0.5">
+          {"Watchlists not available for managed users \u2014 "}
           {user.hasRestrictionProfile
-            ? "Restriction profile active — isolation filters not applied"
-            : "Watchlists not available for managed users — isolation filters applied automatically"}
+            ? "Label exclusion cannot be applied to user with Restriction Profile"
+            : "Label exclusion filter applied"}
         </p>
       </div>
     </div>

@@ -59,13 +59,16 @@ export class HubarrServices {
 
   async discoverUsers() {
     const plex = this.getPlexIntegration();
-    const friends = await plex.discoverUsers();
+    const [friends, managed] = await Promise.all([
+      plex.discoverUsers(),
+      plex.fetchManagedUsers()
+    ]);
+    this.db.upsertManagedUsers(managed);
     return this.db.upsertUsers(friends);
   }
 
-  async getManagedUsers() {
-    const plex = this.getPlexIntegration();
-    return plex.fetchManagedUsers();
+  getManagedUsers() {
+    return this.db.listManagedUsers();
   }
 
   async refreshPlexToken() {

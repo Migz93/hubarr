@@ -130,6 +130,20 @@ const migrations: Migration[] = [
         );
       `);
     }
+  },
+  {
+    version: 2,
+    up(db) {
+      db.exec(`
+        CREATE TABLE managed_users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          plex_user_id TEXT NOT NULL UNIQUE,
+          display_name TEXT NOT NULL,
+          avatar_url TEXT,
+          has_restriction_profile INTEGER NOT NULL DEFAULT 0
+        );
+      `);
+    }
   }
 ];
 

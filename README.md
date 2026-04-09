@@ -38,7 +38,7 @@ Hubarr uses a few background jobs:
 
 - **Watchlist RSS Sync** watches Plex RSS feeds for quick watchlist changes and stores new items fast
 - **Watchlist GraphQL Sync** regularly performs a fuller watchlist reconciliation to catch anything RSS missed
-- **Plex library scans** help Hubarr notice when something from a watchlist has now actually appeared in your Plex libraries
+- **Plex Library Scans** help Hubarr notice when something from a watchlist has now actually appeared in your Plex libraries
 - **Collection Sync** is the job that updates the Plex collections and hub rows
 
 Together, that means Hubarr can react quickly when watchlists change, while still having a slower safety net that keeps everything accurate over time.
@@ -101,6 +101,14 @@ Hubarr is configured through its web UI after first run. The two things you may 
 5. Run a sync, or wait for the scheduled jobs to start working
 
 ## Important Limitations
+
+### Plex Home Managed Users
+
+Plex Home managed users (sub-accounts with no independent Plex account) have two limitations:
+
+- **Watchlists cannot be synced.** Managed users have no presence in the Plex community API, so Hubarr cannot read their watchlist. They will appear in the Users page as read-only and cannot be enabled.
+- **Label exclusions are applied automatically.** Even though their watchlist can't be synced, Hubarr will still apply label exclusion filters to managed users so that other users' watchlist collections don't appear for them. This happens as part of the normal collection sync.
+- **Restriction Profiles block label exclusions.** If a managed user has a Plex restriction profile set (e.g. Younger Kid, Older Kid, Teen), Plex prevents label-based filter changes for that account. Hubarr skips those users entirely — the restriction profile itself is usually sufficient exclusion anyway.
 
 ### Plex Friends Home Privacy Caveat
 

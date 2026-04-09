@@ -1614,6 +1614,12 @@ export class PlexIntegration {
     // Also clear from Plex Home managed users
     const homeUsers = await this.getHomeOnlyManagedUsers();
     for (const user of homeUsers) {
+      // Restriction profile users are skipped in sync — don't attempt to clear them either
+      if (user.hasRestrictionProfile) {
+        skipped++;
+        continue;
+      }
+
       const finalMovieFilter = removeHubarrLabelsFromFilter(user.filterMovies);
       const finalShowFilter = removeHubarrLabelsFromFilter(user.filterTelevision);
 

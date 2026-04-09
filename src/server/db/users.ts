@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import type { UserRecord } from "../../shared/types.js";
+import type { ManagedUserRecord, UserRecord } from "../../shared/types.js";
 import { getAppSettings } from "./settings.js";
 
 function buildCollectionName(
@@ -191,4 +191,46 @@ export function refreshDerivedCollectionNames(db: Database.Database): void {
 export function markUserSyncResult(db: Database.Database, userId: number, error: string | null): void {
   db.prepare("UPDATE users SET last_synced_at = ?, last_sync_error = ? WHERE id = ?")
     .run(new Date().toISOString(), error, userId);
+}
+
+export function upsertManagedUsers(
+  db: Database.Database,
+  users: Array<{
+    plexUserId: string;
+    displayName: string;
+    avatarUrl: string | null;
+    hasRestrictionProfile: boolean;
+  }>
+): ManagedUserRecord[] {
+  const stmt = db.prepare(`
+    INSERT INTO managed_users (plex_user_id, display_name, avatar_url, has_restriction_profile)
+    VALUES (@plexUserId, @displayName, @avatarUrl, @hasRestrictionProfile)
+    ON CONFLICT(plex_user_id) DO UPDATE SET
+      display_name = excluded.display_name,
+      avatar_url = excluded.avatar_url,
+      has_restriction_profile = excluded.has_restriction_profile
+  `);
+
+  db.transaction(() => {
+    for (const user of users) {
+      stmt.run({ ...user, hasRestrictionProfile: user.hasRestrictionProfile ? 1 : 0 });
+    }
+  })();
+
+  return listManagedUsers(db);
+}
+
+export function listManagedUsers(db: Database.Database): ManagedUserRecord[] {
+  return (db
+    .prepare(`
+      SELECT
+        plex_user_id AS plexUserId,
+        display_name AS displayName,
+        avatar_url AS avatarUrl,
+        has_restriction_profile AS hasRestrictionProfile
+      FROM managed_users
+      ORDER BY LOWER(display_name) ASC
+    `)
+    .all() as Array<Omit<ManagedUserRecord, "hasRestrictionProfile"> & { hasRestrictionProfile: number }>)
+    .map((row) => ({ ...row, hasRestrictionProfile: Boolean(row.hasRestrictionProfile) }));
 }

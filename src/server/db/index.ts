@@ -4,6 +4,7 @@ import type {
   AppSettings,
   BootstrapStatus,
   DashboardResponse,
+  ManagedUserRecord,
   OnboardingStep,
   PlexCollectionRecord,
   PlexOwnerRecord,
@@ -138,6 +139,21 @@ export class HubarrDatabase {
 
   listUsers(): UserRecord[] {
     return usersRepo.listUsers(this.db);
+  }
+
+  upsertManagedUsers(
+    users: Array<{
+      plexUserId: string;
+      displayName: string;
+      avatarUrl: string | null;
+      hasRestrictionProfile: boolean;
+    }>
+  ): ManagedUserRecord[] {
+    return usersRepo.upsertManagedUsers(this.db, users);
+  }
+
+  listManagedUsers(): ManagedUserRecord[] {
+    return usersRepo.listManagedUsers(this.db);
   }
 
   getUser(id: number): UserRecord | null {
