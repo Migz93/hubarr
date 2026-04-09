@@ -459,18 +459,28 @@ export class ImageCacheService {
       return null;
     }
 
-    const upstream = await this.fetchFollowingRedirects(imageUrl, { "X-Plex-Token": token });
-    if (!upstream) return null; // redirect issue already logged
-    if (!upstream.ok) {
-      this.logger.warn("ImageCache: Plex fetch failed", {
-        sourceValue: thumbPath, status: upstream.status
+    // Plex is a user-configured trusted source — follow its redirects natively.
+    // Per-hop SSRF validation is reserved for untrusted external URLs.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const upstream = await fetch(imageUrl, {
+        headers: { "X-Plex-Token": token },
+        signal: controller.signal
       });
-      return null;
+      if (!upstream.ok) {
+        this.logger.warn("ImageCache: Plex fetch failed", {
+          sourceValue: thumbPath, status: upstream.status
+        });
+        return null;
+      }
+      const maxAgeSeconds = this.parseCacheControlMaxAge(upstream.headers.get("cache-control"));
+      const data = await this.streamBodyWithCap(upstream, POSTER_MAX_BYTES, thumbPath);
+      if (!data) return null;
+      return { data, maxAgeSeconds };
+    } finally {
+      clearTimeout(timeout);
     }
-    const maxAgeSeconds = this.parseCacheControlMaxAge(upstream.headers.get("cache-control"));
-    const data = await this.streamBodyWithCap(upstream, POSTER_MAX_BYTES, thumbPath);
-    if (!data) return null;
-    return { data, maxAgeSeconds };
   }
 
   private async fetchPublicUrlBuffer(imageUrl: string): Promise<FetchResult | null> {
