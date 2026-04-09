@@ -98,6 +98,7 @@ const DISCOVER_ORIGIN = "https://discover.provider.plex.tv";
 const DISCOVER_RSS_PATH = "/rss";
 const RSS_PLEX_ORIGIN = "https://rss.plex.tv";
 const PLEX_TV_ACCOUNT_URL = "https://plex.tv/users/account.json";
+const PLEX_TV_USERS_URL = "https://plex.tv/api/users";
 const PLEX_TV_PING_URL = "https://plex.tv/api/v2/ping";
 const PLEX_TV_RESOURCES_URL = "https://plex.tv/api/v2/resources";
 
@@ -1308,6 +1309,113 @@ export class PlexIntegration {
   }
 
   /**
+   * Fetch Plex Home managed users who have no independent Plex account.
+   * Uses the plex.tv/api/users endpoint and filters for home-only managed
+   * accounts (home="1", no username/email), scoped to this server.
+   */
+  private async getHomeOnlyManagedUsers(): Promise<Array<{
+    plexUserId: string;
+    displayName: string;
+    avatarUrl: string | null;
+    filterMovies: string;
+    filterTelevision: string;
+    filterMusic: string;
+    filterPhotos: string;
+    filterAll: string;
+    allowSync: boolean;
+    allowChannels: boolean;
+    allowCameraUpload: boolean;
+    allowSubtitleAdmin: boolean;
+    allowTuners: number;
+    hasRestrictionProfile: boolean;
+  }>> {
+    const machineIdentifier = await this.getMachineIdentifier();
+
+    const url = new URL(PLEX_TV_USERS_URL);
+    url.searchParams.set("X-Plex-Token", this.settings.token);
+
+    const response = await fetch(url.toString(), {
+      headers: { Accept: "application/xml", "User-Agent": PLEX_USER_AGENT }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch Plex users list: ${response.status} ${response.statusText}`);
+    }
+
+    const xml = await response.text();
+    const parsed = await parseStringPromise(xml) as {
+      MediaContainer?: {
+        User?: Array<{
+          $: {
+            id: string;
+            title?: string;
+            thumb?: string;
+            home?: string;
+            username?: string;
+            email?: string;
+            filterMovies?: string;
+            filterTelevision?: string;
+            filterMusic?: string;
+            filterPhotos?: string;
+            filterAll?: string;
+            allowSync?: string;
+            allowChannels?: string;
+            allowCameraUpload?: string;
+            allowSubtitleAdmin?: string;
+            allowTuners?: string;
+          };
+          Server?: Array<{ $: { machineIdentifier: string } }>;
+        }>;
+      };
+    };
+
+    const users = parsed.MediaContainer?.User ?? [];
+
+    return users
+      .filter((u) =>
+        u.$.home === "1" &&
+        !u.$.username &&
+        !u.$.email &&
+        (u.Server ?? []).some((s) => s.$.machineIdentifier === machineIdentifier)
+      )
+      .map((u) => {
+        const filterMovies = decodeURIComponent(u.$.filterMovies ?? "");
+        const filterTelevision = decodeURIComponent(u.$.filterTelevision ?? "");
+        return {
+          plexUserId: u.$.id,
+          displayName: u.$.title ?? u.$.id,
+          avatarUrl: u.$.thumb ?? null,
+          filterMovies,
+          filterTelevision,
+          filterMusic: u.$.filterMusic ?? "",
+          filterPhotos: u.$.filterPhotos ?? "",
+          filterAll: u.$.filterAll ?? "",
+          allowSync: u.$.allowSync === "1",
+          allowChannels: u.$.allowChannels === "1",
+          allowCameraUpload: u.$.allowCameraUpload === "1",
+          allowSubtitleAdmin: u.$.allowSubtitleAdmin === "1",
+          allowTuners: parseInt(u.$.allowTuners ?? "0", 10),
+          hasRestrictionProfile: filterMovies.includes("contentRating=") || filterTelevision.includes("contentRating=")
+        };
+      });
+  }
+
+  async fetchManagedUsers(): Promise<Array<{
+    plexUserId: string;
+    displayName: string;
+    avatarUrl: string | null;
+    hasRestrictionProfile: boolean;
+  }>> {
+    const users = await this.getHomeOnlyManagedUsers();
+    return users.map(({ plexUserId, displayName, avatarUrl, hasRestrictionProfile }) => ({
+      plexUserId,
+      displayName,
+      avatarUrl,
+      hasRestrictionProfile
+    }));
+  }
+
+  /**
    * Apply per-user label exclusion filters so each Plex managed user only
    * sees their own watchlist hub row, not other users' rows.
    *
@@ -1393,6 +1501,58 @@ export class PlexIntegration {
       updated++;
     }
 
+    // Also apply to Plex Home managed users who have no independent Plex account.
+    // These can't be reached via the email-based sharing_settings path, but the
+    // same endpoint accepts invitedId (numeric user ID) as an alternative.
+    const homeUsers = await this.getHomeOnlyManagedUsers();
+    for (const user of homeUsers) {
+      // Skip users with a restriction profile — Plex prevents label filter changes for them
+      if (user.hasRestrictionProfile) {
+        skipped++;
+        continue;
+      }
+
+      // Managed users are never Hubarr-enabled, so always exclude all labels
+      const cleanedMovieFilter = removeHubarrLabelsFromFilter(user.filterMovies);
+      const cleanedShowFilter = removeHubarrLabelsFromFilter(user.filterTelevision);
+      const finalMovieFilter = addHubarrLabelExclusions(cleanedMovieFilter, allLabels);
+      const finalShowFilter = addHubarrLabelExclusions(cleanedShowFilter, allLabels);
+
+      if (finalMovieFilter === user.filterMovies && finalShowFilter === user.filterTelevision) {
+        skipped++;
+        continue;
+      }
+
+      const payload = {
+        invitedId: user.plexUserId,
+        settings: {
+          filterMovies: finalMovieFilter,
+          filterTelevision: finalShowFilter,
+          filterMusic: user.filterMusic,
+          filterPhotos: user.filterPhotos,
+          filterAll: user.filterAll || null,
+          allowSync: user.allowSync,
+          allowChannels: user.allowChannels,
+          allowCameraUpload: user.allowCameraUpload,
+          allowSubtitleAdmin: user.allowSubtitleAdmin,
+          allowTuners: user.allowTuners
+        }
+      };
+
+      const response = await fetch(updateUrl.toString(), {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Failed to update sharing filters for managed user ${user.displayName} (${user.plexUserId}): ${response.status} ${text}`);
+      }
+
+      updated++;
+    }
+
     return { updated, skipped };
   }
 
@@ -1446,6 +1606,53 @@ export class PlexIntegration {
       if (!response.ok) {
         const text = await response.text();
         throw new Error(`Failed to clear sharing filters for ${user.invitedEmail}: ${response.status} ${text}`);
+      }
+
+      updated++;
+    }
+
+    // Also clear from Plex Home managed users
+    const homeUsers = await this.getHomeOnlyManagedUsers();
+    for (const user of homeUsers) {
+      // Restriction profile users are skipped in sync — don't attempt to clear them either
+      if (user.hasRestrictionProfile) {
+        skipped++;
+        continue;
+      }
+
+      const finalMovieFilter = removeHubarrLabelsFromFilter(user.filterMovies);
+      const finalShowFilter = removeHubarrLabelsFromFilter(user.filterTelevision);
+
+      if (finalMovieFilter === user.filterMovies && finalShowFilter === user.filterTelevision) {
+        skipped++;
+        continue;
+      }
+
+      const payload = {
+        invitedId: user.plexUserId,
+        settings: {
+          filterMovies: finalMovieFilter,
+          filterTelevision: finalShowFilter,
+          filterMusic: user.filterMusic,
+          filterPhotos: user.filterPhotos,
+          filterAll: user.filterAll || null,
+          allowSync: user.allowSync,
+          allowChannels: user.allowChannels,
+          allowCameraUpload: user.allowCameraUpload,
+          allowSubtitleAdmin: user.allowSubtitleAdmin,
+          allowTuners: user.allowTuners
+        }
+      };
+
+      const response = await fetch(updateUrl.toString(), {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Failed to clear sharing filters for managed user ${user.displayName} (${user.plexUserId}): ${response.status} ${text}`);
       }
 
       updated++;

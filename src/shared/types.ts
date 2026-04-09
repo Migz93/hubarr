@@ -87,6 +87,13 @@ export interface UserRecord {
   lastSyncError: string | null;
 }
 
+export interface ManagedUserRecord {
+  plexUserId: string;
+  displayName: string;
+  avatarUrl: string | null;
+  hasRestrictionProfile: boolean;
+}
+
 export interface WatchlistItem {
   plexItemId: string;
   title: string;

@@ -3,10 +3,11 @@ import { ChevronDown, ChevronRight, Edit2, Play, RefreshCw, X } from "lucide-rea
 import { apiGet, apiPatch, apiPost } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
 import { Field, ToggleField } from "../components/FormControls";
-import type { UserRecord, SettingsResponse, VisibilityConfig } from "../../shared/types";
+import type { UserRecord, ManagedUserRecord, SettingsResponse, VisibilityConfig } from "../../shared/types";
 
 export default function Users() {
   const [users, setUsers] = useState<UserRecord[]>([]);
+  const [managedUsers, setManagedUsers] = useState<ManagedUserRecord[]>([]);
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -15,15 +16,18 @@ export default function Users() {
   const [syncingId, setSyncingId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [disabledOpen, setDisabledOpen] = useState(false);
+  const [managedOpen, setManagedOpen] = useState(false);
 
   async function load() {
     setLoading(true);
     try {
-      const [usersResult, settingsResult] = await Promise.all([
+      const [usersResult, managedResult, settingsResult] = await Promise.all([
         apiGet<UserRecord[]>("/api/users"),
+        apiGet<ManagedUserRecord[]>("/api/users/managed"),
         apiGet<SettingsResponse>("/api/settings")
       ]);
       setUsers(usersResult);
+      setManagedUsers(managedResult);
       setSettings(settingsResult);
       setError(null);
     } catch (caught) {
@@ -172,6 +176,25 @@ export default function Users() {
         )}
       </div>
 
+      {managedUsers.length > 0 && (
+        <div className="mt-6">
+          <button
+            onClick={() => setManagedOpen((open) => !open)}
+            className="flex items-center gap-2 text-sm font-medium text-on-surface-variant mb-3"
+          >
+            {managedOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            Managed Home Users ({managedUsers.length})
+          </button>
+          {managedOpen && (
+            <div className="space-y-2">
+              {managedUsers.map((user) => (
+                <ManagedUserRow key={user.plexUserId} user={user} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {editingId !== null && settings && (
         <EditModal
           user={users.find((user) => user.id === editingId)!}
@@ -264,6 +287,36 @@ function UserRow({
         >
           <Edit2 size={15} />
         </button>
+      </div>
+    </div>
+  );
+}
+
+function ManagedUserRow({ user }: { user: ManagedUserRecord }) {
+  return (
+    <div className="bg-surface-container rounded-xl border border-outline-variant/20 flex items-center gap-4 px-4 py-3 opacity-80">
+      {user.avatarUrl ? (
+        <img
+          src={getPlexImageSrc(user.avatarUrl) ?? undefined}
+          alt={user.displayName}
+          className="w-8 h-8 rounded-full object-cover"
+        />
+      ) : (
+        <div className="w-8 h-8 rounded-full bg-surface-container-highest flex items-center justify-center">
+          <span className="text-on-surface-variant text-xs font-medium">
+            {user.displayName.charAt(0).toUpperCase()}
+          </span>
+        </div>
+      )}
+
+      <div className="flex-1 min-w-0">
+        <span className="font-medium text-on-surface text-sm truncate">{user.displayName}</span>
+        <p className="text-xs text-on-surface-variant mt-0.5">
+          {"Watchlists not available for managed users \u2014 "}
+          {user.hasRestrictionProfile
+            ? "Label exclusion cannot be applied to user with Restriction Profile"
+            : "Label exclusion filter applied"}
+        </p>
       </div>
     </div>
   );
