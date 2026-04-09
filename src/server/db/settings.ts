@@ -129,12 +129,17 @@ export function getSession(db: Database.Database, id: string): SessionUser | nul
   const owner = getPlexOwner(db);
   if (!owner || owner.plexId !== row.plexId) return null;
 
+  // Resolve avatar from image_cache — local path only, no external URL fallback
+  const avatarRow = db
+    .prepare("SELECT ic.local_web_path FROM image_cache ic WHERE ic.cache_key = 'avatar:' || ?")
+    .get(owner.plexId) as { local_web_path: string | null } | undefined;
+
   return {
     plexId: owner.plexId,
     username: owner.username,
     displayName: owner.displayName,
     email: owner.email ?? null,
-    avatarUrl: owner.avatarUrl
+    avatarUrl: avatarRow?.local_web_path ?? null
   };
 }
 

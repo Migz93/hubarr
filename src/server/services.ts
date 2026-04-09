@@ -5,6 +5,7 @@ import type {
   WatchlistItem
 } from "../shared/types.js";
 import { HubarrDatabase } from "./db/index.js";
+import { ImageCacheService } from "./image-cache.js";
 import { Logger } from "./logger.js";
 import { PlexIntegration, type PlexLibraryItemMatch, type ResolvedWatchlistItem } from "./integrations/plex.js";
 import { RssCache, type RssFeedItem } from "./rss-cache.js";
@@ -22,7 +23,8 @@ export class HubarrServices {
 
   constructor(
     private readonly db: HubarrDatabase,
-    private readonly logger: Logger
+    private readonly logger: Logger,
+    private readonly imageCache: ImageCacheService
   ) {}
 
   getPlexIntegration() {
@@ -51,6 +53,9 @@ export class HubarrServices {
         plexUserId: account.plexUserId,
         displayName: account.displayName
       });
+      if (account.avatarUrl) {
+        await this.imageCache.ensureAvatarCached(account.plexUserId, account.avatarUrl);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn("Could not upsert self user", { message });
@@ -68,12 +73,23 @@ export class HubarrServices {
 
     if (managedResult.status === "fulfilled") {
       this.db.upsertManagedUsers(managedResult.value);
+      for (const user of managedResult.value) {
+        if (user.avatarUrl) {
+          await this.imageCache.ensureAvatarCached(user.plexUserId, user.avatarUrl);
+        }
+      }
     } else {
       const message = managedResult.reason instanceof Error ? managedResult.reason.message : String(managedResult.reason);
       this.logger.warn("Managed user fetch failed during discover — cache not updated", { message });
     }
 
-    return this.db.upsertUsers(friendsResult.value);
+    const users = this.db.upsertUsers(friendsResult.value);
+    for (const user of friendsResult.value) {
+      if (user.avatarUrl) {
+        await this.imageCache.ensureAvatarCached(user.plexUserId, user.avatarUrl);
+      }
+    }
+    return users;
   }
 
   getManagedUsers() {
@@ -348,6 +364,27 @@ export class HubarrServices {
     const merged = this.mergeFetchedWatchlistItems(existingItems, fetched);
 
     this.db.replaceWatchlistItems(friend.id, merged);
+
+    const plexSettings = this.db.getPlexSettings();
+    if (plexSettings) {
+      for (const item of merged) {
+        if (!item.thumb) continue;
+        if (item.thumb.startsWith("/")) {
+          await this.imageCache.ensurePosterCached(item.plexItemId, {
+            type: "plex-path",
+            value: item.thumb,
+            serverUrl: plexSettings.serverUrl,
+            token: plexSettings.token
+          });
+        } else if (item.thumb.startsWith("https://")) {
+          await this.imageCache.ensurePosterCached(item.plexItemId, {
+            type: "public-url",
+            value: item.thumb
+          });
+        }
+      }
+    }
+
     this.db.addSyncRunItem(
       runId,
       "watchlist.fetch",
@@ -508,6 +545,9 @@ export class HubarrServices {
     const failures: string[] = [];
 
     this.logger.info("Full sync started", { userCount: friends.length });
+
+    // Refresh self user account info (including avatar) on every full sync
+    await this.upsertSelfUser();
 
     for (const friend of friends) {
       try {
@@ -859,6 +899,24 @@ export class HubarrServices {
       this.db.upsertWatchlistItem(selfUser.id, watchlistItem);
       processedCount++;
 
+      // Cache poster immediately for RSS-ingested items
+      const plexSettings = this.db.getPlexSettings();
+      if (plexSettings && watchlistItem.thumb) {
+        if (watchlistItem.thumb.startsWith("/")) {
+          await this.imageCache.ensurePosterCached(watchlistItem.plexItemId, {
+            type: "plex-path",
+            value: watchlistItem.thumb,
+            serverUrl: plexSettings.serverUrl,
+            token: plexSettings.token
+          });
+        } else if (watchlistItem.thumb.startsWith("https://")) {
+          await this.imageCache.ensurePosterCached(watchlistItem.plexItemId, {
+            type: "public-url",
+            value: watchlistItem.thumb
+          });
+        }
+      }
+
       this.logger.info("Self RSS item cached", {
         title: item.title,
         type: item.type,
@@ -962,6 +1020,24 @@ export class HubarrServices {
 
       this.db.upsertWatchlistItem(friend.id, watchlistItem);
       processedCount++;
+
+      // Cache poster immediately for RSS-ingested items
+      const plexSettings = this.db.getPlexSettings();
+      if (plexSettings && watchlistItem.thumb) {
+        if (watchlistItem.thumb.startsWith("/")) {
+          await this.imageCache.ensurePosterCached(watchlistItem.plexItemId, {
+            type: "plex-path",
+            value: watchlistItem.thumb,
+            serverUrl: plexSettings.serverUrl,
+            token: plexSettings.token
+          });
+        } else if (watchlistItem.thumb.startsWith("https://")) {
+          await this.imageCache.ensurePosterCached(watchlistItem.plexItemId, {
+            type: "public-url",
+            value: watchlistItem.thumb
+          });
+        }
+      }
 
       this.logger.info("RSS item cached", {
         userId: friend.id,

@@ -19,6 +19,8 @@ import type {
 } from "../../shared/types.js";
 import type { RuntimeConfig } from "../config.js";
 import * as collectionsRepo from "./collections.js";
+import * as imageCacheRepo from "./image-cache.js";
+import type { ImageCacheRow } from "./image-cache.js";
 import { runMigrations } from "./migrations.js";
 import * as settingsRepo from "./settings.js";
 import * as syncRepo from "./sync.js";
@@ -217,6 +219,38 @@ export class HubarrDatabase {
 
   computeWatchlistHash(userId: number, mediaType: "movie" | "show"): string {
     return watchlistRepo.computeWatchlistHash(this.db, userId, mediaType);
+  }
+
+  // -------------------------------------------------------------------------
+  // Image Cache
+  // -------------------------------------------------------------------------
+
+  getImageCacheEntry(cacheKey: string): ImageCacheRow | null {
+    return imageCacheRepo.getImageCacheEntry(this.db, cacheKey);
+  }
+
+  upsertImageCacheEntry(entry: Parameters<typeof imageCacheRepo.upsertImageCacheEntry>[1]): void {
+    imageCacheRepo.upsertImageCacheEntry(this.db, entry);
+  }
+
+  markImageCacheRefreshAttempt(cacheKey: string, attemptedAt: string): void {
+    imageCacheRepo.markImageCacheRefreshAttempt(this.db, cacheKey, attemptedAt);
+  }
+
+  markImageCacheRefreshSuccess(cacheKey: string, opts: Parameters<typeof imageCacheRepo.markImageCacheRefreshSuccess>[2]): void {
+    imageCacheRepo.markImageCacheRefreshSuccess(this.db, cacheKey, opts);
+  }
+
+  markImageCacheRefreshFailure(cacheKey: string, opts: { attemptedAt: string; error: string }): void {
+    imageCacheRepo.markImageCacheRefreshFailure(this.db, cacheKey, opts);
+  }
+
+  listAllImageCacheWebPaths(): string[] {
+    return imageCacheRepo.listAllImageCacheWebPaths(this.db);
+  }
+
+  clearImageCacheTable(): void {
+    imageCacheRepo.clearImageCacheTable(this.db);
   }
 
   // -------------------------------------------------------------------------

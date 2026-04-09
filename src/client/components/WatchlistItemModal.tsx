@@ -58,6 +58,7 @@ export function WatchlistItemModal({
               src={posterSrc}
               alt={item.title}
               className="w-full h-full object-cover object-top"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).src = "/poster-fallback.svg"; }}
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center">
@@ -176,9 +177,9 @@ export function WatchlistItemModal({
               <div className="space-y-2">
                 {item.users.map((user) => (
                   <div key={user.userId} className="flex items-center gap-2.5">
-                    {user.avatarUrl ? (
+                    {getPlexImageSrc(user.avatarUrl) ? (
                       <img
-                        src={getPlexImageSrc(user.avatarUrl) ?? undefined}
+                        src={getPlexImageSrc(user.avatarUrl)!}
                         alt={user.displayName}
                         className="w-6 h-6 rounded-full object-cover flex-shrink-0"
                       />

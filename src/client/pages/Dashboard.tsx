@@ -252,6 +252,7 @@ function PosterCard({
             alt={item.title}
             className="w-full h-full object-cover"
             loading="lazy"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).src = "/poster-fallback.svg"; }}
           />
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center p-2 text-center">

@@ -244,9 +244,9 @@ function UserRow({
         className="accent-primary w-4 h-4"
       />
 
-      {user.avatarUrl ? (
+      {getPlexImageSrc(user.avatarUrl) ? (
         <img
-          src={getPlexImageSrc(user.avatarUrl) ?? undefined}
+          src={getPlexImageSrc(user.avatarUrl)!}
           alt={user.displayName}
           className={`${compact ? "w-8 h-8" : "w-10 h-10"} rounded-full object-cover`}
         />
@@ -295,9 +295,9 @@ function UserRow({
 function ManagedUserRow({ user }: { user: ManagedUserRecord }) {
   return (
     <div className="bg-surface-container rounded-xl border border-outline-variant/20 flex items-center gap-4 px-4 py-3 opacity-80">
-      {user.avatarUrl ? (
+      {getPlexImageSrc(user.avatarUrl) ? (
         <img
-          src={getPlexImageSrc(user.avatarUrl) ?? undefined}
+          src={getPlexImageSrc(user.avatarUrl)!}
           alt={user.displayName}
           className="w-8 h-8 rounded-full object-cover"
         />

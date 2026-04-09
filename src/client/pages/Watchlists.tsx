@@ -222,9 +222,9 @@ function FilterChip({
           : "bg-surface-container border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:border-outline-variant/40"
       }`}
     >
-      {avatarUrl && (
+      {getPlexImageSrc(avatarUrl) && (
         <img
-          src={getPlexImageSrc(avatarUrl) ?? undefined}
+          src={getPlexImageSrc(avatarUrl)!}
           alt=""
           className="w-5 h-5 rounded-full object-cover"
         />
@@ -266,6 +266,7 @@ function WatchlistPoster({
             alt={item.title}
             className="w-full h-full object-cover"
             loading="lazy"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).src = "/poster-fallback.svg"; }}
           />
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center p-3 text-center">

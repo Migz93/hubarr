@@ -106,9 +106,9 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: S
               onClick={() => setPopupOpen((o) => !o)}
               className="flex w-full items-center gap-3 px-3 py-2 rounded-lg hover:bg-surface-container-high transition-colors"
             >
-              {user.avatarUrl ? (
+              {getPlexImageSrc(user.avatarUrl) ? (
                 <img
-                  src={getPlexImageSrc(user.avatarUrl) ?? undefined}
+                  src={getPlexImageSrc(user.avatarUrl)!}
                   alt={user.displayName}
                   className="w-8 h-8 rounded-full object-cover flex-shrink-0"
                 />

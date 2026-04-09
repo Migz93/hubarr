@@ -144,6 +144,44 @@ const migrations: Migration[] = [
         );
       `);
     }
+  },
+  {
+    version: 3,
+    up(db) {
+      db.exec(`
+        ALTER TABLE watchlist_cache ADD COLUMN cached_thumb TEXT;
+        ALTER TABLE users ADD COLUMN cached_avatar_url TEXT;
+        ALTER TABLE managed_users ADD COLUMN cached_avatar_url TEXT;
+      `);
+    }
+  },
+  {
+    version: 4,
+    up(db) {
+      db.exec(`
+        ALTER TABLE watchlist_cache DROP COLUMN cached_thumb;
+        ALTER TABLE users DROP COLUMN cached_avatar_url;
+        ALTER TABLE managed_users DROP COLUMN cached_avatar_url;
+
+        CREATE TABLE image_cache (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          cache_key TEXT NOT NULL UNIQUE,
+          kind TEXT NOT NULL CHECK(kind IN ('poster', 'avatar')),
+          entity_id TEXT NOT NULL,
+          source_type TEXT CHECK(source_type IN ('plex-path', 'public-url')),
+          source_value TEXT,
+          local_file_path TEXT,
+          local_web_path TEXT,
+          cached_at TEXT,
+          last_refresh_at TEXT,
+          refresh_after TEXT,
+          last_attempted_at TEXT,
+          last_error TEXT
+        );
+
+        CREATE INDEX idx_image_cache_kind_entity ON image_cache(kind, entity_id);
+      `);
+    }
   }
 ];
 
