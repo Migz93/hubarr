@@ -3,6 +3,7 @@ dist
 data
 .env
 .env.*
+!.env.*.example
 *.log
 npm-debug.log*
 .DS_Store
@@ -13,4 +14,9 @@ coverage/
 .eslintcache
 .claude/
 LOCAL.md
+
+# Playwright
+tests/playwright/.auth/
+playwright-report/
+test-results/
 .devcontainer/devcontainer.json
