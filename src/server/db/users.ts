@@ -211,9 +211,18 @@ export function upsertManagedUsers(
       has_restriction_profile = excluded.has_restriction_profile
   `);
 
+  const activePlexUserIds = users.map((u) => u.plexUserId);
+
   db.transaction(() => {
     for (const user of users) {
       stmt.run({ ...user, hasRestrictionProfile: user.hasRestrictionProfile ? 1 : 0 });
+    }
+    // Remove any managed users no longer returned by Plex
+    if (activePlexUserIds.length > 0) {
+      const placeholders = activePlexUserIds.map(() => "?").join(", ");
+      db.prepare(`DELETE FROM managed_users WHERE plex_user_id NOT IN (${placeholders})`).run(...activePlexUserIds);
+    } else {
+      db.prepare("DELETE FROM managed_users").run();
     }
   })();
 
