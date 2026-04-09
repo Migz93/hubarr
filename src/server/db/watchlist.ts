@@ -26,6 +26,7 @@ export function upsertWatchlistItem(db: Database.Database, userId: number, item:
       year = excluded.year,
       thumb = excluded.thumb,
       matched_rating_key = COALESCE(excluded.matched_rating_key, matched_rating_key),
+      source = excluded.source,
       raw_payload = excluded.raw_payload
   `).run({ userId, ...item, rawPayload: JSON.stringify(item) });
 }
@@ -107,13 +108,15 @@ export function getWatchlistGrouped(
   const rawRows = db
     .prepare(`
       SELECT w.plex_item_id, w.title, w.type, w.year,
-             COALESCE(w.cached_thumb, w.thumb) AS thumb,
+             ip.local_web_path AS thumb,
              w.added_at, w.matched_rating_key, w.raw_payload,
              f.id AS user_id,
              COALESCE(f.display_name_override, f.username) AS friend_display_name,
-             COALESCE(f.cached_avatar_url, f.avatar_url) AS friend_avatar_url
+             ia.local_web_path AS friend_avatar_url
       FROM watchlist_cache w
       JOIN users f ON f.id = w.user_id
+      LEFT JOIN image_cache ip ON ip.cache_key = 'poster:' || w.plex_item_id
+      LEFT JOIN image_cache ia ON ia.cache_key = 'avatar:' || f.plex_user_id
       WHERE f.enabled = 1
       ORDER BY w.added_at DESC
     `)
@@ -121,11 +124,12 @@ export function getWatchlistGrouped(
 
   const enabledUsers = db
     .prepare(`
-      SELECT id AS userId, COALESCE(display_name_override, username) AS displayName,
-             COALESCE(cached_avatar_url, avatar_url) AS avatarUrl
-      FROM users
-      WHERE enabled = 1
-      ORDER BY is_self DESC, LOWER(display_name) ASC
+      SELECT u.id AS userId, COALESCE(u.display_name_override, u.username) AS displayName,
+             ic.local_web_path AS avatarUrl
+      FROM users u
+      LEFT JOIN image_cache ic ON ic.cache_key = 'avatar:' || u.plex_user_id
+      WHERE u.enabled = 1
+      ORDER BY u.is_self DESC, LOWER(u.display_name) ASC
     `)
     .all() as Array<{ userId: number; displayName: string; avatarUrl: string | null }>;
 
@@ -280,14 +284,6 @@ export function getWatchlistGrouped(
       media: mediaCounts
     }
   };
-}
-
-export function updateWatchlistItemCachedThumb(db: Database.Database, plexItemId: string, localPath: string): void {
-  db.prepare("UPDATE watchlist_cache SET cached_thumb = ? WHERE plex_item_id = ?").run(localPath, plexItemId);
-}
-
-export function clearWatchlistCachedThumbs(db: Database.Database): void {
-  db.prepare("UPDATE watchlist_cache SET cached_thumb = NULL").run();
 }
 
 export function computeWatchlistHash(db: Database.Database, userId: number, mediaType: "movie" | "show"): string {

@@ -177,9 +177,9 @@ export function WatchlistItemModal({
               <div className="space-y-2">
                 {item.users.map((user) => (
                   <div key={user.userId} className="flex items-center gap-2.5">
-                    {user.avatarUrl ? (
+                    {getPlexImageSrc(user.avatarUrl) ? (
                       <img
-                        src={getPlexImageSrc(user.avatarUrl) ?? undefined}
+                        src={getPlexImageSrc(user.avatarUrl)!}
                         alt={user.displayName}
                         className="w-6 h-6 rounded-full object-cover flex-shrink-0"
                       />

@@ -48,7 +48,7 @@ function signedValue(secret: string, value: string) {
 export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   const logger = new Logger(config.dataDir);
   const db = new HubarrDatabase(config);
-  const imageCache = new ImageCacheService(config.dataDir, logger);
+  const imageCache = new ImageCacheService(config.dataDir, db, logger);
   const services = new HubarrServices(db, logger, imageCache);
   const app = express();
   app.use(helmet({
@@ -923,10 +923,15 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     });
   });
 
-  /** Clear image cache */
+  /** Clear image cache — removes all files and metadata */
   app.post("/api/settings/image-cache/clear", requireAuth, (_req, res) => {
-    const removed = imageCache.clearCache();
-    db.clearAllCachedImagePaths();
+    const removed = imageCache.clearAll();
+    res.json({ removed });
+  });
+
+  /** Prune orphaned image files not referenced by any metadata row */
+  app.post("/api/settings/image-cache/prune", requireAuth, (_req, res) => {
+    const removed = imageCache.pruneOrphaned();
     res.json({ removed });
   });
 

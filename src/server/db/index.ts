@@ -19,6 +19,8 @@ import type {
 } from "../../shared/types.js";
 import type { RuntimeConfig } from "../config.js";
 import * as collectionsRepo from "./collections.js";
+import * as imageCacheRepo from "./image-cache.js";
+import type { ImageCacheRow } from "./image-cache.js";
 import { runMigrations } from "./migrations.js";
 import * as settingsRepo from "./settings.js";
 import * as syncRepo from "./sync.js";
@@ -184,19 +186,6 @@ export class HubarrDatabase {
     usersRepo.markUserSyncResult(this.db, userId, error);
   }
 
-  updateUserCachedAvatar(plexUserId: string, localPath: string): void {
-    usersRepo.updateUserCachedAvatar(this.db, plexUserId, localPath);
-  }
-
-  updateManagedUserCachedAvatar(plexUserId: string, localPath: string): void {
-    usersRepo.updateManagedUserCachedAvatar(this.db, plexUserId, localPath);
-  }
-
-  clearAllCachedImagePaths(): void {
-    usersRepo.clearUserCachedAvatars(this.db);
-    watchlistRepo.clearWatchlistCachedThumbs(this.db);
-  }
-
   // -------------------------------------------------------------------------
   // Watchlist
   // -------------------------------------------------------------------------
@@ -232,8 +221,36 @@ export class HubarrDatabase {
     return watchlistRepo.computeWatchlistHash(this.db, userId, mediaType);
   }
 
-  updateWatchlistItemCachedThumb(plexItemId: string, localPath: string): void {
-    watchlistRepo.updateWatchlistItemCachedThumb(this.db, plexItemId, localPath);
+  // -------------------------------------------------------------------------
+  // Image Cache
+  // -------------------------------------------------------------------------
+
+  getImageCacheEntry(cacheKey: string): ImageCacheRow | null {
+    return imageCacheRepo.getImageCacheEntry(this.db, cacheKey);
+  }
+
+  upsertImageCacheEntry(entry: Parameters<typeof imageCacheRepo.upsertImageCacheEntry>[1]): void {
+    imageCacheRepo.upsertImageCacheEntry(this.db, entry);
+  }
+
+  markImageCacheRefreshAttempt(cacheKey: string, attemptedAt: string): void {
+    imageCacheRepo.markImageCacheRefreshAttempt(this.db, cacheKey, attemptedAt);
+  }
+
+  markImageCacheRefreshSuccess(cacheKey: string, opts: Parameters<typeof imageCacheRepo.markImageCacheRefreshSuccess>[2]): void {
+    imageCacheRepo.markImageCacheRefreshSuccess(this.db, cacheKey, opts);
+  }
+
+  markImageCacheRefreshFailure(cacheKey: string, opts: { attemptedAt: string; error: string }): void {
+    imageCacheRepo.markImageCacheRefreshFailure(this.db, cacheKey, opts);
+  }
+
+  listAllImageCacheWebPaths(): string[] {
+    return imageCacheRepo.listAllImageCacheWebPaths(this.db);
+  }
+
+  clearImageCacheTable(): void {
+    imageCacheRepo.clearImageCacheTable(this.db);
   }
 
   // -------------------------------------------------------------------------

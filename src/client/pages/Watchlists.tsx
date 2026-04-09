@@ -222,9 +222,9 @@ function FilterChip({
           : "bg-surface-container border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:border-outline-variant/40"
       }`}
     >
-      {avatarUrl && (
+      {getPlexImageSrc(avatarUrl) && (
         <img
-          src={getPlexImageSrc(avatarUrl) ?? undefined}
+          src={getPlexImageSrc(avatarUrl)!}
           alt=""
           className="w-5 h-5 rounded-full object-cover"
         />

@@ -64,41 +64,29 @@ export function upsertSelfUser(
   `).run({ ...account, collectionName });
 }
 
-export function updateUserCachedAvatar(db: Database.Database, plexUserId: string, localPath: string): void {
-  db.prepare("UPDATE users SET cached_avatar_url = ? WHERE plex_user_id = ?").run(localPath, plexUserId);
-}
-
-export function updateManagedUserCachedAvatar(db: Database.Database, plexUserId: string, localPath: string): void {
-  db.prepare("UPDATE managed_users SET cached_avatar_url = ? WHERE plex_user_id = ?").run(localPath, plexUserId);
-}
-
-export function clearUserCachedAvatars(db: Database.Database): void {
-  db.prepare("UPDATE users SET cached_avatar_url = NULL").run();
-  db.prepare("UPDATE managed_users SET cached_avatar_url = NULL").run();
-}
-
 export function listUsers(db: Database.Database): UserRecord[] {
   return db
     .prepare(`
       SELECT
-        id,
-        plex_user_id AS plexUserId,
-        username,
-        display_name_override AS displayNameOverride,
-        COALESCE(display_name_override, username) AS displayName,
-        COALESCE(cached_avatar_url, avatar_url) AS avatarUrl,
-        is_self AS isSelf,
-        enabled,
-        movie_library_id AS movieLibraryId,
-        show_library_id AS showLibraryId,
-        visibility_mode AS visibilityMode,
-        visibility_override AS visibilityOverride,
-        collection_name_override AS collectionNameOverride,
-        collection_name AS collectionName,
-        last_synced_at AS lastSyncedAt,
-        last_sync_error AS lastSyncError
-      FROM users
-      ORDER BY is_self DESC, enabled DESC, LOWER(display_name) ASC
+        u.id,
+        u.plex_user_id AS plexUserId,
+        u.username,
+        u.display_name_override AS displayNameOverride,
+        COALESCE(u.display_name_override, u.username) AS displayName,
+        ic.local_web_path AS avatarUrl,
+        u.is_self AS isSelf,
+        u.enabled,
+        u.movie_library_id AS movieLibraryId,
+        u.show_library_id AS showLibraryId,
+        u.visibility_mode AS visibilityMode,
+        u.visibility_override AS visibilityOverride,
+        u.collection_name_override AS collectionNameOverride,
+        u.collection_name AS collectionName,
+        u.last_synced_at AS lastSyncedAt,
+        u.last_sync_error AS lastSyncError
+      FROM users u
+      LEFT JOIN image_cache ic ON ic.cache_key = 'avatar:' || u.plex_user_id
+      ORDER BY u.is_self DESC, u.enabled DESC, LOWER(u.display_name) ASC
     `)
     .all()
     .map((row) => {
@@ -246,12 +234,13 @@ export function listManagedUsers(db: Database.Database): ManagedUserRecord[] {
   return (db
     .prepare(`
       SELECT
-        plex_user_id AS plexUserId,
-        display_name AS displayName,
-        COALESCE(cached_avatar_url, avatar_url) AS avatarUrl,
-        has_restriction_profile AS hasRestrictionProfile
-      FROM managed_users
-      ORDER BY LOWER(display_name) ASC
+        m.plex_user_id AS plexUserId,
+        m.display_name AS displayName,
+        ic.local_web_path AS avatarUrl,
+        m.has_restriction_profile AS hasRestrictionProfile
+      FROM managed_users m
+      LEFT JOIN image_cache ic ON ic.cache_key = 'avatar:' || m.plex_user_id
+      ORDER BY LOWER(m.display_name) ASC
     `)
     .all() as Array<Omit<ManagedUserRecord, "hasRestrictionProfile"> & { hasRestrictionProfile: number }>)
     .map((row) => ({ ...row, hasRestrictionProfile: Boolean(row.hasRestrictionProfile) }));

@@ -54,8 +54,7 @@ export class HubarrServices {
         displayName: account.displayName
       });
       if (account.avatarUrl) {
-        const localPath = await this.imageCache.cacheAvatarImage(account.avatarUrl);
-        if (localPath) this.db.updateUserCachedAvatar(account.plexUserId, localPath);
+        await this.imageCache.ensureAvatarCached(account.plexUserId, account.avatarUrl);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -76,8 +75,7 @@ export class HubarrServices {
       this.db.upsertManagedUsers(managedResult.value);
       for (const user of managedResult.value) {
         if (user.avatarUrl) {
-          const localPath = await this.imageCache.cacheAvatarImage(user.avatarUrl);
-          if (localPath) this.db.updateManagedUserCachedAvatar(user.plexUserId, localPath);
+          await this.imageCache.ensureAvatarCached(user.plexUserId, user.avatarUrl);
         }
       }
     } else {
@@ -88,8 +86,7 @@ export class HubarrServices {
     const users = this.db.upsertUsers(friendsResult.value);
     for (const user of friendsResult.value) {
       if (user.avatarUrl) {
-        const localPath = await this.imageCache.cacheAvatarImage(user.avatarUrl);
-        if (localPath) this.db.updateUserCachedAvatar(user.plexUserId, localPath);
+        await this.imageCache.ensureAvatarCached(user.plexUserId, user.avatarUrl);
       }
     }
     return users;
@@ -371,15 +368,20 @@ export class HubarrServices {
     const plexSettings = this.db.getPlexSettings();
     if (plexSettings) {
       for (const item of merged) {
-        let localPath: string | null = null;
-        if (item.thumb?.startsWith("/")) {
-          // Relative Plex library path — requires server auth
-          localPath = await this.imageCache.cachePosterImage(item.thumb, plexSettings.serverUrl, plexSettings.token);
-        } else if (item.thumb?.startsWith("https://")) {
-          // Absolute CDN URL (TMDB, Plex metadata CDN, etc.) — public, no auth needed
-          localPath = await this.imageCache.cachePosterImageFromUrl(item.thumb);
+        if (!item.thumb) continue;
+        if (item.thumb.startsWith("/")) {
+          await this.imageCache.ensurePosterCached(item.plexItemId, {
+            type: "plex-path",
+            value: item.thumb,
+            serverUrl: plexSettings.serverUrl,
+            token: plexSettings.token
+          });
+        } else if (item.thumb.startsWith("https://")) {
+          await this.imageCache.ensurePosterCached(item.plexItemId, {
+            type: "public-url",
+            value: item.thumb
+          });
         }
-        if (localPath) this.db.updateWatchlistItemCachedThumb(item.plexItemId, localPath);
       }
     }
 
@@ -897,6 +899,24 @@ export class HubarrServices {
       this.db.upsertWatchlistItem(selfUser.id, watchlistItem);
       processedCount++;
 
+      // Cache poster immediately for RSS-ingested items
+      const plexSettings = this.db.getPlexSettings();
+      if (plexSettings && watchlistItem.thumb) {
+        if (watchlistItem.thumb.startsWith("/")) {
+          await this.imageCache.ensurePosterCached(watchlistItem.plexItemId, {
+            type: "plex-path",
+            value: watchlistItem.thumb,
+            serverUrl: plexSettings.serverUrl,
+            token: plexSettings.token
+          });
+        } else if (watchlistItem.thumb.startsWith("https://")) {
+          await this.imageCache.ensurePosterCached(watchlistItem.plexItemId, {
+            type: "public-url",
+            value: watchlistItem.thumb
+          });
+        }
+      }
+
       this.logger.info("Self RSS item cached", {
         title: item.title,
         type: item.type,
@@ -1000,6 +1020,24 @@ export class HubarrServices {
 
       this.db.upsertWatchlistItem(friend.id, watchlistItem);
       processedCount++;
+
+      // Cache poster immediately for RSS-ingested items
+      const plexSettings = this.db.getPlexSettings();
+      if (plexSettings && watchlistItem.thumb) {
+        if (watchlistItem.thumb.startsWith("/")) {
+          await this.imageCache.ensurePosterCached(watchlistItem.plexItemId, {
+            type: "plex-path",
+            value: watchlistItem.thumb,
+            serverUrl: plexSettings.serverUrl,
+            token: plexSettings.token
+          });
+        } else if (watchlistItem.thumb.startsWith("https://")) {
+          await this.imageCache.ensurePosterCached(watchlistItem.plexItemId, {
+            type: "public-url",
+            value: watchlistItem.thumb
+          });
+        }
+      }
 
       this.logger.info("RSS item cached", {
         userId: friend.id,
