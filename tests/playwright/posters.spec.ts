@@ -17,11 +17,12 @@ async function checkPosters(page: Page, context: string) {
   await page.waitForLoadState("networkidle");
 
   const results = await page.evaluate(() =>
-    Array.from(document.querySelectorAll("img.object-cover")).map((el) => {
+    Array.from(document.querySelectorAll("img.object-cover[src*='/api/plex/image']")).map((el) => {
       const img = el as HTMLImageElement;
       return {
         alt: img.alt,
         src: img.src,
+        complete: img.complete,
         loaded: img.complete && img.naturalWidth > 0
       };
     })
@@ -32,7 +33,9 @@ async function checkPosters(page: Page, context: string) {
     return;
   }
 
-  const failed = results.filter((r) => !r.loaded);
+  // Only flag images the browser actually attempted to load (complete === true).
+  // Lazy images that are still off-screen will have complete === false and are not failures.
+  const failed = results.filter((r) => r.complete && !r.loaded);
 
   if (failed.length > 0) {
     const details = failed.map((r) => `  - "${r.alt}" (${r.src})`).join("\n");

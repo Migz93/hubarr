@@ -22,17 +22,23 @@ const baseURL = process.env.BASE_URL ?? "http://localhost:3000";
  * reused on every subsequent run. When it expires, repeat steps 2-5.
  */
 setup("authenticate", async ({ request }) => {
-  // If we already have a saved session, check it's still valid
+  // If we already have a saved session, check it's still valid and bound to the current host
   if (fs.existsSync(authFile)) {
-    const response = await request.get("/api/auth/session", {
-      headers: { Cookie: buildCookieHeader() }
-    });
-    const session = await response.json() as { authenticated: boolean };
-    if (session.authenticated) {
-      console.log("  Existing session is still valid, skipping login.");
-      return;
+    const currentHost = new URL(baseURL).hostname;
+    const savedDomain = getSavedCookieDomain();
+    if (savedDomain && savedDomain !== currentHost) {
+      console.log(`  Saved session is for '${savedDomain}' but BASE_URL is '${currentHost}' — re-authenticating.`);
+    } else {
+      const response = await request.get("/api/auth/session", {
+        headers: { Cookie: buildCookieHeader() }
+      });
+      const session = await response.json() as { authenticated: boolean };
+      if (session.authenticated) {
+        console.log("  Existing session is still valid, skipping login.");
+        return;
+      }
+      console.log("  Saved session has expired — re-run with a fresh SESSION_COOKIE.");
     }
-    console.log("  Saved session has expired — re-run with a fresh SESSION_COOKIE.");
   }
 
   const cookie = process.env.SESSION_COOKIE?.trim();
@@ -91,4 +97,12 @@ function buildCookieHeader(): string {
     cookies: Array<{ name: string; value: string }>
   };
   return state.cookies.map(c => `${c.name}=${c.value}`).join("; ");
+}
+
+function getSavedCookieDomain(): string | null {
+  if (!fs.existsSync(authFile)) return null;
+  const state = JSON.parse(fs.readFileSync(authFile, "utf-8")) as {
+    cookies: Array<{ name: string; domain?: string }>
+  };
+  return state.cookies[0]?.domain ?? null;
 }
