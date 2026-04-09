@@ -28,7 +28,8 @@ test.describe("Page smoke tests", () => {
 
   test("Settings loads", async ({ page }) => {
     await page.goto("/settings");
-    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+    // exact: true prevents matching section headings like "General Settings"
+    await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
   });
 
   test("Sidebar navigation links are present", async ({ page }) => {

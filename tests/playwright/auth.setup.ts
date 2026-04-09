@@ -73,6 +73,7 @@ setup("authenticate", async ({ request }) => {
           value: encodeURIComponent(cookie),
           domain: url.hostname,
           path: "/",
+          expires: -1,
           httpOnly: true,
           secure: url.protocol === "https:",
           sameSite: "Strict"
