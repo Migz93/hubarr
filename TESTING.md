@@ -45,6 +45,7 @@ Playwright-generated files are kept under `tests/` so the repo root stays tidy:
 
 - `tests/playwright/.auth/storageState.json` — saved authenticated session state
 - `tests/test-results/` — Playwright run artifacts
+- `tests/playwright-report/` — Playwright HTML report output
 
 Both are gitignored.
 
