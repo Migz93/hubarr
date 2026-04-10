@@ -10,7 +10,10 @@ export default defineConfig({
   outputDir: "./tests/test-results",
   fullyParallel: false,
   retries: 0,
-  reporter: "list",
+  reporter: [
+    ["list"],
+    ["html", { outputFolder: "tests/playwright-report", open: "never" }]
+  ],
 
   use: {
     baseURL,
