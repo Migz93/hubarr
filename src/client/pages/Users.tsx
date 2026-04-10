@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Edit2, Play, RefreshCw, X } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
@@ -183,7 +183,7 @@ export default function Users() {
             className="flex items-center gap-2 text-sm font-medium text-on-surface-variant mb-3"
           >
             {managedOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-            Managed Home Users ({managedUsers.length})
+            Managed Users ({managedUsers.length})
           </button>
           {managedOpen && (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
@@ -265,26 +265,22 @@ function UserCard({
       <Avatar avatarUrl={user.avatarUrl} displayName={displayName} size="w-16 h-16" />
 
       <div className="w-full text-center px-1">
-        <p
-          className="font-medium text-on-surface text-sm truncate"
-          title={showUsernameHint ? `${displayName} (${user.username})` : displayName}
-        >
-          {displayName}
-        </p>
+        <div className="flex items-center justify-center gap-1.5">
+          <p
+            className="font-medium text-on-surface text-sm truncate"
+            title={showUsernameHint ? `${displayName} (${user.username})` : displayName}
+          >
+            {displayName}
+          </p>
+          {user.isSelf && (
+            <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded font-medium flex-shrink-0">
+              You
+            </span>
+          )}
+        </div>
         {showUsernameHint && (
           <p className="text-xs text-on-surface-variant truncate">{user.username}</p>
         )}
-      </div>
-
-      <div className="flex flex-wrap gap-1 justify-center">
-        {user.isSelf && (
-          <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded font-medium">
-            You
-          </span>
-        )}
-        <span className="text-xs bg-surface-container-high text-on-surface-variant px-1.5 py-0.5 rounded font-medium border border-outline-variant/20">
-          Plex User
-        </span>
       </div>
 
       <div className="flex items-center gap-1.5 mt-auto pt-1 w-full justify-center flex-wrap">
@@ -310,6 +306,38 @@ function UserCard({
   );
 }
 
+function InfoBadge({ label, message, className }: { label: string; message: string; className: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className={`text-xs px-1.5 py-0.5 rounded font-medium cursor-pointer ${className}`}
+      >
+        {label}
+      </button>
+      {open && (
+        <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 w-48 bg-surface-container-highest border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-surface shadow-lg z-10 text-center">
+          {message}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ManagedUserCard({ user }: { user: ManagedUserRecord }) {
   return (
     <div className="relative bg-surface-container rounded-2xl border border-outline-variant/20 flex flex-col items-center p-4 gap-2 opacity-80">
@@ -322,22 +350,17 @@ function ManagedUserCard({ user }: { user: ManagedUserRecord }) {
       </div>
 
       <div className="flex flex-wrap gap-1 justify-center">
-        <span className="text-xs bg-surface-container-high text-on-surface-variant px-1.5 py-0.5 rounded font-medium border border-outline-variant/20">
-          Plex Home
-        </span>
-        <span
-          className="text-xs bg-amber-500/10 text-amber-400 px-1.5 py-0.5 rounded font-medium border border-amber-500/20 cursor-help"
-          title="Watchlists are not available for managed users"
-        >
-          Managed User
-        </span>
+        <InfoBadge
+          label="Managed User"
+          message="Watchlists are not available for managed users"
+          className="bg-amber-500/10 text-amber-400 border border-amber-500/20"
+        />
         {user.hasRestrictionProfile && (
-          <span
-            className="text-xs bg-orange-500/10 text-orange-400 px-1.5 py-0.5 rounded font-medium border border-orange-500/20 cursor-help"
-            title="Label exclusion cannot be applied to user with Restriction Profile"
-          >
-            Restriction Profile
-          </span>
+          <InfoBadge
+            label="Restriction Profile"
+            message="Label exclusion cannot be applied to user with Restriction Profile"
+            className="bg-orange-500/10 text-orange-400 border border-orange-500/20"
+          />
         )}
       </div>
     </div>
