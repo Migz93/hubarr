@@ -35,7 +35,7 @@
     "@playwright/test": "^1.59.1",
     "@types/better-sqlite3": "^7.6.12",
     "@types/express": "^5.0.1",
-    "@types/node": "^25.5.2",
+    "@types/node": "^25.6.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@types/xml2js": "^0.4.14",
