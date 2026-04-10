@@ -134,12 +134,11 @@ export default function Users() {
         <h2 className="text-sm font-medium text-on-surface-variant uppercase tracking-wide mb-3">
           Active ({activeUsers.length})
         </h2>
-        <div className="space-y-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
           {activeUsers.map((user) => (
-            <UserRow
+            <UserCard
               key={user.id}
               user={user}
-              compact={false}
               selected={selectedIds.includes(user.id)}
               syncing={syncingId === user.id}
               onToggleSelected={() => toggleSelected(user.id)}
@@ -150,34 +149,35 @@ export default function Users() {
         </div>
       </div>
 
-      <div>
-        <button
-          onClick={() => setDisabledOpen((open) => !open)}
-          className="flex items-center gap-2 text-sm font-medium text-on-surface-variant mb-3"
-        >
-          {disabledOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-          Disabled ({disabledUsers.length})
-        </button>
-        {disabledOpen && (
-          <div className="space-y-2">
-            {disabledUsers.map((user) => (
-              <UserRow
-                key={user.id}
-                user={user}
-                compact
-                selected={selectedIds.includes(user.id)}
-                syncing={syncingId === user.id}
-                onToggleSelected={() => toggleSelected(user.id)}
-                onEdit={() => setEditingId(user.id)}
-                onSync={() => void syncUser(user.id)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      {disabledUsers.length > 0 && (
+        <div className="mb-6">
+          <button
+            onClick={() => setDisabledOpen((open) => !open)}
+            className="flex items-center gap-2 text-sm font-medium text-on-surface-variant mb-3"
+          >
+            {disabledOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            Disabled ({disabledUsers.length})
+          </button>
+          {disabledOpen && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+              {disabledUsers.map((user) => (
+                <UserCard
+                  key={user.id}
+                  user={user}
+                  selected={selectedIds.includes(user.id)}
+                  syncing={syncingId === user.id}
+                  onToggleSelected={() => toggleSelected(user.id)}
+                  onEdit={() => setEditingId(user.id)}
+                  onSync={() => void syncUser(user.id)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {managedUsers.length > 0 && (
-        <div className="mt-6">
+        <div>
           <button
             onClick={() => setManagedOpen((open) => !open)}
             className="flex items-center gap-2 text-sm font-medium text-on-surface-variant mb-3"
@@ -186,9 +186,9 @@ export default function Users() {
             Managed Home Users ({managedUsers.length})
           </button>
           {managedOpen && (
-            <div className="space-y-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
               {managedUsers.map((user) => (
-                <ManagedUserRow key={user.plexUserId} user={user} />
+                <ManagedUserCard key={user.plexUserId} user={user} />
               ))}
             </div>
           )}
@@ -211,9 +211,28 @@ export default function Users() {
   );
 }
 
-function UserRow({
+function Avatar({ avatarUrl, displayName, size }: { avatarUrl: string | null; displayName: string; size: string }) {
+  const src = getPlexImageSrc(avatarUrl);
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt={displayName}
+        className={`${size} rounded-full object-cover`}
+      />
+    );
+  }
+  return (
+    <div className={`${size} rounded-full bg-surface-container-highest flex items-center justify-center`}>
+      <span className="text-on-surface-variant text-lg font-medium">
+        {displayName.charAt(0).toUpperCase()}
+      </span>
+    </div>
+  );
+}
+
+function UserCard({
   user,
-  compact,
   selected,
   syncing,
   onToggleSelected,
@@ -221,102 +240,105 @@ function UserRow({
   onSync
 }: {
   user: UserRecord;
-  compact: boolean;
   selected: boolean;
   syncing: boolean;
   onToggleSelected: () => void;
   onEdit: () => void;
   onSync: () => void;
 }) {
-  const hasNameOverride = Boolean(user.displayNameOverride?.trim());
-  const primaryName = hasNameOverride ? `${user.displayName} (${user.username})` : user.username;
+  const displayName = user.displayNameOverride?.trim() ? user.displayName : user.username;
+  const showUsernameHint = Boolean(user.displayNameOverride?.trim());
 
   return (
     <div
-      className={`bg-surface-container rounded-xl border border-outline-variant/20 flex items-center gap-4 ${
-        compact ? "px-4 py-3" : "px-4 py-4"
-      }`}
+      className={`relative bg-surface-container rounded-2xl border flex flex-col items-center p-4 gap-2 transition-colors ${
+        selected ? "border-primary/50 bg-surface-container-high" : "border-outline-variant/20"
+      } ${!user.enabled ? "opacity-60" : ""}`}
     >
       <input
         type="checkbox"
         checked={selected}
         onChange={onToggleSelected}
-        className="accent-primary w-4 h-4"
+        className="absolute top-3 left-3 accent-primary w-4 h-4 cursor-pointer"
       />
 
-      {getPlexImageSrc(user.avatarUrl) ? (
-        <img
-          src={getPlexImageSrc(user.avatarUrl)!}
-          alt={user.displayName}
-          className={`${compact ? "w-8 h-8" : "w-10 h-10"} rounded-full object-cover`}
-        />
-      ) : (
-        <div className={`${compact ? "w-8 h-8" : "w-10 h-10"} rounded-full bg-surface-container-highest flex items-center justify-center`}>
-          <span className="text-on-surface-variant text-xs font-medium">
-            {user.displayName.charAt(0).toUpperCase()}
-          </span>
-        </div>
-      )}
+      <Avatar avatarUrl={user.avatarUrl} displayName={displayName} size="w-16 h-16" />
 
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="font-medium text-on-surface text-sm truncate">{primaryName}</span>
-          {user.isSelf && (
-            <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded font-medium">
-              You
-            </span>
-          )}
-        </div>
+      <div className="w-full text-center px-1">
+        <p
+          className="font-medium text-on-surface text-sm truncate"
+          title={showUsernameHint ? `${displayName} (${user.username})` : displayName}
+        >
+          {displayName}
+        </p>
+        {showUsernameHint && (
+          <p className="text-xs text-on-surface-variant truncate">{user.username}</p>
+        )}
       </div>
 
-      <div className="flex items-center gap-2 flex-shrink-0">
+      <div className="flex flex-wrap gap-1 justify-center">
+        {user.isSelf && (
+          <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded font-medium">
+            You
+          </span>
+        )}
+        <span className="text-xs bg-surface-container-high text-on-surface-variant px-1.5 py-0.5 rounded font-medium border border-outline-variant/20">
+          Plex User
+        </span>
+      </div>
+
+      <div className="flex items-center gap-1.5 mt-auto pt-1 w-full justify-center flex-wrap">
         {user.enabled && (
           <button
             disabled={syncing}
             onClick={onSync}
-            className="flex items-center gap-1.5 bg-surface-container-high hover:bg-surface-bright disabled:opacity-50 text-on-surface text-xs font-medium rounded-lg px-3 py-2 transition-colors border border-outline-variant/20"
+            className="flex items-center gap-1 bg-surface-container-high hover:bg-surface-bright disabled:opacity-50 text-on-surface text-xs font-medium rounded-lg px-2.5 py-1.5 transition-colors border border-outline-variant/20"
           >
-            <Play size={13} className={syncing ? "animate-pulse" : ""} />
-            {syncing ? "Syncing..." : "Sync Watchlist"}
+            <Play size={11} className={syncing ? "animate-pulse" : ""} />
+            {syncing ? "Syncing…" : "Sync Watchlist"}
           </button>
         )}
         <button
           onClick={onEdit}
-          className="p-2 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors"
-          title="Edit"
+          className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors border border-outline-variant/20"
+          title="Edit user"
         >
-          <Edit2 size={15} />
+          <Edit2 size={14} />
         </button>
       </div>
     </div>
   );
 }
 
-function ManagedUserRow({ user }: { user: ManagedUserRecord }) {
+function ManagedUserCard({ user }: { user: ManagedUserRecord }) {
   return (
-    <div className="bg-surface-container rounded-xl border border-outline-variant/20 flex items-center gap-4 px-4 py-3 opacity-80">
-      {getPlexImageSrc(user.avatarUrl) ? (
-        <img
-          src={getPlexImageSrc(user.avatarUrl)!}
-          alt={user.displayName}
-          className="w-8 h-8 rounded-full object-cover"
-        />
-      ) : (
-        <div className="w-8 h-8 rounded-full bg-surface-container-highest flex items-center justify-center">
-          <span className="text-on-surface-variant text-xs font-medium">
-            {user.displayName.charAt(0).toUpperCase()}
-          </span>
-        </div>
-      )}
+    <div className="relative bg-surface-container rounded-2xl border border-outline-variant/20 flex flex-col items-center p-4 gap-2 opacity-80">
+      <Avatar avatarUrl={user.avatarUrl} displayName={user.displayName} size="w-16 h-16" />
 
-      <div className="flex-1 min-w-0">
-        <span className="font-medium text-on-surface text-sm truncate">{user.displayName}</span>
-        <p className="text-xs text-on-surface-variant mt-0.5">
-          {"Watchlists not available for managed users \u2014 "}
-          {user.hasRestrictionProfile
-            ? "Label exclusion cannot be applied to user with Restriction Profile"
-            : "Label exclusion filter applied"}
+      <div className="w-full text-center px-1">
+        <p className="font-medium text-on-surface text-sm truncate" title={user.displayName}>
+          {user.displayName}
         </p>
+      </div>
+
+      <div className="flex flex-wrap gap-1 justify-center">
+        <span className="text-xs bg-surface-container-high text-on-surface-variant px-1.5 py-0.5 rounded font-medium border border-outline-variant/20">
+          Plex Home
+        </span>
+        <span
+          className="text-xs bg-amber-500/10 text-amber-400 px-1.5 py-0.5 rounded font-medium border border-amber-500/20 cursor-help"
+          title="Watchlists are not available for managed users"
+        >
+          Managed User
+        </span>
+        {user.hasRestrictionProfile && (
+          <span
+            className="text-xs bg-orange-500/10 text-orange-400 px-1.5 py-0.5 rounded font-medium border border-orange-500/20 cursor-help"
+            title="Label exclusion cannot be applied to user with Restriction Profile"
+          >
+            Restriction Profile
+          </span>
+        )}
       </div>
     </div>
   );
