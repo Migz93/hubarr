@@ -149,16 +149,16 @@ export default function Users() {
         </div>
       </div>
 
-      {disabledUsers.length > 0 && (
-        <div className="mb-6">
-          <button
-            onClick={() => setDisabledOpen((open) => !open)}
-            className="flex items-center gap-2 text-sm font-medium text-on-surface-variant mb-3"
-          >
-            {disabledOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-            Disabled ({disabledUsers.length})
-          </button>
-          {disabledOpen && (
+      <div className="mb-6">
+        <button
+          onClick={() => setDisabledOpen((open) => !open)}
+          className="flex items-center gap-2 text-sm font-medium text-on-surface-variant mb-3"
+        >
+          {disabledOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          Disabled ({disabledUsers.length})
+        </button>
+        {disabledOpen && (
+          disabledUsers.length > 0 ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
               {disabledUsers.map((user) => (
                 <UserCard
@@ -172,9 +172,11 @@ export default function Users() {
                 />
               ))}
             </div>
-          )}
-        </div>
-      )}
+          ) : (
+            <p className="text-sm text-on-surface-variant">No disabled users</p>
+          )
+        )}
+      </div>
 
       {managedUsers.length > 0 && (
         <div>
@@ -265,7 +267,7 @@ function UserCard({
       <Avatar avatarUrl={user.avatarUrl} displayName={displayName} size="w-16 h-16" />
 
       <div className="w-full text-center px-1">
-        <div className="flex items-center justify-center gap-1.5">
+        <div className="flex items-center justify-center gap-1.5 min-w-0">
           <p
             className="font-medium text-on-surface text-sm truncate"
             title={showUsernameHint ? `${displayName} (${user.username})` : displayName}
