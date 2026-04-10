@@ -269,7 +269,7 @@ function UserCard({
       <div className="w-full text-center px-1">
         <div className="flex items-center justify-center gap-1.5 min-w-0">
           <p
-            className="font-medium text-on-surface text-sm truncate"
+            className="font-medium text-on-surface text-sm truncate min-w-0"
             title={showUsernameHint ? `${displayName} (${user.username})` : displayName}
           >
             {displayName}
