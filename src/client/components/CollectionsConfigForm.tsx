@@ -105,8 +105,8 @@ export default function CollectionsConfigForm({
               setForm((current) => ({ ...current, collectionSortOrder: value as CollectionSortOrder }))
             }
           >
-            <option value="year-desc">Release Year (New to Old)</option>
-            <option value="year-asc">Release Year (Old to New)</option>
+            <option value="date-desc">Release Date (New to Old)</option>
+            <option value="date-asc">Release Date (Old to New)</option>
             <option value="title">Title (A–Z)</option>
           </SelectInput>
         </Field>

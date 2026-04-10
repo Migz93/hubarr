@@ -1,5 +1,6 @@
 import type {
   AppSettings,
+  CollectionSortOrder,
   UserRecord,
   PlexSettingsInput,
   WatchlistItem
@@ -9,6 +10,49 @@ import { ImageCacheService } from "./image-cache.js";
 import { Logger } from "./logger.js";
 import { PlexIntegration, type PlexLibraryItemMatch, type ResolvedWatchlistItem } from "./integrations/plex.js";
 import { RssCache, type RssFeedItem } from "./rss-cache.js";
+
+/**
+ * Compare two watchlist items by release date for Plex collection ordering.
+ *
+ * YYYY-MM-DD strings compare correctly with a plain lexicographic sort, so no
+ * Date parsing is needed.
+ *
+ * Sort key priority:
+ *   1. releaseDate — primary, direction-aware (date-desc = newest first)
+ *   2. title — secondary, always ascending (A–Z)
+ *   3. plexItemId — tertiary, always ascending (guarantees a fully stable result
+ *      when two items share the same date and title)
+ *
+ * Items with a null releaseDate are placed at the end of the list in both
+ * directions. This ensures they do not interfere with properly-dated items.
+ */
+function compareByReleaseDate(
+  a: WatchlistItem,
+  b: WatchlistItem,
+  direction: Extract<CollectionSortOrder, "date-desc" | "date-asc">
+): number {
+  const aDate = a.releaseDate ?? null;
+  const bDate = b.releaseDate ?? null;
+
+  // Both null — fall through to tie-breakers so order is still deterministic.
+  if (aDate === null && bDate === null) {
+    const titleCmp = a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+    return titleCmp !== 0 ? titleCmp : a.plexItemId.localeCompare(b.plexItemId);
+  }
+  // One null — push it to the end regardless of direction.
+  if (aDate === null) return 1;
+  if (bDate === null) return -1;
+
+  const dateCmp = direction === "date-desc"
+    ? bDate.localeCompare(aDate)   // newest first
+    : aDate.localeCompare(bDate);  // oldest first
+
+  if (dateCmp !== 0) return dateCmp;
+
+  // Tie-break by title then ID for a fully stable result.
+  const titleCmp = a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+  return titleCmp !== 0 ? titleCmp : a.plexItemId.localeCompare(b.plexItemId);
+}
 
 export class HubarrServices {
   // Self RSS feed (admin's own watchlist)
@@ -165,6 +209,9 @@ export class HubarrServices {
         ...item,
         plexItemId: existing?.plexItemId ?? item.plexItemId,
         year: item.year ?? existing?.year ?? null,
+        // Preserve an already-discovered releaseDate across ingestion passes so
+        // a later partial update never drops a real date back to null.
+        releaseDate: item.releaseDate ?? existing?.releaseDate ?? null,
         thumb: item.thumb ?? existing?.thumb ?? null,
         guids: item.guids && item.guids.length > 0 ? item.guids : existing?.guids,
         discoverKey: item.discoverKey ?? existing?.discoverKey,
@@ -457,10 +504,14 @@ export class HubarrServices {
         continue;
       }
 
-      const sortOrder = appSettings.collectionSortOrder ?? "year-desc";
+      const sortOrder = appSettings.collectionSortOrder ?? "date-desc";
       const filteredItems = items.filter((item) => item.type === mediaType && item.matchedRatingKey);
-      if (sortOrder === "year-desc") {
-        filteredItems.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+      // Sort locally for both date directions so Hubarr — not Plex — owns the
+      // ordering logic. The sorted ratingKey list is then pushed into Plex via
+      // reorderCollectionItems, with Plex's collectionSort set to custom (2) so
+      // it honours that explicit position rather than re-sorting on its own.
+      if (sortOrder === "date-desc" || sortOrder === "date-asc") {
+        filteredItems.sort((a, b) => compareByReleaseDate(a, b, sortOrder));
       }
       const matchedRatingKeys = filteredItems.map((item) => item.matchedRatingKey as string);
       const collectionName = friend.collectionName;
@@ -480,7 +531,11 @@ export class HubarrServices {
       await plex.updateCollectionSortTitle(collectionRatingKey, `!10_${collectionName}`);
       await plex.updateCollectionContentSort(collectionRatingKey, sortOrder);
       await plex.syncCollectionItems(collectionRatingKey, matchedRatingKeys);
-      if (sortOrder === "year-desc") {
+      // Explicitly push item positions into Plex for both date-sort modes.
+      // Previously only date-desc (formerly year-desc) called reorder;
+      // date-asc now also uses Hubarr-managed ordering rather than relying on
+      // Plex's native release-date ascending sort, keeping both directions consistent.
+      if (sortOrder === "date-desc" || sortOrder === "date-asc") {
         await plex.reorderCollectionItems(collectionRatingKey, matchedRatingKeys);
       }
       this.logger.info("Collection items synced", {
@@ -858,6 +913,9 @@ export class HubarrServices {
         title: item.title,
         type: item.type,
         year: item.year,
+        // RSS pubDate is watchlist/feed timing, not the media release date.
+        // releaseDate is populated by enrichWatchlistItem via discover metadata.
+        releaseDate: null,
         thumb: item.thumb,
         guids: item.guids,
         source: "rss",
@@ -978,6 +1036,9 @@ export class HubarrServices {
         title: item.title,
         type: item.type,
         year: item.year,
+        // RSS pubDate is watchlist/feed timing, not the media release date.
+        // releaseDate is populated by enrichWatchlistItem via discover metadata.
+        releaseDate: null,
         thumb: item.thumb,
         guids: item.guids,
         source: "rss",

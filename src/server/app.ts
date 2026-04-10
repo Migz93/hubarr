@@ -583,9 +583,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         patch.collectionNamePattern = body.collections.collectionNamePattern;
       }
       if (body.collections.collectionSortOrder !== undefined) {
-        const valid = ["year-desc", "year-asc", "title"];
-        if (valid.includes(body.collections.collectionSortOrder)) {
-          patch.collectionSortOrder = body.collections.collectionSortOrder as "year-desc" | "year-asc" | "title";
+        // Accept new date-* values and normalize legacy year-* values on ingest.
+        const legacyMap: Record<string, string> = { "year-desc": "date-desc", "year-asc": "date-asc" };
+        const normalized = legacyMap[body.collections.collectionSortOrder] ?? body.collections.collectionSortOrder;
+        const valid = ["date-desc", "date-asc", "title"];
+        if (valid.includes(normalized)) {
+          patch.collectionSortOrder = normalized as "date-desc" | "date-asc" | "title";
         }
       }
       if ("movieLibraryId" in body.collections) {

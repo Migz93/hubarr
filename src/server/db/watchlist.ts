@@ -68,8 +68,14 @@ export function getWatchlistItems(db: Database.Database, userId?: number): Watch
       const parsed = JSON.parse(rawPayload) as Partial<WatchlistItem>;
       return {
         ...row,
+        // guids and discoverKey are stored only in raw_payload (not dedicated columns)
+        // because they are wide/variable-length arrays not needed for SQL filtering.
         guids: Array.isArray(parsed.guids) ? parsed.guids : undefined,
-        discoverKey: typeof parsed.discoverKey === "string" ? parsed.discoverKey : undefined
+        discoverKey: typeof parsed.discoverKey === "string" ? parsed.discoverKey : undefined,
+        // releaseDate is persisted inside raw_payload (the full serialised WatchlistItem)
+        // rather than as a dedicated column. Restore it here so the rest of the app
+        // can rely on it without a schema migration.
+        releaseDate: typeof parsed.releaseDate === "string" ? parsed.releaseDate : (row.releaseDate ?? null)
       };
     } catch {
       return row;

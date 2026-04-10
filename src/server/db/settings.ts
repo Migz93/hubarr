@@ -20,7 +20,7 @@ export const defaultAppSettings: AppSettings = {
   plexFullLibraryScanIntervalMinutes: 1440,
   historyRetentionDays: 7,
   collectionNamePattern: "{user}s Watchlist",
-  collectionSortOrder: "year-desc",
+  collectionSortOrder: "date-desc",
   visibilityDefaults: {
     recommended: true,
     home: true,
@@ -30,6 +30,17 @@ export const defaultAppSettings: AppSettings = {
   defaultMovieLibraryId: null,
   defaultShowLibraryId: null
 };
+
+/**
+ * Normalize legacy collection sort order values to the current date-based names.
+ * Existing installs may have "year-desc" or "year-asc" stored in settings.
+ */
+function normalizeSortOrder(value: string): AppSettings["collectionSortOrder"] {
+  if (value === "year-desc") return "date-desc";
+  if (value === "year-asc") return "date-asc";
+  if (value === "date-desc" || value === "date-asc" || value === "title") return value;
+  return "date-desc";
+}
 
 export function getSetting<T>(db: Database.Database, key: SettingKey): T | null {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as
@@ -157,7 +168,12 @@ export function deleteAllSessions(db: Database.Database): void {
 
 export function getAppSettings(db: Database.Database): AppSettings {
   const stored = getSetting<AppSettings>(db, "app");
-  return { ...defaultAppSettings, ...stored };
+  const merged = { ...defaultAppSettings, ...stored };
+  // Normalize on every read so existing installs that stored the old "year-desc" /
+  // "year-asc" values automatically upgrade to "date-desc" / "date-asc" without
+  // requiring a schema migration or a manual settings save.
+  merged.collectionSortOrder = normalizeSortOrder(merged.collectionSortOrder);
+  return merged;
 }
 
 export function updateAppSettings(db: Database.Database, patch: Partial<AppSettings>): AppSettings {
