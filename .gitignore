@@ -17,6 +17,6 @@ LOCAL.md
 
 # Playwright
 tests/playwright/.auth/
-playwright-report/
-test-results/
+tests/test-results/
+tests/playwright-report/
 .devcontainer/devcontainer.json

@@ -27,7 +27,7 @@ Hubarr uses [Playwright](https://playwright.dev/) for end-to-end tests. Tests ru
    npm run test:e2e
    ```
 
-   The first run validates the cookie and saves the session to `tests/playwright/.auth/storageState.json` (gitignored). All subsequent runs reuse the saved session automatically.
+   The first run validates the cookie and saves the session to `tests/playwright/.auth/storageState.json` (gitignored). Test run artifacts are written to `tests/test-results/` (also gitignored). All subsequent runs reuse the saved session automatically.
 
 ## Re-authenticating
 
@@ -38,6 +38,16 @@ rm tests/playwright/.auth/storageState.json
 # Update SESSION_COOKIE in .env.playwright with a fresh value, then:
 npm run test:e2e
 ```
+
+## Generated test files
+
+Playwright-generated files are kept under `tests/` so the repo root stays tidy:
+
+- `tests/playwright/.auth/storageState.json` — saved authenticated session state
+- `tests/test-results/` — Playwright run artifacts
+- `tests/playwright-report/` — Playwright HTML report output
+
+Both are gitignored.
 
 ## Commands
 
