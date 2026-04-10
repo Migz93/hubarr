@@ -340,7 +340,18 @@ export class PlexIntegration {
     return plexGuid ?? fallbackId;
   }
 
-  private async fetchDiscoverMetadata(item: WatchlistItem): Promise<{ posterUrl: string | null; year: number | null; guids: string[] } | null> {
+  /**
+   * Hit the Plex discover API to retrieve poster, year, release date, and
+   * cross-database GUIDs for a watchlist item.
+   *
+   * `originallyAvailableAt` is the authoritative release-date source. When it
+   * is a full YYYY-MM-DD string we use it directly; when only a year is available
+   * we synthesise `YYYY-01-01` as a sortable fallback. Both cases populate
+   * `releaseDate` so collection ordering is always deterministic.
+   *
+   * Best-effort: returns null when all endpoint attempts fail.
+   */
+  private async fetchDiscoverMetadata(item: WatchlistItem): Promise<{ posterUrl: string | null; year: number | null; releaseDate: string | null; guids: string[] } | null> {
     const endpoints = Array.from(new Set([
       item.discoverKey ? item.discoverKey.replace(/^\//, "") : null,
       `library/metadata/${encodeURIComponent(item.plexItemId)}`,
@@ -377,9 +388,21 @@ export class PlexIntegration {
           const guids = (metadata.Guid ?? [])
             .map((g) => g.id)
             .filter((id): id is string => Boolean(id));
+
+          // Derive a full release date from originallyAvailableAt when available,
+          // otherwise synthesize YYYY-01-01 from year as a sortable fallback.
+          const oaa = metadata.originallyAvailableAt;
+          let releaseDate: string | null = null;
+          if (oaa && /^\d{4}-\d{2}-\d{2}$/.test(oaa)) {
+            releaseDate = oaa;
+          } else if (metadata.year) {
+            releaseDate = `${metadata.year}-01-01`;
+          }
+
           return {
             posterUrl: metadata.thumb ?? null,
-            year: metadata.year ?? this.parseYear(metadata.originallyAvailableAt) ?? null,
+            year: metadata.year ?? this.parseYear(oaa) ?? null,
+            releaseDate,
             guids
           };
         }
@@ -442,19 +465,25 @@ export class PlexIntegration {
     return null;
   }
 
+  /**
+   * Enrich a watchlist item with poster, year, release date, and GUIDs from
+   * Plex discover metadata.
+   *
+   * Short-circuit rule: skip the discover lookup only when BOTH thumb AND
+   * releaseDate are already known. Having thumb+year alone is not enough —
+   * RSS items typically arrive with a thumbnail and year extracted from the
+   * feed title, but they have never been through a discover lookup so they
+   * will not yet have a proper releaseDate.
+   */
   private async enrichWatchlistMetadata(item: WatchlistItem) {
-    if (item.thumb && item.year) {
+    // Only skip the discover lookup when we already have everything we need.
+    // Requiring releaseDate (not just year) prevents RSS-ingested items from
+    // permanently bypassing the discover call.
+    if (item.thumb && item.releaseDate) {
       return {
         thumb: item.thumb,
         year: item.year,
-        guids: item.guids ?? []
-      };
-    }
-
-    if (item.thumb) {
-      return {
-        thumb: item.thumb,
-        year: item.year,
+        releaseDate: item.releaseDate,
         guids: item.guids ?? []
       };
     }
@@ -467,9 +496,20 @@ export class PlexIntegration {
       ...(item.guids ?? []),
       ...(discover?.guids ?? [])
     ]));
+
+    // Derive releaseDate: prefer discover metadata, then synthesize from year.
+    let releaseDate = discover?.releaseDate ?? item.releaseDate ?? null;
+    if (!releaseDate) {
+      const year = discover?.year ?? item.year;
+      if (year) {
+        releaseDate = `${year}-01-01`;
+      }
+    }
+
     return {
       thumb: discover?.posterUrl ?? item.thumb,
       year: discover?.year ?? item.year,
+      releaseDate,
       guids: mergedGuids
     };
   }
@@ -638,6 +678,7 @@ export class PlexIntegration {
           title: item.title,
           type: item.type === "SHOW" ? "show" : "movie",
           year: item.year ?? null,
+          releaseDate: null,
           thumb: null,
           guids,
           discoverKey: item.key,
@@ -664,6 +705,7 @@ export class PlexIntegration {
       ...item,
       thumb: enriched.thumb,
       year: enriched.year,
+      releaseDate: enriched.releaseDate,
       guids: enriched.guids
     };
   }
@@ -704,6 +746,7 @@ export class PlexIntegration {
           ...item,
           thumb: enriched.thumb,
           year: enriched.year,
+          releaseDate: enriched.releaseDate,
           guids: enrichedGuids,
           matchedRatingKey
         });
@@ -721,6 +764,7 @@ export class PlexIntegration {
           ...item,
           thumb: enriched.thumb,
           year: enriched.year,
+          releaseDate: enriched.releaseDate,
           guids: enrichedGuids,
           matchedRatingKey: null,
           searchCandidates: match.candidates
@@ -939,12 +983,15 @@ export class PlexIntegration {
 
   /**
    * Set the Plex collection sort mode.
-   *   year-desc → collectionSort=2 (custom order, items then positioned via reorderCollectionItems)
-   *   year-asc  → collectionSort=0 (Plex native release-date ascending)
+   *   date-desc → collectionSort=2 (custom order, items positioned via reorderCollectionItems)
+   *   date-asc  → collectionSort=2 (custom order, items positioned via reorderCollectionItems)
    *   title     → collectionSort=1 (Plex native alphabetical)
+   *
+   * Both date directions use Hubarr-managed custom ordering so the sort behaviour
+   * is consistent and deterministic regardless of direction.
    */
   async updateCollectionContentSort(ratingKey: string, sortOrder: CollectionSortOrder): Promise<void> {
-    const plexSort: Record<CollectionSortOrder, number> = { "year-desc": 2, "year-asc": 0, title: 1 };
+    const plexSort: Record<CollectionSortOrder, number> = { "date-desc": 2, "date-asc": 2, title: 1 };
     await this.requestServer(
       `/library/collections/${ratingKey}/prefs?collectionSort=${plexSort[sortOrder]}`,
       { method: "PUT" }

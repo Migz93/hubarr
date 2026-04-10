@@ -49,7 +49,7 @@ export interface VisibilityConfig {
   shared: boolean;
 }
 
-export type CollectionSortOrder = "year-desc" | "year-asc" | "title";
+export type CollectionSortOrder = "date-desc" | "date-asc" | "title";
 
 export type WatchlistSortBy = "added-desc" | "added-asc" | "title-asc" | "title-desc" | "year-desc" | "year-asc";
 
@@ -98,11 +98,25 @@ export interface WatchlistItem {
   plexItemId: string;
   title: string;
   type: MediaType;
+  /** The title's release year. Kept for display, matching, and as a fallback
+   *  when a full releaseDate is not available. Not used for collection ordering. */
   year: number | null;
+  /** ISO date string (YYYY-MM-DD) representing the media's original release date.
+   *  Sourced from Plex discover metadata `originallyAvailableAt`.
+   *  Used for collection sort ordering.
+   *
+   *  Distinct from `addedAt`, which records when the item entered the watchlist/feed
+   *  and must never be used as a proxy for the media release date.
+   *
+   *  null when not yet discovered; synthesised as YYYY-01-01 from `year` as a
+   *  last resort when no full date is available. */
+  releaseDate: string | null;
   thumb: string | null;
   guids?: string[];
   discoverKey?: string;
   source: "graphql" | "rss";
+  /** ISO timestamp of when this item entered the watchlist or RSS feed.
+   *  Used for watchlist recency views and RSS diffing only — not for collection ordering. */
   addedAt: string;
   matchedRatingKey: string | null;
 }
