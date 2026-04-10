@@ -228,6 +228,9 @@ When implementing new functionality, the agent should treat logging and code cla
 - Think through logging across the full implementation path, not just one layer — for example request handling, service logic, scheduled work, external API calls, and error paths where relevant
 - Add logs that are useful and intentional: enough context to understand what happened, without spamming noisy or redundant messages
 - Prioritise logs around important state changes, failures, retries, skipped work, and external-system interactions when those would otherwise be hard to trace
+- Use the appropriate log level: `info` for normal significant events (sync started/completed, item matched), `warn` for recoverable failures or skipped work, `error` for failures that need attention, and `debug` for diagnostic detail
+- Pass structured data as the second `meta` argument rather than interpolating values into the message string (e.g. `logger.info("Sync complete", { count: 5 })` not `logger.info(\`Sync complete: 5\`)`)
+- If rewriting an existing section of code that has no logging, add appropriate logging at that point — the absence of logs is often what made the original issue hard to diagnose
 
 #### Code comments
 
