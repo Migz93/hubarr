@@ -7,6 +7,7 @@ const baseURL = process.env.BASE_URL ?? "http://localhost:3000";
 
 export default defineConfig({
   testDir: "./tests/playwright",
+  outputDir: "./tests/test-results",
   fullyParallel: false,
   retries: 0,
   reporter: "list",
