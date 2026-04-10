@@ -218,6 +218,25 @@ See `SECURITY.md` for the full Snyk tooling guide, scan commands, and philosophy
 
 ---
 
+### Implementation Expectations — Logging And Comments
+
+When implementing new functionality, the agent should treat logging and code clarity as part of the feature work, not as optional polish.
+
+#### Logging
+
+- Consider logging for every new feature, workflow, integration, or background process where runtime visibility would help with debugging, support, or diagnosing failures
+- Think through logging across the full implementation path, not just one layer — for example request handling, service logic, scheduled work, external API calls, and error paths where relevant
+- Add logs that are useful and intentional: enough context to understand what happened, without spamming noisy or redundant messages
+- Prioritise logs around important state changes, failures, retries, skipped work, and external-system interactions when those would otherwise be hard to trace
+
+#### Code comments
+
+- Add explanatory comments where they materially improve readability or maintainability, especially around non-obvious logic, edge cases, or decisions that are easy to misread later
+- Keep comments clear and purposeful; do not add comments that only restate what the code already says
+- When a future maintainer might reasonably ask "why is this written this way?", prefer a short comment that answers that question at the point of implementation
+
+---
+
 ### End-to-End Tests — Playwright
 
 See `TESTING.md` for the full setup guide and a description of every test. Key points for the agent:
