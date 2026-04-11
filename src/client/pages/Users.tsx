@@ -2,8 +2,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Edit2, Play, RefreshCw, X } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
-import { Field, ToggleField } from "../components/FormControls";
-import type { UserRecord, ManagedUserRecord, SettingsResponse, VisibilityConfig } from "../../shared/types";
+import { Field, SelectInput, ToggleField } from "../components/FormControls";
+import type { CollectionSortOrder, UserRecord, ManagedUserRecord, SettingsResponse, VisibilityConfig } from "../../shared/types";
+
+/** Human-readable labels for each CollectionSortOrder value, matching the
+ *  dropdown text used in CollectionsConfigForm and the EditModal. */
+const SORT_ORDER_LABELS: Record<string, string> = {
+  "date-desc": "Release Date (New to Old)",
+  "date-asc": "Release Date (Old to New)",
+  "title": "Title (A\u2013Z)",
+  "watchlist-date-desc": "Watchlisted Date (New to Old)",
+  "watchlist-date-asc": "Watchlisted Date (Old to New)"
+};
 
 export default function Users() {
   const [users, setUsers] = useState<UserRecord[]>([]);
@@ -386,6 +396,9 @@ function EditModal({
   const [visibilityOverride, setVisibilityOverride] = useState<VisibilityConfig | null>(
     user.visibilityOverride ?? null
   );
+  const [collectionSortOrderOverride, setCollectionSortOrderOverride] = useState<CollectionSortOrder | null>(
+    user.collectionSortOrderOverride ?? null
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -403,7 +416,8 @@ function EditModal({
         enabled,
         displayNameOverride: displayNameOverride.trim() || null,
         collectionNameOverride: collectionNameOverride.trim() || null,
-        visibilityOverride
+        visibilityOverride,
+        collectionSortOrderOverride
       });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -497,6 +511,35 @@ function EditModal({
                 }
               />
             </div>
+          </div>
+
+          <div className="border-t border-outline-variant/10 pt-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-sm font-medium text-on-surface">Collection Ordering</div>
+              {collectionSortOrderOverride && (
+                <button
+                  onClick={() => setCollectionSortOrderOverride(null)}
+                  className="text-xs text-primary hover:text-primary-dim"
+                >
+                  Restore to global default
+                </button>
+              )}
+            </div>
+            <Field hint={`Global default: ${SORT_ORDER_LABELS[settings.collections.collectionSortOrder] ?? settings.collections.collectionSortOrder}`}>
+              <SelectInput
+                value={collectionSortOrderOverride ?? ""}
+                onChange={(value) =>
+                  setCollectionSortOrderOverride((value as CollectionSortOrder) || null)
+                }
+              >
+                <option value="">Use global default</option>
+                <option value="date-desc">Release Date (New to Old)</option>
+                <option value="date-asc">Release Date (Old to New)</option>
+                <option value="title">Title (A–Z)</option>
+                <option value="watchlist-date-desc">Watchlisted Date (New to Old)</option>
+                <option value="watchlist-date-asc">Watchlisted Date (Old to New)</option>
+              </SelectInput>
+            </Field>
           </div>
         </div>
 

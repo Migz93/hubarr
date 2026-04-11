@@ -108,6 +108,8 @@ export default function CollectionsConfigForm({
             <option value="date-desc">Release Date (New to Old)</option>
             <option value="date-asc">Release Date (Old to New)</option>
             <option value="title">Title (A–Z)</option>
+            <option value="watchlist-date-desc">Watchlisted Date (New to Old)</option>
+            <option value="watchlist-date-asc">Watchlisted Date (Old to New)</option>
           </SelectInput>
         </Field>
 

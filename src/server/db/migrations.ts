@@ -201,6 +201,16 @@ const migrations: Migration[] = [
         VALUES ('activity-cache-fetch', NULL, NULL, datetime('now'));
       `);
     }
+  },
+  {
+    version: 6,
+    up(db) {
+      // Stores an optional per-user collection sort order override.
+      // NULL means the user inherits the global collectionSortOrder setting.
+      db.exec(`
+        ALTER TABLE users ADD COLUMN collection_sort_order_override TEXT;
+      `);
+    }
   }
 ];
 

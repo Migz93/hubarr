@@ -82,6 +82,7 @@ export function listUsers(db: Database.Database): UserRecord[] {
         u.visibility_override AS visibilityOverride,
         u.collection_name_override AS collectionNameOverride,
         u.collection_name AS collectionName,
+        u.collection_sort_order_override AS collectionSortOrderOverride,
         u.last_synced_at AS lastSyncedAt,
         u.last_sync_error AS lastSyncError
       FROM users u
@@ -116,7 +117,14 @@ export function updateUser(
   patch: Partial<
     Pick<
       UserRecord,
-      "enabled" | "movieLibraryId" | "showLibraryId" | "visibilityOverride" | "displayNameOverride" | "collectionNameOverride"
+      | "enabled"
+      | "movieLibraryId"
+      | "showLibraryId"
+      | "visibilityOverride"
+      | "displayNameOverride"
+      | "collectionNameOverride"
+      // null means "follow global setting"; a value overrides it for this user only
+      | "collectionSortOrderOverride"
     >
   >
 ): UserRecord | null {
@@ -135,7 +143,8 @@ export function updateUser(
   db.prepare(`
     UPDATE users
     SET enabled = ?, movie_library_id = ?, show_library_id = ?,
-        visibility_override = ?, display_name_override = ?, collection_name_override = ?, collection_name = ?
+        visibility_override = ?, display_name_override = ?, collection_name_override = ?,
+        collection_name = ?, collection_sort_order_override = ?
     WHERE id = ?
   `).run(
     next.enabled ? 1 : 0,
@@ -145,6 +154,7 @@ export function updateUser(
     next.displayNameOverride ?? null,
     next.collectionNameOverride ?? null,
     collectionName,
+    next.collectionSortOrderOverride ?? null,
     id
   );
 
