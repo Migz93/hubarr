@@ -1076,7 +1076,15 @@ export class PlexIntegration {
    * is consistent and deterministic regardless of direction.
    */
   async updateCollectionContentSort(ratingKey: string, sortOrder: CollectionSortOrder): Promise<void> {
-    const plexSort: Record<CollectionSortOrder, number> = { "date-desc": 2, "date-asc": 2, title: 1 };
+    const plexSort: Record<CollectionSortOrder, number> = {
+      "date-desc": 2,
+      "date-asc": 2,
+      "title": 1,
+      // Watchlist date sorts use Plex's custom order mode (2) so item positions
+      // can be pushed explicitly via reorderCollectionItems.
+      "watchlist-date-desc": 2,
+      "watchlist-date-asc": 2
+    };
     await this.requestServer(
       `/library/collections/${ratingKey}/prefs?collectionSort=${plexSort[sortOrder]}`,
       { method: "PUT" }

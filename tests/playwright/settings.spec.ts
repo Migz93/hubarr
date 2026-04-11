@@ -51,4 +51,14 @@ test.describe("Settings tabs", () => {
     await expect(page.getByText("About Hubarr")).toBeVisible();
     await expect(page.getByText("Version")).toBeVisible();
   });
+
+  test("Collections tab shows watchlisted date sort options in the ordering dropdown", async ({ page }) => {
+    await page.goto("/settings?tab=collections");
+    await expect(page.getByText("Loading settings...")).not.toBeVisible({ timeout: 10_000 });
+
+    const select = page.getByRole("combobox").first();
+    await expect(select).toBeVisible();
+    await expect(select.locator("option[value='watchlist-date-desc']")).toHaveText("Watchlisted Date (New to Old)");
+    await expect(select.locator("option[value='watchlist-date-asc']")).toHaveText("Watchlisted Date (Old to New)");
+  });
 });

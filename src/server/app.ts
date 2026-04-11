@@ -5,6 +5,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { rateLimit } from "express-rate-limit";
 import helmet from "helmet";
 import type {
+  CollectionSortOrder,
   HealthResponse,
   PlexConfigPayload,
   PlexConnectionOption,
@@ -422,7 +423,18 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   app.patch("/api/users/:id", requireAuth, (req, res) => {
     try {
-      const user = db.updateUser(Number(req.params.id), req.body);
+      const body = req.body as Record<string, unknown>;
+      // Validate collectionSortOrderOverride if provided — reject unknown values.
+      const validSortOrders: CollectionSortOrder[] = ["date-desc", "date-asc", "title", "watchlist-date-desc", "watchlist-date-asc"];
+      if (
+        "collectionSortOrderOverride" in body &&
+        body.collectionSortOrderOverride !== null &&
+        !validSortOrders.includes(body.collectionSortOrderOverride as CollectionSortOrder)
+      ) {
+        res.status(400).json({ error: "Invalid collectionSortOrderOverride value." });
+        return;
+      }
+      const user = db.updateUser(Number(req.params.id), body);
       res.json(user);
     } catch (error) {
       res.status(404).json({ error: error instanceof Error ? error.message : String(error) });
@@ -586,9 +598,9 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         // Accept new date-* values and normalize legacy year-* values on ingest.
         const legacyMap: Record<string, string> = { "year-desc": "date-desc", "year-asc": "date-asc" };
         const normalized = legacyMap[body.collections.collectionSortOrder] ?? body.collections.collectionSortOrder;
-        const valid = ["date-desc", "date-asc", "title"];
-        if (valid.includes(normalized)) {
-          patch.collectionSortOrder = normalized as "date-desc" | "date-asc" | "title";
+        const valid: CollectionSortOrder[] = ["date-desc", "date-asc", "title", "watchlist-date-desc", "watchlist-date-asc"];
+        if (valid.includes(normalized as CollectionSortOrder)) {
+          patch.collectionSortOrder = normalized as CollectionSortOrder;
         }
       }
       if ("movieLibraryId" in body.collections) {

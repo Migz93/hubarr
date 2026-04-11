@@ -49,7 +49,7 @@ export interface VisibilityConfig {
   shared: boolean;
 }
 
-export type CollectionSortOrder = "date-desc" | "date-asc" | "title";
+export type CollectionSortOrder = "date-desc" | "date-asc" | "title" | "watchlist-date-desc" | "watchlist-date-asc";
 
 export type WatchlistSortBy = "added-desc" | "added-asc" | "title-asc" | "title-desc" | "year-desc" | "year-asc";
 
@@ -84,6 +84,8 @@ export interface UserRecord {
   visibilityOverride: VisibilityConfig | null;
   collectionNameOverride: string | null;
   collectionName: string;
+  /** Per-user collection sort order. null means fall back to the global collectionSortOrder setting. */
+  collectionSortOrderOverride: CollectionSortOrder | null;
   lastSyncedAt: string | null;
   lastSyncError: string | null;
 }

@@ -26,4 +26,26 @@ test.describe("Users page structure", () => {
   test("Refresh Users button is present", async ({ page }) => {
     await expect(page.getByRole("button", { name: /refresh users/i })).toBeVisible();
   });
+
+  test("Edit modal shows collection ordering override section", async ({ page }) => {
+    // Open the first user's edit modal via the "Edit user" button
+    const editButton = page.getByTitle("Edit user").first();
+    await expect(editButton).toBeVisible();
+    await editButton.click();
+
+    // The modal should appear
+    await expect(page.getByRole("heading", { name: /^Edit / })).toBeVisible();
+
+    // The Collection Ordering section header should be present
+    await expect(page.getByText("Collection Ordering")).toBeVisible();
+
+    // The ordering dropdown should include watchlist date options
+    const select = page.getByRole("combobox", { name: "" }).last();
+    await expect(select.locator("option[value='watchlist-date-desc']")).toHaveText("Watchlisted Date (New to Old)");
+    await expect(select.locator("option[value='watchlist-date-asc']")).toHaveText("Watchlisted Date (Old to New)");
+
+    // "Restore to global default" button should not appear when no override is set
+    // (the modal opens with user's current state; just verify the section renders correctly)
+    await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
+  });
 });

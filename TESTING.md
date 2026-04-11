@@ -85,6 +85,34 @@ Read-only. Safe to run against a live instance.
 
 ---
 
+### `tests/playwright/settings.spec.ts` — Settings tabs
+
+Read-only. Safe to run against a live instance.
+
+| Test | What it checks |
+|---|---|
+| All six tabs are visible | Navigates to `/settings`, asserts all six tab buttons (General, Plex, Collections, Logs, Jobs, About) are rendered |
+| Clicking a tab updates the URL | Clicks Plex, Jobs, and About tabs in turn; asserts the URL gains the expected `?tab=` parameter |
+| General tab shows Startup Sync toggle and History Retention field | Navigates to `/settings?tab=general`, waits for load, asserts both setting labels are visible |
+| Jobs tab shows the jobs table | Navigates to `/settings?tab=jobs`, asserts the "Job Name" column header is visible |
+| About tab shows version and support info | Navigates to `/settings?tab=about`, asserts "About Hubarr" and "Version" headings are visible |
+| Collections tab shows watchlisted date sort options | Navigates to `/settings?tab=collections`, asserts the ordering `<select>` contains the "Watchlisted Date (New to Old)" and "Watchlisted Date (Old to New)" options |
+
+---
+
+### `tests/playwright/users.spec.ts` — Users page structure
+
+Read-only. Safe to run against a live instance.
+
+| Test | What it checks |
+|---|---|
+| Active users section heading is visible | Asserts the "Active (N)" heading renders |
+| Disabled users accordion toggle is visible | Asserts the "Disabled (N)" toggle button renders |
+| Refresh Users button is present | Asserts the Refresh Users button renders |
+| Edit modal shows collection ordering override section | Clicks the first user's edit button, asserts the "Collection Ordering" section is visible in the modal, and that the dropdown contains the two watchlist date sort options |
+
+---
+
 ### `tests/playwright/posters.spec.ts` — Image cache
 
 Tests that cached images are served correctly from `/images/`, that the route is protected, and that user avatars load. Images are cached at sync time — tests log and skip gracefully if no images have been cached yet (run a full sync first).
