@@ -39,7 +39,7 @@ export const defaultAppSettings: AppSettings = {
 function normalizeSortOrder(value: string): AppSettings["collectionSortOrder"] {
   if (value === "year-desc") return "date-desc";
   if (value === "year-asc") return "date-asc";
-  if (value === "date-desc" || value === "date-asc" || value === "title") return value;
+  if (value === "date-desc" || value === "date-asc" || value === "title" || value === "watchlist-date-desc" || value === "watchlist-date-asc") return value;
   return "date-desc";
 }
 
