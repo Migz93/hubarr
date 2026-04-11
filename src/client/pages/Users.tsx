@@ -525,7 +525,7 @@ function EditModal({
                 </button>
               )}
             </div>
-            <Field hint={`Global default: ${SORT_ORDER_LABELS[settings.collections.collectionSortOrder] ?? settings.collections.collectionSortOrder}`}>
+            <Field label="Collection ordering" hint={`Global default: ${SORT_ORDER_LABELS[settings.collections.collectionSortOrder] ?? settings.collections.collectionSortOrder}`}>
               <SelectInput
                 value={collectionSortOrderOverride ?? ""}
                 onChange={(value) =>
