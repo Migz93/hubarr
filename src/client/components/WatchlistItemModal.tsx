@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Film, Tv, X, Star, Clock, Tag } from "lucide-react";
-import { formatRelativeTime, formatWatchlistDate } from "../lib/utils";
+import { formatWatchlistDate } from "../lib/utils";
 import { apiGet } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
 import type { RichItemMetadata, WatchlistUser } from "../../shared/types";

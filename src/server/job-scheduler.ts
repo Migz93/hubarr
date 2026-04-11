@@ -175,7 +175,9 @@ export class JobScheduler {
       this.persistState(job);
       return true;
     } catch {
-      job.lastRunAt = new Date().toISOString();
+      // Do not advance lastRunAt on failure — it serves as the incremental
+      // fetch cursor for jobs like activity-cache-fetch and must not skip
+      // the failed window on the next run.
       job.lastRunStatus = "error";
       this.persistState(job);
       return false;

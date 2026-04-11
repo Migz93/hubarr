@@ -972,8 +972,10 @@ export class HubarrServices {
       this.logger.info("Activity cache sync complete", { isInitial, fetched: entries.length });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      // Preserve the pre-failure cursor so the next run retries from the same
+      // point rather than permanently skipping any events in the failed window.
       this.db.saveJobRunState("activity-cache-fetch", {
-        lastRunAt: new Date().toISOString(),
+        lastRunAt: since,
         lastRunStatus: "error"
       });
       this.logger.error("Activity cache sync failed", { message });

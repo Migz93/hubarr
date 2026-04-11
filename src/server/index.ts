@@ -80,13 +80,7 @@ scheduler.registerRecurringJob({
   id: "activity-cache-fetch",
   intervalMs: appSettings.activityCacheFetchIntervalMinutes * 60 * 1000,
   task: async () => {
-    try {
-      await services.syncActivityCache();
-    } catch (error) {
-      logger.warn("Activity cache sync failed", {
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
+    await services.syncActivityCache();
   }
 });
 
