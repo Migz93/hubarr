@@ -129,6 +129,8 @@ function GeneralTab({
   const [confirmReset, setConfirmReset] = useState(false);
   const [clearingCache, setClearingCache] = useState(false);
   const [clearCacheMessage, setClearCacheMessage] = useState<string | null>(null);
+  const [clearingActivityCache, setClearingActivityCache] = useState(false);
+  const [clearActivityCacheMessage, setClearActivityCacheMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setForm({ ...settings.general });
@@ -188,6 +190,21 @@ function GeneralTab({
     }
   }
 
+  async function clearActivityCache() {
+    setClearingActivityCache(true);
+    setClearActivityCacheMessage(null);
+    try {
+      const result = await apiPost<{ removed: number }>("/api/settings/activity-cache/clear");
+      setClearActivityCacheMessage(
+        `Cleared ${result.removed} activity cache entr${result.removed !== 1 ? "ies" : "y"}. Dates will be re-resolved on the next activity cache fetch.`
+      );
+    } catch (caught) {
+      setClearActivityCacheMessage(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setClearingActivityCache(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <SectionCard title="General Settings">
@@ -243,18 +260,35 @@ function GeneralTab({
         </div>
       </SectionCard>
 
-      <SectionCard title="Image Cache">
-        <p className="text-xs text-on-surface-variant mb-3">
-          Hubarr caches poster art and user avatars locally to make loading faster. Clearing the cache forces a re-download on the next sync.
-        </p>
-        <button
-          disabled={clearingCache}
-          onClick={() => void clearImageCache()}
-          className="text-sm font-semibold rounded-xl px-4 py-2 min-w-[160px] transition-colors disabled:opacity-50 bg-surface-container-high hover:bg-surface-bright border border-outline-variant/30 text-on-surface"
-        >
-          {clearingCache ? "Clearing…" : "Clear Image Cache"}
-        </button>
-        {clearCacheMessage && <div className="text-xs text-on-surface-variant mt-3">{clearCacheMessage}</div>}
+      <SectionCard title="Cache">
+        <div className="space-y-4">
+          <div>
+            <p className="text-xs text-on-surface-variant mb-3">
+              Hubarr caches poster art and user avatars locally to make loading faster. Clearing the cache forces a re-download on the next sync.
+            </p>
+            <button
+              disabled={clearingCache}
+              onClick={() => void clearImageCache()}
+              className="text-sm font-semibold rounded-xl px-4 py-2 min-w-[160px] transition-colors disabled:opacity-50 bg-surface-container-high hover:bg-surface-bright border border-outline-variant/30 text-on-surface"
+            >
+              {clearingCache ? "Clearing…" : "Clear Image Cache"}
+            </button>
+            {clearCacheMessage && <div className="text-xs text-on-surface-variant mt-3">{clearCacheMessage}</div>}
+          </div>
+          <div className="border-t border-outline-variant/20 pt-4">
+            <p className="text-xs text-on-surface-variant mb-3">
+              Hubarr caches Plex watchlist activity to resolve when items were added to a watchlist. Clearing this cache removes all stored dates — they will be re-fetched on the next activity cache run.
+            </p>
+            <button
+              disabled={clearingActivityCache}
+              onClick={() => void clearActivityCache()}
+              className="text-sm font-semibold rounded-xl px-4 py-2 min-w-[160px] transition-colors disabled:opacity-50 bg-surface-container-high hover:bg-surface-bright border border-outline-variant/30 text-on-surface"
+            >
+              {clearingActivityCache ? "Clearing…" : "Clear Activity Cache"}
+            </button>
+            {clearActivityCacheMessage && <div className="text-xs text-on-surface-variant mt-3">{clearActivityCacheMessage}</div>}
+          </div>
+        </div>
       </SectionCard>
     </div>
   );
@@ -521,6 +555,7 @@ const JOB_PRESETS: Record<string, { unit: "minutes" | "hours"; values: number[] 
   "plex-full-library-scan": { unit: "hours", values: [60, 120, 240, 360, 720, 1440] },
   "full-sync": { unit: "minutes", values: [5, 10, 15, 20, 30, 60, 120, 240, 360, 720, 1440] },
   "rss-sync":  { unit: "minutes", values: [1, 2, 5, 10, 15, 30] },
+  "activity-cache-fetch": { unit: "minutes", values: [30, 60, 120, 240, 360, 720, 1440] },
 };
 
 function formatPresetLabel(value: number, unit: "minutes" | "hours"): string {

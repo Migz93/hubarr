@@ -8,7 +8,7 @@ import type {
 import { HubarrDatabase } from "./db/index.js";
 import { ImageCacheService } from "./image-cache.js";
 import { Logger } from "./logger.js";
-import { PlexIntegration, type PlexLibraryItemMatch, type ResolvedWatchlistItem } from "./integrations/plex.js";
+import { PlexIntegration, WATCHLIST_DATE_UNKNOWN_SENTINEL, type PlexLibraryItemMatch, type ResolvedWatchlistItem } from "./integrations/plex.js";
 import { RssCache, type RssFeedItem } from "./rss-cache.js";
 
 /**
@@ -216,7 +216,15 @@ export class HubarrServices {
         guids: item.guids && item.guids.length > 0 ? item.guids : existing?.guids,
         discoverKey: item.discoverKey ?? existing?.discoverKey,
         source: existing?.source ?? item.source,
-        addedAt: existing?.addedAt ?? item.addedAt,
+        // Prefer a real date over the sentinel. A stored real date is always
+        // preserved; the sentinel can be overwritten if a real date arrives later.
+        addedAt: (() => {
+          const existingDate = existing?.addedAt;
+          const incomingDate = item.addedAt;
+          if (existingDate && existingDate !== WATCHLIST_DATE_UNKNOWN_SENTINEL) return existingDate;
+          if (incomingDate && incomingDate !== WATCHLIST_DATE_UNKNOWN_SENTINEL) return incomingDate;
+          return WATCHLIST_DATE_UNKNOWN_SENTINEL;
+        })(),
         matchedRatingKey: item.matchedRatingKey ?? existing?.matchedRatingKey ?? null
       };
     });
@@ -365,7 +373,7 @@ export class HubarrServices {
     };
   }
 
-  async syncUser(friend: UserRecord, runId: number) {
+  async syncUser(friend: UserRecord, runId: number, rssDateMap?: Map<string, string>) {
     if (!friend.enabled) {
       throw new Error("Friend must be enabled before syncing.");
     }
@@ -382,19 +390,28 @@ export class HubarrServices {
     });
 
     const plex = this.getPlexIntegration();
-    const syncObservedAt = new Date().toISOString();
 
     // Self and friends both use the same GraphQL-safe watchlist baseline.
-    const rawItems = friend.isSelf
-      ? await plex.fetchSelfWatchlist()
-      : await plex.fetchUserWatchlist(friend.plexUserId);
-    const normalizedRawItems = rawItems.map((item) => ({
-      ...item,
-      addedAt: syncObservedAt
-    }));
+    // addedAt is intentionally left as WATCHLIST_DATE_UNKNOWN_SENTINEL here —
+    // the merge and activity cache lookup below are responsible for resolving it.
+    //
+    // For the self user, also fetch their Plex UUID. Plex uses two ID formats
+    // for the admin account: a legacy numeric ID (stored in users.plex_user_id)
+    // and a hex UUID (used by the GraphQL activityFeed). The activity cache
+    // stores events under the UUID, so we need both to resolve dates.
+    const [rawItems, selfPlexUuid] = await (async () => {
+      if (friend.isSelf) {
+        const [items, uuid] = await Promise.all([
+          plex.fetchSelfWatchlist(),
+          plex.fetchSelfPlexUuid()
+        ]);
+        return [items, uuid] as const;
+      }
+      return [await plex.fetchUserWatchlist(friend.plexUserId), null] as const;
+    })();
 
-    const movieItems = await plex.resolveWatchlistItems(normalizedRawItems, "movie", movieLibraryId);
-    const showItems = await plex.resolveWatchlistItems(normalizedRawItems, "show", showLibraryId);
+    const movieItems = await plex.resolveWatchlistItems(rawItems, "movie", movieLibraryId);
+    const showItems = await plex.resolveWatchlistItems(rawItems, "show", showLibraryId);
     const fetched: ResolvedWatchlistItem[] = [...movieItems, ...showItems].sort((a, b) => a.title.localeCompare(b.title));
 
     const matchedCount = fetched.filter((i) => i.matchedRatingKey).length;
@@ -410,11 +427,65 @@ export class HubarrServices {
     const existingItems = this.db.getWatchlistItems(friend.id);
     const merged = this.mergeFetchedWatchlistItems(existingItems, fetched);
 
-    this.db.replaceWatchlistItems(friend.id, merged);
+    // Step 1: Resolve addedAt from the activity cache for items still carrying the sentinel.
+    // The activity cache stores discover-key IDs (/library/metadata/<hex>) while the
+    // watchlist cache stores plex:// GUIDs (plex://movie/<hex>). Try both so that
+    // items fetched via either path can be matched.
+    const afterActivityCache = merged.map((item) => {
+      if (item.addedAt !== WATCHLIST_DATE_UNKNOWN_SENTINEL) return item;
+      // Try all combinations of ID format (plex:// GUID vs discover key) and
+      // user ID format (numeric legacy vs UUID). The activity cache stores
+      // discover-key item IDs under the UUID form of the user ID, so for the
+      // self user we must try both plexUserId ("8448953") and plexUuid ("77b5c…").
+      const tryLookup = (userId: string) =>
+        this.db.getActivityCacheDate(item.plexItemId, userId) ??
+        (item.discoverKey ? this.db.getActivityCacheDate(item.discoverKey, userId) : null);
+      const cached =
+        tryLookup(friend.plexUserId) ??
+        (selfPlexUuid ? tryLookup(selfPlexUuid) : null);
+      if (cached) {
+        this.logger.debug("Resolved addedAt from activity cache", { title: item.title, watchlistedAt: cached });
+        return { ...item, addedAt: cached };
+      }
+      return item;
+    });
+
+    // Step 2: RSS date resolution — only available during ad-hoc syncs where a fresh
+    // RSS snapshot was fetched before this call. Covers items added very recently that
+    // have not yet propagated to the activity feed, keyed by any guid or plexItemId.
+    const afterRss = rssDateMap
+      ? afterActivityCache.map((item) => {
+          if (item.addedAt !== WATCHLIST_DATE_UNKNOWN_SENTINEL) return item;
+          const candidates = [
+            item.plexItemId,
+            ...(item.discoverKey ? [item.discoverKey] : []),
+            ...(item.guids ?? [])
+          ];
+          for (const candidate of candidates) {
+            const rssDate = rssDateMap.get(candidate.toLowerCase());
+            if (rssDate) {
+              this.logger.debug("Resolved addedAt from RSS date map", { title: item.title, pubDate: rssDate });
+              return { ...item, addedAt: rssDate };
+            }
+          }
+          return item;
+        })
+      : afterActivityCache;
+
+    // Step 3: Track items still unresolved after all date sources have been tried.
+    const unresolvedItems: Array<{ title: string; type: string }> = [];
+    const mergedWithDates = afterRss.map((item) => {
+      if (item.addedAt === WATCHLIST_DATE_UNKNOWN_SENTINEL) {
+        unresolvedItems.push({ title: item.title, type: item.type });
+      }
+      return item;
+    });
+
+    this.db.replaceWatchlistItems(friend.id, mergedWithDates);
 
     const plexSettings = this.db.getPlexSettings();
     if (plexSettings) {
-      for (const item of merged) {
+      for (const item of mergedWithDates) {
         if (!item.thumb) continue;
         if (item.thumb.startsWith("/")) {
           await this.imageCache.ensurePosterCached(item.plexItemId, {
@@ -439,7 +510,7 @@ export class HubarrServices {
       {
         userId: friend.id,
         isSelf: friend.isSelf,
-        itemCount: merged.length,
+        itemCount: mergedWithDates.length,
         matched: matchedCount,
         unmatched: unmatchedItems.length
       },
@@ -471,6 +542,23 @@ export class HubarrServices {
       );
     }
 
+    for (const item of unresolvedItems) {
+      this.db.addSyncRunItem(
+        runId,
+        "watchlist.date_unresolved",
+        "error",
+        { title: item.title, type: item.type },
+        friend.id
+      );
+    }
+
+    if (unresolvedItems.length > 0) {
+      this.logger.warn("Some watchlist items have no resolved addedAt date", {
+        userId: friend.id,
+        count: unresolvedItems.length
+      });
+    }
+
     this.db.markUserSyncResult(friend.id, null);
 
     this.logger.info("Watchlist sync complete", {
@@ -479,7 +567,7 @@ export class HubarrServices {
       durationMs: Date.now() - syncStart
     });
 
-    return merged;
+    return mergedWithDates;
   }
 
   private async publishUserCollections(
@@ -604,9 +692,36 @@ export class HubarrServices {
     // Refresh self user account info (including avatar) on every full sync
     await this.upsertSelfUser();
 
+    // Refresh the activity cache before syncing so date resolution uses the
+    // freshest data available — avoids a second background pass just for dates.
+    await this.syncActivityCache().catch((err) => {
+      this.logger.warn("Activity cache sync failed before full sync — continuing with stale cache", {
+        message: err instanceof Error ? err.message : String(err)
+      });
+    });
+
+    // Fetch current RSS items once and build per-user date maps.
+    // These catch items added very recently that haven't propagated to the
+    // activity feed yet. Non-fatal — missing RSS data just means those items
+    // fall back to the activity cache or sentinel as usual.
+    let rssMaps: { self: Map<string, string>; byAuthor: Map<string, Map<string, string>> } | null = null;
+    try {
+      const owner = this.db.getPlexOwner();
+      if (owner) {
+        rssMaps = await this.buildAllRssDateMaps(owner.plexToken);
+      }
+    } catch (err) {
+      this.logger.warn("RSS date map fetch failed before full sync — continuing without RSS date resolution", {
+        message: err instanceof Error ? err.message : String(err)
+      });
+    }
+
     for (const friend of friends) {
+      const rssDateMap = rssMaps
+        ? (friend.isSelf ? rssMaps.self : (rssMaps.byAuthor.get(friend.plexUserId) ?? new Map()))
+        : undefined;
       try {
-        await this.syncUser(friend, runId);
+        await this.syncUser(friend, runId, rssDateMap);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.logger.error("Friend sync failed during full sync — continuing with remaining users", {
@@ -637,6 +752,14 @@ export class HubarrServices {
       });
     }
 
+    // Publish collections immediately so the updated watchlist is live in Plex
+    // without waiting for the next scheduled collection-publish job.
+    await this.runPublishPass().catch((err) => {
+      this.logger.warn("Collection publish after full sync failed", {
+        message: err instanceof Error ? err.message : String(err)
+      });
+    });
+
     return this.db.listSyncRuns(1)[0];
   }
 
@@ -649,8 +772,40 @@ export class HubarrServices {
     const label = friend.isSelf ? "self" : friend.displayName;
     const runId = this.db.createSyncRun("user", `Manual sync for ${label}.`);
     try {
-      const items = await this.syncUser(friend, runId);
+      // Refresh the activity cache so date resolution uses the freshest data.
+      await this.syncActivityCache().catch((err) => {
+        this.logger.warn("Activity cache sync failed before user sync — continuing with stale cache", {
+          userId: friend.id,
+          message: err instanceof Error ? err.message : String(err)
+        });
+      });
+
+      // Fetch current RSS items and build a date map scoped to this user.
+      let rssDateMap: Map<string, string> | undefined;
+      try {
+        const owner = this.db.getPlexOwner();
+        if (owner) {
+          const allMaps = await this.buildAllRssDateMaps(owner.plexToken);
+          rssDateMap = friend.isSelf ? allMaps.self : allMaps.byAuthor.get(friend.plexUserId);
+        }
+      } catch (err) {
+        this.logger.warn("RSS date map fetch failed before user sync — continuing without RSS date resolution", {
+          userId: friend.id,
+          message: err instanceof Error ? err.message : String(err)
+        });
+      }
+
+      const items = await this.syncUser(friend, runId, rssDateMap);
       this.db.completeSyncRun(runId, "success", `Manual sync finished for ${label}.`, null);
+
+      // Publish collections immediately so the result is live in Plex.
+      await this.runPublishPass().catch((err) => {
+        this.logger.warn("Collection publish after user sync failed", {
+          userId: friend.id,
+          message: err instanceof Error ? err.message : String(err)
+        });
+      });
+
       return { run: this.db.listSyncRuns(1)[0], items };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -711,6 +866,121 @@ export class HubarrServices {
     }
 
     return this.db.listSyncRuns(1)[0];
+  }
+
+  // ---------------------------------------------------------------------------
+  // RSS — date map helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fetch both Plex RSS feeds and build per-user date maps that can be passed
+   * into syncUser() to fill in sentinel dates for recently watchlisted items.
+   *
+   * Both feeds are fetched in parallel. Failures are surfaced so the caller
+   * can decide whether to continue with a partial map or skip RSS resolution.
+   *
+   * Returns:
+   *   self      — Map<lowercased-guid, ISO date> for the admin user
+   *   byAuthor  — Map<plexUserId, Map<lowercased-guid, ISO date>> for friends
+   */
+  private async buildAllRssDateMaps(ownerToken: string): Promise<{
+    self: Map<string, string>;
+    byAuthor: Map<string, Map<string, string>>;
+  }> {
+    const plex = this.getPlexIntegration();
+
+    const [selfResult, friendsResult] = await Promise.all([
+      plex.fetchRssUrl("watchlist", ownerToken).then((url) =>
+        url ? plex.fetchRssFeedItems(url) : null
+      ),
+      plex.fetchRssUrl("friendsWatchlist", ownerToken).then((url) =>
+        url ? plex.fetchRssFeedItems(url) : null
+      )
+    ]);
+
+    const self = new Map<string, string>();
+    if (selfResult?.ok) {
+      for (const item of selfResult.items) {
+        if (!item.pubDate) continue;
+        const date = new Date(item.pubDate);
+        if (Number.isNaN(date.getTime())) continue;
+        const iso = date.toISOString();
+        for (const guid of item.guids) {
+          self.set(guid.toLowerCase(), iso);
+        }
+      }
+      this.logger.debug("Built self RSS date map", { itemCount: self.size });
+    }
+
+    const byAuthor = new Map<string, Map<string, string>>();
+    if (friendsResult?.ok) {
+      for (const item of friendsResult.items) {
+        if (!item.pubDate || !item.author) continue;
+        const date = new Date(item.pubDate);
+        if (Number.isNaN(date.getTime())) continue;
+        const iso = date.toISOString();
+        if (!byAuthor.has(item.author)) byAuthor.set(item.author, new Map());
+        const authorMap = byAuthor.get(item.author)!;
+        for (const guid of item.guids) {
+          authorMap.set(guid.toLowerCase(), iso);
+        }
+      }
+      this.logger.debug("Built friends RSS date map", { authorCount: byAuthor.size });
+    }
+
+    return { self, byAuthor };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Activity Feed Cache
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fetch WATCHLIST activity events from the Plex Community API and upsert
+   * them into the local watchlist_activity_cache table.
+   *
+   * On the first run (no prior job_run_state) the entire feed history is
+   * paginated. On subsequent runs only events since the last fetch are pulled,
+   * keeping the incremental cost low.
+   */
+  async syncActivityCache(): Promise<void> {
+    const plexSettings = this.db.getPlexSettings();
+    if (!plexSettings) {
+      this.logger.warn("Activity cache sync skipped — Plex is not configured yet.");
+      return;
+    }
+
+    const plex = new PlexIntegration(plexSettings, this.logger);
+    const lastState = this.db.getJobRunState("activity-cache-fetch");
+    const since = lastState?.lastRunAt ?? null;
+    const isInitial = since === null;
+
+    this.logger.info("Activity cache sync started", { isInitial, since });
+
+    try {
+      const entries = await plex.fetchWatchlistActivityFeed(since);
+
+      if (entries.length > 0) {
+        this.db.upsertActivityCacheEntries(entries);
+      }
+
+      this.db.saveJobRunState("activity-cache-fetch", {
+        lastRunAt: new Date().toISOString(),
+        lastRunStatus: "success"
+      });
+
+      this.logger.info("Activity cache sync complete", { isInitial, fetched: entries.length });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Preserve the pre-failure cursor so the next run retries from the same
+      // point rather than permanently skipping any events in the failed window.
+      this.db.saveJobRunState("activity-cache-fetch", {
+        lastRunAt: since,
+        lastRunStatus: "error"
+      });
+      this.logger.error("Activity cache sync failed", { message });
+      throw err;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -851,6 +1121,20 @@ export class HubarrServices {
       }
 
       const total = selfProcessed + friendsProcessed;
+
+      // Publish collections immediately when new items were found so the
+      // watchlist is live in Plex without waiting for the next scheduled publish.
+      if (total > 0) {
+        this.logger.info("New RSS items processed — triggering collection publish", { count: total });
+        try {
+          await this.runPublishPass();
+        } catch (publishErr) {
+          this.logger.warn("Collection publish after RSS sync failed", {
+            message: publishErr instanceof Error ? publishErr.message : String(publishErr)
+          });
+        }
+      }
+
       this.db.completeSyncRun(
         runId,
         "success",
@@ -921,7 +1205,7 @@ export class HubarrServices {
         source: "rss",
         addedAt: item.pubDate && !Number.isNaN(new Date(item.pubDate).getTime())
           ? new Date(item.pubDate).toISOString()
-          : new Date().toISOString(),
+          : WATCHLIST_DATE_UNKNOWN_SENTINEL,
         matchedRatingKey: null
       };
 
@@ -1044,7 +1328,7 @@ export class HubarrServices {
         source: "rss",
         addedAt: item.pubDate && !Number.isNaN(new Date(item.pubDate).getTime())
           ? new Date(item.pubDate).toISOString()
-          : new Date().toISOString(),
+          : WATCHLIST_DATE_UNKNOWN_SENTINEL,
         matchedRatingKey: null
       };
 

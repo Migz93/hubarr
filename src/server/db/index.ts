@@ -221,6 +221,20 @@ export class HubarrDatabase {
     return watchlistRepo.computeWatchlistHash(this.db, userId, mediaType);
   }
 
+  upsertActivityCacheEntries(
+    entries: Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }>
+  ): void {
+    watchlistRepo.upsertActivityCacheEntries(this.db, entries);
+  }
+
+  getActivityCacheDate(plexItemId: string, plexUserId: string): string | null {
+    return watchlistRepo.getActivityCacheDate(this.db, plexItemId, plexUserId);
+  }
+
+  clearActivityCache(): number {
+    return watchlistRepo.clearActivityCache(this.db);
+  }
+
   // -------------------------------------------------------------------------
   // Image Cache
   // -------------------------------------------------------------------------

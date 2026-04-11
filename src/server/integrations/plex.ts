@@ -81,6 +81,31 @@ type PlexFriendWatchlistResponse = {
   };
 };
 
+interface PlexActivityFeedNode {
+  date: string;
+  userV2: {
+    id: string;
+    username: string;
+    displayName: string;
+  };
+  metadataItem: {
+    id: string;
+    title: string;
+    type: string;
+    key: string | null;
+  } | null;
+}
+
+type PlexActivityFeedResponse = {
+  activityFeed: {
+    nodes: PlexActivityFeedNode[];
+    pageInfo: {
+      endCursor: string | null;
+      hasNextPage: boolean;
+    };
+  };
+};
+
 export interface PlexLibrary {
   key: string;
   title: string;
@@ -103,6 +128,10 @@ const PLEX_TV_PING_URL = "https://plex.tv/api/v2/ping";
 const PLEX_TV_RESOURCES_URL = "https://plex.tv/api/v2/resources";
 
 const RSS_PLEX_UUID_PATH = /^\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+
+// Sentinel value used when no real watchlist date can be determined.
+// Stored in the DB so it can be overwritten later if a real date is found.
+export const WATCHLIST_DATE_UNKNOWN_SENTINEL = "2001-01-01T00:00:00.000Z";
 
 export class PlexIntegration {
   private resolvedMachineIdentifier: string | null = null;
@@ -332,7 +361,7 @@ export class PlexIntegration {
       }
     }
 
-    return new Date().toISOString();
+    return WATCHLIST_DATE_UNKNOWN_SENTINEL;
   }
 
   private buildPlexItemId(fallbackId: string, guids?: string[]): string {
@@ -683,7 +712,7 @@ export class PlexIntegration {
           guids,
           discoverKey: item.key,
           source: "graphql",
-          addedAt: new Date().toISOString(),
+          addedAt: WATCHLIST_DATE_UNKNOWN_SENTINEL,
           matchedRatingKey: null
         });
       }
@@ -697,6 +726,62 @@ export class PlexIntegration {
 
   async fetchUserWatchlist(userId: string): Promise<WatchlistItem[]> {
     return this.fetchGraphqlWatchlist(userId);
+  }
+
+  /**
+   * Fetch WATCHLIST activity feed entries from the Plex Community GraphQL API.
+   *
+   * On the initial call (since = null) paginates the full history.
+   * On incremental calls, pass the ISO timestamp from the previous run —
+   * pagination stops when entries older than that timestamp are reached.
+   * Plex returns entries newest-first so this is safe to short-circuit.
+   *
+   * Returns one tuple per event. The caller is responsible for upserting into
+   * watchlist_activity_cache, keeping only the most recent date per user+item.
+   */
+  async fetchWatchlistActivityFeed(
+    since: string | null
+  ): Promise<Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }>> {
+    const results: Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }> = [];
+    let after: string | null = null;
+    let hasNextPage = true;
+
+    while (hasNextPage) {
+      const data: PlexActivityFeedResponse = await this.requestCommunity<PlexActivityFeedResponse>(
+        `query GetWatchlistActivity($first: PaginationInt!, $after: String) {
+           activityFeed(first: $first, after: $after, types: [WATCHLIST]) {
+             nodes {
+               date
+               userV2 { id username displayName }
+               metadataItem { id title type key }
+             }
+             pageInfo { endCursor hasNextPage }
+           }
+         }`,
+        { first: 100, after }
+      );
+
+      let reachedSince = false;
+      for (const node of data.activityFeed.nodes) {
+        // Incremental mode: stop once we pass entries older than last fetch
+        if (since && node.date <= since) {
+          reachedSince = true;
+          break;
+        }
+        if (!node.metadataItem) continue;
+        const plexItemId = this.buildPlexItemId(node.metadataItem.key ?? node.metadataItem.id);
+        results.push({
+          plexItemId,
+          plexUserId: node.userV2.id,
+          watchlistedAt: node.date
+        });
+      }
+
+      hasNextPage = !reachedSince && data.activityFeed.pageInfo.hasNextPage;
+      after = data.activityFeed.pageInfo.endCursor;
+    }
+
+    return results;
   }
 
   async enrichWatchlistItem(item: WatchlistItem): Promise<WatchlistItem> {
@@ -1102,6 +1187,18 @@ export class PlexIntegration {
   async fetchSelfWatchlist(): Promise<WatchlistItem[]> {
     const account = await this.fetchSelfAccountData();
     return this.fetchGraphqlWatchlist(account.plexUuid);
+  }
+
+  /**
+   * Return the UUID of the authenticated admin account.
+   * Plex internally uses two ID formats for the same account: a legacy numeric
+   * ID (stored in the `users` table as plexUserId) and a hex UUID (used by the
+   * GraphQL API and the activityFeed). This method returns the UUID form so
+   * callers can look up the activity cache using the correct identifier.
+   */
+  async fetchSelfPlexUuid(): Promise<string> {
+    const account = await this.fetchSelfAccountData();
+    return account.plexUuid;
   }
 
   /**

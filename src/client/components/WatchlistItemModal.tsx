@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Film, Tv, X, Star, Clock, Tag } from "lucide-react";
-import { formatRelativeTime } from "../lib/utils";
+import { formatWatchlistDate } from "../lib/utils";
 import { apiGet } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
 import type { RichItemMetadata, WatchlistUser } from "../../shared/types";
@@ -191,7 +191,7 @@ export function WatchlistItemModal({
                       </div>
                     )}
                     <span className="text-on-surface text-sm flex-1">{user.displayName}</span>
-                    <span className="text-on-surface-variant text-xs">{formatRelativeTime(user.addedAt)}</span>
+                    <span className="text-on-surface-variant text-xs">{formatWatchlistDate(user.addedAt)}</span>
                   </div>
                 ))}
               </div>

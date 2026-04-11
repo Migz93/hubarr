@@ -69,6 +69,21 @@ scheduler.registerDailyJob({
   }
 });
 
+// Activity cache — run on startup (full fetch on first run, incremental thereafter)
+services.syncActivityCache().catch((error) => {
+  logger.warn("Activity cache sync failed at startup", {
+    error: error instanceof Error ? error.message : String(error)
+  });
+});
+
+scheduler.registerRecurringJob({
+  id: "activity-cache-fetch",
+  intervalMs: appSettings.activityCacheFetchIntervalMinutes * 60 * 1000,
+  task: async () => {
+    await services.syncActivityCache();
+  }
+});
+
 if (appSettings.rssEnabled) {
   services.initRss().catch((error) => {
     logger.warn("RSS initialization failed at startup", {

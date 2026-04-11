@@ -10,6 +10,7 @@ import type {
   WatchlistGroupedItem,
   WatchlistSortBy
 } from "../../shared/types";
+import { formatWatchlistDateShort } from "../lib/utils";
 
 const PAGE_SIZE = 24;
 
@@ -255,7 +256,7 @@ function WatchlistPoster({
     selectedUserId !== null
       ? (item.users.find((u) => u.userId === selectedUserId)?.addedAt ?? item.addedAt)
       : item.addedAt;
-  const addedDate = new Date(displayAddedAt).toLocaleDateString("en-GB");
+  const addedDate = formatWatchlistDateShort(displayAddedAt);
 
   return (
     <button onClick={onClick} className="group text-left w-full">

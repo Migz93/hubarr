@@ -26,6 +26,7 @@ const ACTION_LABELS: Record<string, string> = {
   "watchlist.rss": "RSS item",
   "watchlist.rss.self": "RSS item (self)",
   "watchlist.match.failed": "Match failed",
+  "watchlist.date_unresolved": "Date unresolved",
   "collection.publish": "Collection publish",
   "isolation.filters": "Isolation filters",
   "sync.user": "User sync"
@@ -304,8 +305,13 @@ function RunItems({ items }: { items: SyncRunItem[] }) {
   }
 
   const failures = items.filter((i) => i.action === "watchlist.match.failed");
-  const errors = items.filter((i) => i.status === "error" && i.action !== "watchlist.match.failed");
-  const other = items.filter((i) => i.status === "success" && i.action !== "watchlist.match.failed");
+  const unresolved = items.filter((i) => i.action === "watchlist.date_unresolved");
+  const errors = items.filter(
+    (i) => i.status === "error" && i.action !== "watchlist.match.failed" && i.action !== "watchlist.date_unresolved"
+  );
+  const other = items.filter(
+    (i) => i.status === "success" && i.action !== "watchlist.match.failed" && i.action !== "watchlist.date_unresolved"
+  );
 
   return (
     <div className="space-y-3">
@@ -319,6 +325,11 @@ function RunItems({ items }: { items: SyncRunItem[] }) {
         {failures.length > 0 && (
           <span className="text-warning bg-warning/10 px-2 py-0.5 rounded-full">
             {failures.length} unmatched
+          </span>
+        )}
+        {unresolved.length > 0 && (
+          <span className="text-warning bg-warning/10 px-2 py-0.5 rounded-full">
+            {unresolved.length} date{unresolved.length !== 1 ? "s" : ""} unresolved
           </span>
         )}
         {errors.length > 0 && (
@@ -340,6 +351,18 @@ function RunItems({ items }: { items: SyncRunItem[] }) {
           <div className="space-y-1">
             {failures.map((item) => (
               <MatchFailureRow key={item.id} item={item} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Watchlisted at date unresolved */}
+      {unresolved.length > 0 && (
+        <div>
+          <div className="text-xs text-warning font-medium mb-1.5">Watchlisted At Date Unresolved ({unresolved.length})</div>
+          <div className="space-y-1">
+            {unresolved.map((item) => (
+              <DateUnresolvedRow key={item.id} item={item} />
             ))}
           </div>
         </div>
@@ -448,6 +471,21 @@ function MatchFailureRow({ item }: { item: SyncRunItem }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+interface DateUnresolvedDetails {
+  title?: string;
+  type?: string;
+}
+
+function DateUnresolvedRow({ item }: { item: SyncRunItem }) {
+  const d = item.details as DateUnresolvedDetails | null;
+  return (
+    <div className="bg-warning/5 border border-warning/20 rounded-lg px-3 py-2 text-xs">
+      <span className="text-on-surface font-medium">{d?.title ?? "Unknown"}</span>
+      <span className="text-on-surface-variant ml-2">{d?.type}</span>
     </div>
   );
 }

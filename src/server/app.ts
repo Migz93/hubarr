@@ -813,6 +813,14 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         nextRunAt: scheduler?.getNextRunAt("rss-sync"),
         lastRunAt: lastRss?.completedAt ?? null,
         lastRunStatus: lastRss?.status === "success" || lastRss?.status === "error" ? lastRss.status : null
+      },
+      {
+        id: "activity-cache-fetch",
+        name: "Watchlist Activity Cache",
+        intervalDescription: `Every ${settings.activityCacheFetchIntervalMinutes} minutes`,
+        nextRunAt: scheduler?.getNextRunAt("activity-cache-fetch") ?? null,
+        lastRunAt: scheduler?.getLastRunAt("activity-cache-fetch") ?? null,
+        lastRunStatus: scheduler?.getLastRunStatus("activity-cache-fetch") ?? null
       }
     ];
 
@@ -863,6 +871,11 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
           logger.warn("Manual RSS poll failed", { error: err instanceof Error ? err.message : String(err) });
         });
         res.json({ triggered: true });
+      } else if (jobId === "activity-cache-fetch") {
+        services.syncActivityCache().catch((err) => {
+          logger.warn("Manual activity cache fetch failed", { error: err instanceof Error ? err.message : String(err) });
+        });
+        res.json({ triggered: true });
       } else {
         res.status(404).json({ error: "Unknown job." });
       }
@@ -910,6 +923,13 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         enabled: updated.rssEnabled
       });
       res.json({ updated: true });
+    } else if (jobId === "activity-cache-fetch" && body.intervalMinutes) {
+      const updated = db.updateAppSettings({ activityCacheFetchIntervalMinutes: body.intervalMinutes });
+      scheduler?.updateJob("activity-cache-fetch", {
+        intervalMs: updated.activityCacheFetchIntervalMinutes * 60 * 1000,
+        enabled: true
+      });
+      res.json({ updated: true });
     } else {
       res.status(400).json({ error: "Unknown job or missing interval." });
     }
@@ -929,6 +949,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   /** Clear image cache — removes all files and metadata */
   app.post("/api/settings/image-cache/clear", requireAuth, (_req, res) => {
     const removed = imageCache.clearAll();
+    res.json({ removed });
+  });
+
+  /** Clear activity cache — removes all watchlist activity date entries */
+  app.post("/api/settings/activity-cache/clear", requireAuth, (_req, res) => {
+    const removed = db.clearActivityCache();
     res.json({ removed });
   });
 
