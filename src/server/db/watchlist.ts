@@ -27,7 +27,11 @@ export function upsertWatchlistItem(db: Database.Database, userId: number, item:
       thumb = excluded.thumb,
       matched_rating_key = COALESCE(excluded.matched_rating_key, matched_rating_key),
       source = excluded.source,
-      raw_payload = excluded.raw_payload
+      raw_payload = excluded.raw_payload,
+      added_at = CASE
+        WHEN added_at = '2001-01-01T00:00:00.000Z' THEN excluded.added_at
+        ELSE added_at
+      END
   `).run({ userId, ...item, rawPayload: JSON.stringify(item) });
 }
 
@@ -298,4 +302,52 @@ export function computeWatchlistHash(db: Database.Database, userId: number, medi
     .createHash("sha256")
     .update(JSON.stringify(items.map((item) => [item.plexItemId, item.matchedRatingKey])))
     .digest("hex");
+}
+
+/**
+ * Upsert a batch of activity cache entries into watchlist_activity_cache.
+ * On conflict (same plex_item_id + plex_user_id) keeps the more recent date.
+ */
+export function upsertActivityCacheEntries(
+  db: Database.Database,
+  entries: Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }>
+): void {
+  const stmt = db.prepare(`
+    INSERT INTO watchlist_activity_cache (plex_item_id, plex_user_id, watchlisted_at)
+    VALUES (@plexItemId, @plexUserId, @watchlistedAt)
+    ON CONFLICT(plex_item_id, plex_user_id) DO UPDATE SET
+      watchlisted_at = CASE
+        WHEN excluded.watchlisted_at > watchlisted_at THEN excluded.watchlisted_at
+        ELSE watchlisted_at
+      END
+  `);
+  db.transaction(() => {
+    for (const entry of entries) stmt.run(entry);
+  })();
+}
+
+/**
+ * Look up the watchlisted_at date from the activity cache for a specific
+ * plex_item_id + plex_user_id pair. Returns null if not found.
+ */
+export function getActivityCacheDate(
+  db: Database.Database,
+  plexItemId: string,
+  plexUserId: string
+): string | null {
+  const row = db
+    .prepare("SELECT watchlisted_at FROM watchlist_activity_cache WHERE plex_item_id = ? AND plex_user_id = ?")
+    .get(plexItemId, plexUserId) as { watchlisted_at: string } | undefined;
+  return row?.watchlisted_at ?? null;
+}
+
+/**
+ * Delete all rows from watchlist_activity_cache and reset the job run state
+ * so the next scheduled fetch performs a full re-population.
+ * Returns the number of rows deleted.
+ */
+export function clearActivityCache(db: Database.Database): number {
+  const result = db.prepare("DELETE FROM watchlist_activity_cache").run();
+  db.prepare("UPDATE job_run_state SET last_run_at = NULL, updated_at = datetime('now') WHERE job_id = 'activity-cache-fetch'").run();
+  return result.changes;
 }

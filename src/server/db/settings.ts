@@ -13,6 +13,7 @@ export type SettingKey = "admin" | "plex" | "app";
 
 export const defaultAppSettings: AppSettings = {
   reconciliationIntervalMinutes: 60,
+  activityCacheFetchIntervalMinutes: 60,
   rssPollIntervalSeconds: 300,
   rssEnabled: true,
   collectionPublishIntervalMinutes: 5,

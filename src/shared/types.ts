@@ -55,6 +55,7 @@ export type WatchlistSortBy = "added-desc" | "added-asc" | "title-asc" | "title-
 
 export interface AppSettings {
   reconciliationIntervalMinutes: number;
+  activityCacheFetchIntervalMinutes: number;
   rssPollIntervalSeconds: number;
   rssEnabled: boolean;
   collectionPublishIntervalMinutes: number;

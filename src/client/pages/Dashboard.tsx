@@ -3,7 +3,7 @@ import { RefreshCw, Film, Tv, Users, Library, CheckCircle, XCircle } from "lucid
 import { Link } from "react-router-dom";
 import { apiGet, apiPost } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
-import { formatRelativeTime } from "../lib/utils";
+import { formatRelativeTime, formatWatchlistDateShort } from "../lib/utils";
 import { WatchlistItemModal } from "../components/WatchlistItemModal";
 import type { DashboardResponse, RecentlyAddedItem, SyncRun } from "../../shared/types";
 
@@ -241,7 +241,7 @@ function PosterCard({
 }) {
   const posterSrc = getPlexImageSrc(item.posterUrl);
 
-  const addedDate = new Date(item.addedAt).toLocaleDateString("en-GB");
+  const addedDate = formatWatchlistDateShort(item.addedAt);
 
   return (
     <button onClick={onClick} className="group text-left w-full">

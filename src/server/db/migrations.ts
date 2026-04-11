@@ -182,6 +182,25 @@ const migrations: Migration[] = [
         CREATE INDEX idx_image_cache_kind_entity ON image_cache(kind, entity_id);
       `);
     }
+  },
+  {
+    version: 5,
+    up(db) {
+      db.exec(`
+        CREATE TABLE watchlist_activity_cache (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          plex_item_id TEXT NOT NULL,
+          plex_user_id TEXT NOT NULL,
+          watchlisted_at TEXT NOT NULL,
+          UNIQUE(plex_item_id, plex_user_id)
+        );
+
+        CREATE INDEX idx_wac_item_user ON watchlist_activity_cache(plex_item_id, plex_user_id);
+
+        INSERT OR IGNORE INTO job_run_state (job_id, last_run_at, last_run_status, updated_at)
+        VALUES ('activity-cache-fetch', NULL, NULL, datetime('now'));
+      `);
+    }
   }
 ];
 
