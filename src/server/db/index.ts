@@ -167,7 +167,7 @@ export class HubarrDatabase {
     patch: Partial<
       Pick<
         UserRecord,
-        "enabled" | "movieLibraryId" | "showLibraryId" | "visibilityOverride" | "displayNameOverride" | "collectionNameOverride"
+        "enabled" | "movieLibraryId" | "showLibraryId" | "visibilityOverride" | "displayNameOverride" | "collectionNameOverride" | "collectionSortOrderOverride"
       >
     >
   ): UserRecord | null {

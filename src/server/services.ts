@@ -26,18 +26,13 @@ import { RssCache, type RssFeedItem } from "./rss-cache.js";
  * Items with a null releaseDate are placed at the end of the list in both
  * directions. This ensures they do not interfere with properly-dated items.
  */
-/** Sentinel value used for items whose watchlist date is unknown.
- *  Treated as "no date" and sorted to the end regardless of direction,
- *  mirroring how a null releaseDate is handled in compareByReleaseDate. */
-const UNKNOWN_ADDED_AT = "2001-01-01T00:00:00.000Z";
-
 function compareByWatchlistDate(
   a: WatchlistItem,
   b: WatchlistItem,
   direction: Extract<CollectionSortOrder, "watchlist-date-desc" | "watchlist-date-asc">
 ): number {
-  const aSentinel = a.addedAt === UNKNOWN_ADDED_AT;
-  const bSentinel = b.addedAt === UNKNOWN_ADDED_AT;
+  const aSentinel = a.addedAt === WATCHLIST_DATE_UNKNOWN_SENTINEL;
+  const bSentinel = b.addedAt === WATCHLIST_DATE_UNKNOWN_SENTINEL;
 
   // Both sentinel — unknown watchlist date, sort stably by title then ID.
   if (aSentinel && bSentinel) {
@@ -661,7 +656,7 @@ export class HubarrServices {
         // Warn about items whose watchlist date is unknown before sorting — they
         // will sort to the end. This usually means the item was added before the
         // activity cache feature existed and a full re-sync hasn't resolved it.
-        const unknownDateItems = filteredItems.filter((item) => item.addedAt === UNKNOWN_ADDED_AT);
+        const unknownDateItems = filteredItems.filter((item) => item.addedAt === WATCHLIST_DATE_UNKNOWN_SENTINEL);
         if (unknownDateItems.length > 0) {
           this.logger.warn("Some items have no resolved watchlist date and will sort to the end of the collection", {
             userId: friend.id,
