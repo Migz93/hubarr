@@ -238,6 +238,13 @@ When implementing new functionality, the agent should treat logging and code cla
 - Keep comments clear and purposeful; do not add comments that only restate what the code already says
 - When a future maintainer might reasonably ask "why is this written this way?", prefer a short comment that answers that question at the point of implementation
 
+#### Technical docs
+
+- Treat technical documentation as part of the implementation for major or long-lived changes, not optional follow-up work
+- If a change affects architecture, sync flow, persistence, external integrations, or runtime behavior in a lasting way, update the relevant file under `docs/` in the same branch/PR
+- Start from `docs/README.md` when deciding where documentation belongs
+- If no existing technical doc fits the change cleanly, add a new topic doc under `docs/` and link it from `docs/README.md`
+
 ---
 
 ### End-to-End Tests — Playwright
