@@ -9,6 +9,7 @@ export function useLiveRefresh(
   load: () => Promise<void>,
   { enabled = true, getIntervalMs }: LiveRefreshOptions
 ) {
+  const mountedRef = useRef(true);
   const loadRef = useRef(load);
   const getIntervalMsRef = useRef(getIntervalMs);
   const enabledRef = useRef(enabled);
@@ -26,7 +27,7 @@ export function useLiveRefresh(
 
   const scheduleNextRefresh = useCallback(() => {
     clearScheduledRefresh();
-    if (!enabledRef.current || !visibleRef.current) {
+    if (!mountedRef.current || !enabledRef.current || !visibleRef.current) {
       return;
     }
 
@@ -51,7 +52,9 @@ export function useLiveRefresh(
       await loadRef.current();
     } finally {
       inFlightRef.current = false;
-      scheduleNextRefresh();
+      if (mountedRef.current) {
+        scheduleNextRefresh();
+      }
     }
   }, [clearScheduledRefresh, scheduleNextRefresh]);
 
@@ -72,6 +75,8 @@ export function useLiveRefresh(
   useEffect(() => {
     // Hubarr uses polling-first UI refresh because background state changes on
     // the server, but the app does not yet have a push channel for the client.
+    mountedRef.current = true;
+
     function handleVisibilityChange() {
       visibleRef.current = document.visibilityState === "visible";
       if (visibleRef.current) {
@@ -83,6 +88,7 @@ export function useLiveRefresh(
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
+      mountedRef.current = false;
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       clearScheduledRefresh();
     };

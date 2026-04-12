@@ -758,10 +758,6 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     const settings = db.getAppSettings();
     const recentRuns = db.listSyncRuns(20);
 
-    const currentFull = recentRuns.find((r) => r.kind === "full" && r.status === "running");
-    const currentPublish = recentRuns.find((r) => r.kind === "publish" && r.status === "running");
-    const currentRss = recentRuns.find((r) => r.kind === "rss" && r.status === "running");
-
     // Keep the "last run" fields anchored to the most recent completed run so
     // active jobs can still show consistent previous-run context while running.
     const lastFull = recentRuns.find((r) => r.kind === "full" && r.completedAt);
@@ -773,7 +769,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "collection-publish",
         name: "Collection Sync",
         intervalDescription: `Every ${settings.collectionPublishIntervalMinutes} minutes`,
-        isRunning: (scheduler?.isRunning("collection-publish") ?? false) || Boolean(currentPublish),
+        isRunning: scheduler?.isRunning("collection-publish") ?? false,
         nextRunAt:
           scheduler?.getNextRunAt("collection-publish") ??
           (lastPublish?.completedAt
@@ -789,7 +785,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "full-sync",
         name: "Watchlist GraphQL Sync",
         intervalDescription: `Every ${settings.reconciliationIntervalMinutes} minutes`,
-        isRunning: (scheduler?.isRunning("full-sync") ?? false) || Boolean(currentFull),
+        isRunning: scheduler?.isRunning("full-sync") ?? false,
         nextRunAt:
           scheduler?.getNextRunAt("full-sync") ??
           (lastFull?.completedAt
@@ -842,7 +838,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         intervalDescription: settings.rssEnabled
           ? `Every ${settings.rssPollIntervalSeconds / 60} minute${settings.rssPollIntervalSeconds / 60 !== 1 ? "s" : ""}`
           : "Disabled",
-        isRunning: (scheduler?.isRunning("rss-sync") ?? false) || Boolean(currentRss),
+        isRunning: scheduler?.isRunning("rss-sync") ?? false,
         nextRunAt: scheduler?.getNextRunAt("rss-sync"),
         lastRunAt: lastRss?.completedAt ?? null,
         lastRunStatus: lastRss?.status === "success" || lastRss?.status === "error" ? lastRss.status : null
@@ -875,9 +871,11 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         }
         res.json({ triggered: true });
       } else if (jobId === "full-sync") {
-        services.runFullSync().catch((err) => {
-          logger.warn("Manual full sync failed", { error: err instanceof Error ? err.message : String(err) });
-        });
+        const triggered = scheduler?.runNow("full-sync") ?? false;
+        if (!triggered) {
+          res.status(404).json({ error: "Unknown job." });
+          return;
+        }
         res.json({ triggered: true });
       } else if (jobId === "plex-recently-added-scan") {
         const triggered = scheduler?.runNow("plex-recently-added-scan") ?? false;
@@ -908,9 +906,11 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         }
         res.json({ triggered: true });
       } else if (jobId === "rss-sync") {
-        services.pollRss().catch((err) => {
-          logger.warn("Manual RSS poll failed", { error: err instanceof Error ? err.message : String(err) });
-        });
+        const triggered = scheduler?.runNow("rss-sync") ?? false;
+        if (!triggered) {
+          res.status(404).json({ error: "Unknown job." });
+          return;
+        }
         res.json({ triggered: true });
       } else if (jobId === "activity-cache-fetch") {
         services.syncActivityCache().catch((err) => {
