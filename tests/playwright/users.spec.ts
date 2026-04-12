@@ -34,18 +34,21 @@ test.describe("Users page structure", () => {
     await editButton.click();
 
     // The modal should appear
-    await expect(page.getByRole("heading", { name: /^Edit / })).toBeVisible();
+    const modalHeading = page.getByRole("heading", { name: /^Edit / });
+    await expect(modalHeading).toBeVisible();
+    const modal = page.locator("div.fixed.inset-0.z-50");
 
-    // The Collection Ordering section header should be present
-    await expect(page.getByText("Collection Ordering")).toBeVisible();
+    // Scope the assertion to the modal so the section title does not collide
+    // with the nested field label text.
+    await expect(
+      modal.locator("div").filter({ hasText: /^Collection Ordering$/ }).first()
+    ).toBeVisible();
 
     // The ordering dropdown should include watchlist date options
-    const select = page.getByRole("combobox", { name: "" }).last();
+    const select = modal.getByRole("combobox").last();
     await expect(select.locator("option[value='watchlist-date-desc']")).toHaveText("Watchlisted Date (New to Old)");
     await expect(select.locator("option[value='watchlist-date-asc']")).toHaveText("Watchlisted Date (Old to New)");
 
-    // "Restore to global default" button should not appear when no override is set
-    // (the modal opens with user's current state; just verify the section renders correctly)
-    await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
+    await expect(modal.getByRole("button", { name: "Cancel" })).toBeVisible();
   });
 });

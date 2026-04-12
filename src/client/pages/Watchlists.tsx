@@ -3,6 +3,7 @@ import { Film, Tv, ChevronLeft, ChevronRight, CheckCircle, XCircle } from "lucid
 import { useSearchParams } from "react-router-dom";
 import { apiGet } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
+import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { WatchlistItemModal } from "../components/WatchlistItemModal";
 import type {
   MediaType,
@@ -26,6 +27,7 @@ const SORT_OPTIONS: { value: WatchlistSortBy; label: string }[] = [
 const VALID_SORT_VALUES = ["added-desc", "added-asc", "title-asc", "title-desc"];
 const VALID_AVAILABILITY = ["all", "available", "missing"];
 const VALID_MEDIA_TYPES = ["all", "movie", "show"];
+const WATCHLISTS_REFRESH_MS = 20_000;
 
 export default function Watchlists() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -60,16 +62,34 @@ export default function Watchlists() {
   const [selectedItem, setSelectedItem] = useState<WatchlistGroupedItem | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setLoading(true);
+  async function load(background = false) {
+    setLoading((current) => current || !background);
     const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE), sortBy });
     if (selectedUserId !== null) params.set("userId", String(selectedUserId));
     if (selectedMediaType !== "all") params.set("mediaType", selectedMediaType);
     if (availability !== "all") params.set("availability", availability);
-    apiGet<WatchlistPageResponse>(`/api/watchlists?${params.toString()}`)
-      .then((result) => { setData(result); setError(null); })
-      .catch((caught: unknown) => setError(caught instanceof Error ? caught.message : String(caught)))
-      .finally(() => setLoading(false));
+    try {
+      const result = await apiGet<WatchlistPageResponse>(`/api/watchlists?${params.toString()}`);
+      setData(result);
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useLiveRefresh(
+    async () => {
+      await load(true);
+    },
+    {
+      getIntervalMs: () => WATCHLISTS_REFRESH_MS
+    }
+  );
+
+  useEffect(() => {
+    void load();
   }, [selectedUserId, selectedMediaType, availability, sortBy, page]);
 
   const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0;
@@ -145,7 +165,7 @@ export default function Watchlists() {
       )}
 
       {/* Grid */}
-      {loading ? (
+      {loading && !data ? (
         <div className="flex items-center justify-center h-64">
           <div className="text-on-surface-variant text-sm">Loading watchlists...</div>
         </div>

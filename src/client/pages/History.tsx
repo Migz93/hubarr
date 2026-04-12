@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AlertCircle, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock, XCircle } from "lucide-react";
 import { apiGet } from "../lib/api";
+import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { formatDateTime, formatRelativeTime } from "../lib/utils";
 import type { HistoryPageResponse, SearchCandidate, SyncRun, SyncRunDetail, SyncRunItem } from "../../shared/types";
 
@@ -35,6 +36,8 @@ const ACTION_LABELS: Record<string, string> = {
 const VALID_KINDS: KindFilter[] = ["all", "full", "rss", "user", "publish"];
 const VALID_STATUSES: StatusFilter[] = ["all", "success", "error", "running"];
 const VALID_PAGE_SIZES = [10, 25, 50, 100];
+const HISTORY_FAST_REFRESH_MS = 2_500;
+const HISTORY_IDLE_REFRESH_MS = 15_000;
 
 export default function History() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -57,8 +60,8 @@ export default function History() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (background = false) => {
+    setLoading((current) => current || !background);
     try {
       const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize), kind, status });
       const result = await apiGet<HistoryPageResponse>(`/api/history?${params.toString()}`);
@@ -71,10 +74,20 @@ export default function History() {
     }
   }, [page, pageSize, kind, status]);
 
-  useEffect(() => { void load(); }, [load]);
-
   const runs = data?.results ?? [];
   const pageInfo = data?.pageInfo;
+  const hasRunningSync = runs.some((run) => run.status === "running");
+
+  useLiveRefresh(
+    async () => {
+      await load(true);
+    },
+    {
+      getIntervalMs: () => (hasRunningSync ? HISTORY_FAST_REFRESH_MS : HISTORY_IDLE_REFRESH_MS)
+    }
+  );
+
+  useEffect(() => { void load(); }, [load]);
 
   return (
     <div className="p-6 max-w-7xl mx-auto">

@@ -69,6 +69,14 @@ scheduler.registerDailyJob({
   }
 });
 
+scheduler.registerDailyJob({
+  id: "users-discover",
+  hour: 5,
+  task: async () => {
+    await services.runUsersDiscoverJob();
+  }
+});
+
 // Activity cache — run on startup (full fetch on first run, incremental thereafter)
 services.syncActivityCache().catch((error) => {
   logger.warn("Activity cache sync failed at startup", {

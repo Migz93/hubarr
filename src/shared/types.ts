@@ -326,6 +326,7 @@ export interface JobInfo {
   nextRunAt: string | null;
   lastRunAt: string | null;
   lastRunStatus: "success" | "error" | null;
+  isRunning: boolean;
 }
 
 export interface AboutInfo {

@@ -398,12 +398,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   });
 
   app.post("/api/users/discover", requireAuth, async (_req, res) => {
-    try {
-      const users = await services.discoverUsers();
-      res.json(users);
-    } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    const triggered = scheduler?.runNow("users-discover") ?? false;
+    if (!triggered) {
+      res.status(404).json({ error: "User discovery job is not registered." });
+      return;
     }
+    res.json({ triggered: true });
   });
 
   app.post("/api/users/bulk", requireAuth, (req, res) => {
@@ -758,15 +758,22 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     const settings = db.getAppSettings();
     const recentRuns = db.listSyncRuns(20);
 
-    const lastFull = recentRuns.find((r) => r.kind === "full");
-    const lastPublish = recentRuns.find((r) => r.kind === "publish");
-    const lastRss = recentRuns.find((r) => r.kind === "rss");
+    const currentFull = recentRuns.find((r) => r.kind === "full" && r.status === "running");
+    const currentPublish = recentRuns.find((r) => r.kind === "publish" && r.status === "running");
+    const currentRss = recentRuns.find((r) => r.kind === "rss" && r.status === "running");
+
+    // Keep the "last run" fields anchored to the most recent completed run so
+    // active jobs can still show consistent previous-run context while running.
+    const lastFull = recentRuns.find((r) => r.kind === "full" && r.completedAt);
+    const lastPublish = recentRuns.find((r) => r.kind === "publish" && r.completedAt);
+    const lastRss = recentRuns.find((r) => r.kind === "rss" && r.completedAt);
 
     const jobs = [
       {
         id: "collection-publish",
         name: "Collection Sync",
         intervalDescription: `Every ${settings.collectionPublishIntervalMinutes} minutes`,
+        isRunning: (scheduler?.isRunning("collection-publish") ?? false) || Boolean(currentPublish),
         nextRunAt:
           scheduler?.getNextRunAt("collection-publish") ??
           (lastPublish?.completedAt
@@ -782,6 +789,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "full-sync",
         name: "Watchlist GraphQL Sync",
         intervalDescription: `Every ${settings.reconciliationIntervalMinutes} minutes`,
+        isRunning: (scheduler?.isRunning("full-sync") ?? false) || Boolean(currentFull),
         nextRunAt:
           scheduler?.getNextRunAt("full-sync") ??
           (lastFull?.completedAt
@@ -796,6 +804,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "plex-recently-added-scan",
         name: "Plex Recently Added Scan",
         intervalDescription: `Every ${settings.plexRecentlyAddedScanIntervalMinutes} minutes`,
+        isRunning: scheduler?.isRunning("plex-recently-added-scan") ?? false,
         nextRunAt: scheduler?.getNextRunAt("plex-recently-added-scan") ?? null,
         lastRunAt: scheduler?.getLastRunAt("plex-recently-added-scan") ?? null,
         lastRunStatus: scheduler?.getLastRunStatus("plex-recently-added-scan") ?? null
@@ -804,6 +813,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "plex-full-library-scan",
         name: "Plex Full Library Scan",
         intervalDescription: `Every ${settings.plexFullLibraryScanIntervalMinutes / 60} hour${settings.plexFullLibraryScanIntervalMinutes / 60 !== 1 ? "s" : ""}`,
+        isRunning: scheduler?.isRunning("plex-full-library-scan") ?? false,
         nextRunAt: scheduler?.getNextRunAt("plex-full-library-scan") ?? null,
         lastRunAt: scheduler?.getLastRunAt("plex-full-library-scan") ?? null,
         lastRunStatus: scheduler?.getLastRunStatus("plex-full-library-scan") ?? null
@@ -812,9 +822,19 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "plex-refresh-token",
         name: "Plex Refresh Token",
         intervalDescription: "Daily at 5:00 AM",
+        isRunning: scheduler?.isRunning("plex-refresh-token") ?? false,
         nextRunAt: scheduler?.getNextRunAt("plex-refresh-token") ?? null,
         lastRunAt: scheduler?.getLastRunAt("plex-refresh-token") ?? null,
         lastRunStatus: scheduler?.getLastRunStatus("plex-refresh-token") ?? null
+      },
+      {
+        id: "users-discover",
+        name: "Refresh Users",
+        intervalDescription: "Daily at 5:00 AM",
+        isRunning: scheduler?.isRunning("users-discover") ?? false,
+        nextRunAt: scheduler?.getNextRunAt("users-discover") ?? null,
+        lastRunAt: scheduler?.getLastRunAt("users-discover") ?? null,
+        lastRunStatus: scheduler?.getLastRunStatus("users-discover") ?? null
       },
       {
         id: "rss-sync",
@@ -822,6 +842,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         intervalDescription: settings.rssEnabled
           ? `Every ${settings.rssPollIntervalSeconds / 60} minute${settings.rssPollIntervalSeconds / 60 !== 1 ? "s" : ""}`
           : "Disabled",
+        isRunning: (scheduler?.isRunning("rss-sync") ?? false) || Boolean(currentRss),
         nextRunAt: scheduler?.getNextRunAt("rss-sync"),
         lastRunAt: lastRss?.completedAt ?? null,
         lastRunStatus: lastRss?.status === "success" || lastRss?.status === "error" ? lastRss.status : null
@@ -830,6 +851,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "activity-cache-fetch",
         name: "Watchlist Activity Cache",
         intervalDescription: `Every ${settings.activityCacheFetchIntervalMinutes} minutes`,
+        isRunning: scheduler?.isRunning("activity-cache-fetch") ?? false,
         nextRunAt: scheduler?.getNextRunAt("activity-cache-fetch") ?? null,
         lastRunAt: scheduler?.getLastRunAt("activity-cache-fetch") ?? null,
         lastRunStatus: scheduler?.getLastRunStatus("activity-cache-fetch") ?? null
@@ -873,6 +895,13 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         res.json({ triggered: true });
       } else if (jobId === "plex-refresh-token") {
         const triggered = scheduler?.runNow("plex-refresh-token") ?? false;
+        if (!triggered) {
+          res.status(404).json({ error: "Unknown job." });
+          return;
+        }
+        res.json({ triggered: true });
+      } else if (jobId === "users-discover") {
+        const triggered = scheduler?.runNow("users-discover") ?? false;
         if (!triggered) {
           res.status(404).json({ error: "Unknown job." });
           return;

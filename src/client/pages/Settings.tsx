@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ChevronLeft, ChevronRight, ClipboardCopy, Eye, Pause, Pencil, Play, RefreshCw, X } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "../lib/api";
+import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { formatRelativeTime } from "../lib/utils";
 import PlexConfigForm from "../components/PlexConfigForm";
 import CollectionsConfigForm from "../components/CollectionsConfigForm";
@@ -558,6 +559,10 @@ const JOB_PRESETS: Record<string, { unit: "minutes" | "hours"; values: number[] 
   "activity-cache-fetch": { unit: "minutes", values: [30, 60, 120, 240, 360, 720, 1440] },
 };
 
+const JOBS_FAST_REFRESH_MS = 2_500;
+const JOBS_IDLE_REFRESH_MS = 15_000;
+const JOBS_FAST_REFRESH_WINDOW_MS = 30_000;
+
 function formatPresetLabel(value: number, unit: "minutes" | "hours"): string {
   if (unit === "hours") {
     const h = value / 60;
@@ -591,9 +596,10 @@ function JobsTab() {
   const [editingJob, setEditingJob] = useState<JobInfo | null>(null);
   const [editValue, setEditValue] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  const [fastRefreshUntil, setFastRefreshUntil] = useState<number | null>(null);
 
-  async function load() {
-    setLoading(true);
+  async function load(background = false) {
+    setLoading((current) => current || !background);
     try {
       const result = await apiGet<JobInfo[]>("/api/settings/jobs");
       setJobs(result);
@@ -602,11 +608,23 @@ function JobsTab() {
     }
   }
 
+  const hasRunningJob = jobs.some((job) => job.isRunning);
+  const shouldUseFastRefresh = hasRunningJob || (fastRefreshUntil !== null && fastRefreshUntil > Date.now());
+  const { refreshNow } = useLiveRefresh(
+    async () => {
+      await load(true);
+    },
+    {
+      getIntervalMs: () => (shouldUseFastRefresh ? JOBS_FAST_REFRESH_MS : JOBS_IDLE_REFRESH_MS)
+    }
+  );
+
   async function runJob(id: string) {
     setRunningId(id);
+    setFastRefreshUntil(Date.now() + JOBS_FAST_REFRESH_WINDOW_MS);
     try {
       await apiPost(`/api/settings/jobs/${id}/run`);
-      await load();
+      await refreshNow();
     } finally {
       setRunningId(null);
     }
@@ -625,7 +643,8 @@ function JobsTab() {
       const body = { intervalMinutes: Number(editValue) };
       await apiPatch(`/api/settings/jobs/${editingJob.id}`, body);
       setEditingJob(null);
-      await load();
+      setFastRefreshUntil(Date.now() + JOBS_FAST_REFRESH_WINDOW_MS);
+      await refreshNow();
     } finally {
       setSaving(false);
     }
@@ -706,30 +725,54 @@ function JobsTab() {
                 {jobs.map((job) => (
                   <tr key={job.id}>
                     <td className="py-3 pr-4">
+                      {(() => {
+                        const isActive = runningId === job.id || job.isRunning;
+                        return (
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-on-surface">{job.name}</span>
-                        {runningId === job.id && (
+                        {isActive && (
                           <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
                         )}
                       </div>
+                        );
+                      })()}
                       <div className="text-xs text-on-surface-variant mt-0.5">{job.intervalDescription}</div>
                     </td>
                     <td className="py-3 pr-4 text-on-surface-variant">
                       {job.nextRunAt ? formatRelativeTime(job.nextRunAt) : "—"}
                     </td>
                     <td className="py-3 pr-4">
-                      {job.lastRunAt ? (
-                        <div>
-                          <span className="text-on-surface-variant">{formatRelativeTime(job.lastRunAt)}</span>
-                          {job.lastRunStatus && (
-                            <span className={`ml-2 text-xs font-medium ${job.lastRunStatus === "success" ? "text-success" : "text-error"}`}>
-                              {job.lastRunStatus}
-                            </span>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-on-surface-variant">—</span>
-                      )}
+                      {(() => {
+                        const isActive = runningId === job.id || job.isRunning;
+                        if (isActive) {
+                          return (
+                            <div>
+                              <span className="text-primary text-xs font-medium">Running now</span>
+                              {job.lastRunAt && (
+                                <div className="mt-0.5 text-xs text-on-surface-variant">
+                                  Previous {formatRelativeTime(job.lastRunAt)}
+                                  {job.lastRunStatus ? ` · ${job.lastRunStatus}` : ""}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }
+
+                        if (job.lastRunAt) {
+                          return (
+                            <div>
+                              <span className="text-on-surface-variant">{formatRelativeTime(job.lastRunAt)}</span>
+                              {job.lastRunStatus && (
+                                <span className={`ml-2 text-xs font-medium ${job.lastRunStatus === "success" ? "text-success" : "text-error"}`}>
+                                  {job.lastRunStatus}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        }
+
+                        return <span className="text-on-surface-variant">—</span>;
+                      })()}
                     </td>
                     <td className="py-3">
                       <div className="flex items-center justify-end gap-2">
@@ -743,12 +786,12 @@ function JobsTab() {
                           </button>
                         )}
                         <button
-                          disabled={runningId === job.id}
+                          disabled={runningId === job.id || job.isRunning}
                           onClick={() => void runJob(job.id)}
                           className="flex items-center gap-1.5 bg-primary/10 hover:bg-primary/20 disabled:opacity-50 text-primary text-xs font-medium rounded-lg px-3 py-1.5 transition-colors border border-primary/20"
                         >
                           <Play size={13} />
-                          {runningId === job.id ? "Running..." : "Run Now"}
+                          {runningId === job.id || job.isRunning ? "Running..." : "Run Now"}
                         </button>
                       </div>
                     </td>

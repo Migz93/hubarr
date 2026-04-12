@@ -4,6 +4,7 @@ type ScheduledJob = {
   nextRunAt: string | null;
   lastRunAt: string | null;
   lastRunStatus: "success" | "error" | null;
+  activeRuns: number;
   timeout: ReturnType<typeof setTimeout> | null;
   schedule:
     | {
@@ -55,6 +56,7 @@ export class JobScheduler {
       nextRunAt: null,
       lastRunAt: null,
       lastRunStatus: null,
+      activeRuns: 0,
       timeout: null,
       schedule: {
         type: "interval",
@@ -81,6 +83,7 @@ export class JobScheduler {
       nextRunAt: null,
       lastRunAt: null,
       lastRunStatus: null,
+      activeRuns: 0,
       timeout: null,
       schedule: {
         type: "daily",
@@ -126,6 +129,10 @@ export class JobScheduler {
     return this.jobs.get(id)?.lastRunStatus ?? null;
   }
 
+  isRunning(id: string) {
+    return (this.jobs.get(id)?.activeRuns ?? 0) > 0;
+  }
+
   runNow(id: string) {
     const job = this.jobs.get(id);
     if (!job) {
@@ -168,6 +175,7 @@ export class JobScheduler {
       this.reschedule(job);
     }
 
+    job.activeRuns += 1;
     try {
       await job.task();
       job.lastRunAt = new Date().toISOString();
@@ -181,6 +189,8 @@ export class JobScheduler {
       job.lastRunStatus = "error";
       this.persistState(job);
       return false;
+    } finally {
+      job.activeRuns = Math.max(0, job.activeRuns - 1);
     }
   }
 
