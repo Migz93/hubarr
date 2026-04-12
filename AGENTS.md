@@ -157,14 +157,16 @@ Prefer `gh` over inferring GitHub state from local git — it gives the authorit
 
 Any text the agent sends to GitHub or stores in git history as authored output must end with an explicit AI sign-off.
 
-This applies to:
+This applies to **body text and comments only** — never to titles or subjects:
 
 - commit messages
-- pull request titles or descriptions
+- pull request descriptions (body)
 - issue comments
 - pull request comments
 - pull request reviews
 - any other agent-authored text posted to GitHub
+
+**Do not** append the sign-off to PR titles, issue titles, or any other subject/headline field.
 
 Use the sign-off that matches the agent:
 
@@ -172,6 +174,36 @@ Use the sign-off that matches the agent:
 - `🤖 Generated with Claude Code`
 
 If the user explicitly asks for a different agent label, follow that request. Otherwise, always append the correct sign-off at the end of the text.
+
+---
+
+### Pull Request Description Format
+
+Every PR description must follow this structure. Sparse descriptions (a few bullets with no detail) are not acceptable — include enough information that a reviewer can understand what changed and how to verify it without reading the diff first.
+
+```
+## Summary
+
+A short paragraph or bullet list explaining what this PR does and why. Mention the user-facing or system-level effect, not just the implementation detail.
+
+## Changes
+
+A file-by-file or component-by-component breakdown of what was modified and what each change does. Group related changes together. This section should give a reviewer a map of the diff before they open it.
+
+## Test plan
+
+A markdown checklist of concrete steps to verify the change works correctly. Each item should be specific enough that someone unfamiliar with the code can follow it — not just "test the feature" but "open Settings → Jobs, change the interval, trigger a sync, and confirm the log shows the updated value".
+
+🤖 Generated with [Agent Name]
+```
+
+**Minimum bar:** every PR must have all three sections. A test plan with only one item is fine if the change is small; a changes section with a single file is fine too. What is not acceptable is omitting sections or writing placeholder text like "verify it works".
+
+**Issue linking:** if the PR was prompted by an open GitHub issue, include a `Closes #<number>` line in the description body (not the title). GitHub will automatically close the issue when the PR merges. For example:
+
+```
+Closes #42
+```
 
 ---
 
@@ -191,7 +223,7 @@ If the user explicitly asks for a different agent label, follow that request. Ot
 ### Pull Request Conventions
 
 - Use semantic PR titles: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `ci:`
-- Keep descriptions concise: what changed, why, anything to verify
+- Follow the PR description format defined above (Summary / Changes / Test plan)
 - Call out explicitly if the change affects: release behaviour, Docker publishing, auth, database schema, or user-visible setup
 
 ---
