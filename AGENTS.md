@@ -153,6 +153,26 @@ For all GitHub-related work, use `gh` as the default tool. Use it for:
 
 Prefer `gh` over inferring GitHub state from local git — it gives the authoritative picture of what is open, merged, or failing on GitHub.
 
+### AI Sign-Off For GitHub Text
+
+Any text the agent sends to GitHub or stores in git history as authored output must end with an explicit AI sign-off.
+
+This applies to:
+
+- commit messages
+- pull request titles or descriptions
+- issue comments
+- pull request comments
+- pull request reviews
+- any other agent-authored text posted to GitHub
+
+Use the sign-off that matches the agent:
+
+- `🤖 Generated with Codex`
+- `🤖 Generated with Claude Code`
+
+If the user explicitly asks for a different agent label, follow that request. Otherwise, always append the correct sign-off at the end of the text.
+
 ---
 
 ### Branch Rules Summary
