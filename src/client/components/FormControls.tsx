@@ -92,12 +92,14 @@ export function ToggleField({
   label,
   hint,
   checked,
-  onChange
+  onChange,
+  restartRequired = false
 }: {
   label: string;
   hint?: string;
   checked: boolean;
   onChange: (value: boolean) => void;
+  restartRequired?: boolean;
 }) {
   return (
     <label className="flex items-start gap-3 cursor-pointer">
@@ -120,7 +122,14 @@ export function ToggleField({
         />
       </div>
       <div>
-        <div className="text-sm font-medium text-on-surface">{label}</div>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-on-surface">{label}</span>
+          {restartRequired && (
+            <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-warning/15 text-warning">
+              Restart Required
+            </span>
+          )}
+        </div>
         {hint && <div className="text-xs text-on-surface-variant mt-0.5">{hint}</div>}
       </div>
     </label>

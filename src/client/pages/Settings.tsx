@@ -142,7 +142,7 @@ function GeneralTab({
     setError(null);
     setSuccess(false);
     try {
-      await apiPatch("/api/settings", { general: form });
+      await apiPatch("/api/settings", { general: { fullSyncOnStartup: form.fullSyncOnStartup, historyRetentionDays: form.historyRetentionDays, trustProxy: form.trustProxy } });
       setSuccess(true);
       await onSave();
     } catch (caught) {
@@ -208,7 +208,17 @@ function GeneralTab({
 
   return (
     <div className="space-y-6">
-      <SectionCard title="General Settings">
+      <SectionCard
+        title="General Settings"
+        description="Changes to proxy support require a container restart to take effect."
+      >
+        <ToggleField
+          label="Trust Proxy"
+          hint="Enable when Hubarr is running behind a reverse proxy (e.g. Nginx, Traefik, Caddy) so that rate limiting uses the real client IP from X-Forwarded-For headers."
+          checked={form.trustProxy}
+          onChange={(value) => setForm((current) => ({ ...current, trustProxy: value }))}
+          restartRequired
+        />
         <ToggleField
           label="Startup Sync"
           hint="When Hubarr starts, run a Plex full library scan, then a watchlist GraphQL sync, then a collection sync."

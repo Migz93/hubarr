@@ -52,6 +52,15 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   const imageCache = new ImageCacheService(config.dataDir, db, logger);
   const services = new HubarrServices(db, logger, imageCache);
   const app = express();
+
+  // Enable trust proxy if configured — required for express-rate-limit to
+  // correctly identify clients by their real IP when Hubarr runs behind a
+  // reverse proxy that injects X-Forwarded-For headers.
+  if (db.getAppSettings().trustProxy) {
+    app.set("trust proxy", true);
+    logger.info("Trust proxy enabled — using X-Forwarded-For for client IP identification");
+  }
+
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {
@@ -543,7 +552,8 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     const payload: SettingsResponse = {
       general: {
         fullSyncOnStartup: app.fullSyncOnStartup,
-        historyRetentionDays: app.historyRetentionDays
+        historyRetentionDays: app.historyRetentionDays,
+        trustProxy: app.trustProxy
       },
       sync: {
         reconciliationIntervalMinutes: app.reconciliationIntervalMinutes,
@@ -564,7 +574,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   app.patch("/api/settings", requireAuth, (req, res) => {
     const body = req.body as {
-      general?: { fullSyncOnStartup?: boolean; historyRetentionDays?: number };
+      general?: { fullSyncOnStartup?: boolean; historyRetentionDays?: number; trustProxy?: boolean };
       collections?: {
         collectionNamePattern?: string;
         collectionSortOrder?: string;
@@ -587,6 +597,9 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       }
       if (body.general.historyRetentionDays !== undefined) {
         patch.historyRetentionDays = Math.max(1, Math.floor(body.general.historyRetentionDays));
+      }
+      if (typeof body.general.trustProxy === "boolean") {
+        patch.trustProxy = body.general.trustProxy;
       }
     }
 

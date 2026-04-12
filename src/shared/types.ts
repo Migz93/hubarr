@@ -68,6 +68,7 @@ export interface AppSettings {
   fullSyncOnStartup: boolean;
   defaultMovieLibraryId: string | null;
   defaultShowLibraryId: string | null;
+  trustProxy: boolean;
 }
 
 export interface UserRecord {
@@ -341,6 +342,7 @@ export interface SettingsResponse {
   general: {
     fullSyncOnStartup: boolean;
     historyRetentionDays: number;
+    trustProxy: boolean;
   };
   sync: {
     reconciliationIntervalMinutes: number;
