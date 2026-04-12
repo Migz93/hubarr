@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
-import type { DashboardResponse, RecentlyAddedItem, SyncRun, WatchlistItem } from "../../shared/types.js";
+import type { DashboardResponse, RecentlyAddedItem, SyncRun } from "../../shared/types.js";
+import { buildGuidMergePlan, mergeRawPayloadGuids } from "./guid-dedupe.js";
 import { calculateHistoryRetentionEvents, getAppSettings } from "./settings.js";
 
 // -------------------------------------------------------------------------
@@ -187,8 +188,12 @@ export function buildDashboard(db: Database.Database): DashboardResponse {
   const grouped = new Map<string, RecentlyAddedItem>();
   // Track GUIDs per item so the dashboard can collapse the same media when
   // Plex has cached it under different ID formats for different users.
-  const itemGuids = new Map<string, string[]>();
+  const itemGuids = new Map<string, Set<string>>();
+  const itemTypes = new Map<string, "movie" | "show">();
   for (const row of recentRows) {
+    itemTypes.set(row.plexItemId, row.type as "movie" | "show");
+    mergeRawPayloadGuids(itemGuids, row.plexItemId, row.rawPayload);
+
     const userEntry = {
       userId: row.userId,
       displayName: row.userDisplayName,
@@ -213,32 +218,10 @@ export function buildDashboard(db: Database.Database): DashboardResponse {
         users: [userEntry],
         plexAvailable: Boolean(row.matchedRatingKey)
       });
-      try {
-        const payload = JSON.parse(row.rawPayload) as Partial<WatchlistItem>;
-        if (Array.isArray(payload.guids) && payload.guids.length > 0) {
-          itemGuids.set(row.plexItemId, payload.guids.map((guid) => guid.toLowerCase()));
-        }
-      } catch {
-        // Unparseable payload: keep the dashboard entry, just skip GUID merging.
-      }
     }
   }
 
-  const guidToCanonical = new Map<string, string>();
-  const mergeInto = new Map<string, string>();
-
-  for (const [plexItemId, guids] of itemGuids) {
-    for (const guid of guids) {
-      if (guidToCanonical.has(guid)) {
-        const canonical = guidToCanonical.get(guid)!;
-        if (canonical !== plexItemId && !mergeInto.has(plexItemId)) {
-          mergeInto.set(plexItemId, canonical);
-        }
-      } else {
-        guidToCanonical.set(guid, plexItemId);
-      }
-    }
-  }
+  const mergeInto = buildGuidMergePlan(itemGuids, itemTypes);
 
   for (const [sourceId, targetId] of mergeInto) {
     const source = grouped.get(sourceId);
