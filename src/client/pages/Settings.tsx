@@ -856,6 +856,14 @@ function AboutTab() {
             {info?.version ?? "..."}
           </a>
         </InfoRow>
+        <InfoRow label="Build Channel">
+          <span className="text-sm text-on-surface capitalize">{info?.buildChannel ?? "..."}</span>
+        </InfoRow>
+        {info?.buildChannel !== "stable" && (
+          <InfoRow label="Commit">
+            <code className="text-sm text-on-surface bg-surface-container-high px-2 py-0.5 rounded font-mono">{info?.commitSha ?? "..."}</code>
+          </InfoRow>
+        )}
         <InfoRow label="Data Directory">
           <code className="text-sm text-on-surface bg-surface-container-high px-2 py-0.5 rounded">{info?.dataDir ?? "..."}</code>
         </InfoRow>

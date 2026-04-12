@@ -14,6 +14,11 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=9301
 ENV DATA_DIR=/config
+# Build metadata — overridden by CI workflows via --build-arg
+ARG BUILD_CHANNEL=local
+ARG COMMIT_SHA=local
+ENV BUILD_CHANNEL=$BUILD_CHANNEL
+ENV COMMIT_SHA=$COMMIT_SHA
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist

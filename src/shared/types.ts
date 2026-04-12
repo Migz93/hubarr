@@ -331,6 +331,8 @@ export interface JobInfo {
 
 export interface AboutInfo {
   version: string;
+  buildChannel: "stable" | "develop" | "local";
+  commitSha: string;
   nodeVersion: string;
   platform: string;
   dataDir: string;
