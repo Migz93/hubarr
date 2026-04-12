@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
 import type { WatchlistGroupedItem, WatchlistItem, WatchlistPageResponse, WatchlistSortBy } from "../../shared/types.js";
+import { buildGuidMergePlan, mergeRawPayloadGuids } from "./guid-dedupe.js";
 
 export function getWatchlistDiscoverKey(db: Database.Database, plexItemId: string): string | null {
   const row = db
@@ -146,9 +147,13 @@ export function getWatchlistGrouped(
   const grouped = new Map<string, WatchlistGroupedItem>();
   // Track GUIDs per item so we can merge items that share GUIDs but have
   // different plex_item_id values (e.g. old discover ratingKey vs new plex:// GUID).
-  const itemGuids = new Map<string, string[]>();
+  const itemGuids = new Map<string, Set<string>>();
+  const itemTypes = new Map<string, "movie" | "show">();
 
   for (const row of rawRows) {
+    itemTypes.set(row.plex_item_id, row.type as "movie" | "show");
+    mergeRawPayloadGuids(itemGuids, row.plex_item_id, row.raw_payload);
+
     const existing = grouped.get(row.plex_item_id);
     const userEntry = {
       userId: row.user_id,
@@ -177,35 +182,13 @@ export function getWatchlistGrouped(
         plexAvailable: Boolean(row.matched_rating_key),
         matchedRatingKey: row.matched_rating_key
       });
-      try {
-        const payload = JSON.parse(row.raw_payload) as Partial<WatchlistItem>;
-        if (Array.isArray(payload.guids) && payload.guids.length > 0) {
-          itemGuids.set(row.plex_item_id, payload.guids.map((g) => g.toLowerCase()));
-        }
-      } catch {
-        // unparseable payload — skip GUID tracking for this item
-      }
     }
   }
 
   // Second pass: merge entries whose GUIDs overlap but have different plex_item_id.
   // This handles legacy data where the same media was cached under different ID formats
   // (e.g. discover ratingKey for self vs plex:// GUID for friend).
-  const guidToCanonical = new Map<string, string>(); // guid → first-seen plex_item_id
-  const mergeInto = new Map<string, string>();       // secondary_id → canonical_id
-
-  for (const [plexItemId, guids] of itemGuids) {
-    for (const guid of guids) {
-      if (guidToCanonical.has(guid)) {
-        const canonical = guidToCanonical.get(guid)!;
-        if (canonical !== plexItemId && !mergeInto.has(plexItemId)) {
-          mergeInto.set(plexItemId, canonical);
-        }
-      } else {
-        guidToCanonical.set(guid, plexItemId);
-      }
-    }
-  }
+  const mergeInto = buildGuidMergePlan(itemGuids, itemTypes);
 
   for (const [sourceId, targetId] of mergeInto) {
     const source = grouped.get(sourceId);
