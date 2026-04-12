@@ -610,12 +610,16 @@ function JobsTab() {
 
   const hasRunningJob = jobs.some((job) => job.isRunning);
   const shouldUseFastRefresh = hasRunningJob || (fastRefreshUntil !== null && fastRefreshUntil > Date.now());
+  const getIntervalMs = useCallback(
+    () => (shouldUseFastRefresh ? JOBS_FAST_REFRESH_MS : JOBS_IDLE_REFRESH_MS),
+    [shouldUseFastRefresh]
+  );
   const { refreshNow } = useLiveRefresh(
     async () => {
       await load(true);
     },
     {
-      getIntervalMs: () => (shouldUseFastRefresh ? JOBS_FAST_REFRESH_MS : JOBS_IDLE_REFRESH_MS)
+      getIntervalMs
     }
   );
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Edit2, Play, RefreshCw, X } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
@@ -56,12 +56,16 @@ export default function Users() {
   }
 
   const refreshInProgress = triggeringRefresh || (usersDiscoverJob?.isRunning ?? false);
+  const getIntervalMs = useCallback(
+    () => (refreshInProgress ? USERS_FAST_REFRESH_MS : USERS_IDLE_REFRESH_MS),
+    [refreshInProgress]
+  );
   const { refreshNow } = useLiveRefresh(
     async () => {
       await load(true);
     },
     {
-      getIntervalMs: () => (refreshInProgress ? USERS_FAST_REFRESH_MS : USERS_IDLE_REFRESH_MS)
+      getIntervalMs
     }
   );
 

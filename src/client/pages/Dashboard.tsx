@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, Film, Tv, Users, Library, CheckCircle, XCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { apiGet, apiPost } from "../lib/api";
@@ -32,12 +32,16 @@ export default function Dashboard() {
   }
 
   const hasRunningSync = data?.syncActivity.some((run) => run.status === "running") ?? false;
+  const getIntervalMs = useCallback(
+    () => (hasRunningSync ? DASHBOARD_FAST_REFRESH_MS : DASHBOARD_IDLE_REFRESH_MS),
+    [hasRunningSync]
+  );
   const { refreshNow } = useLiveRefresh(
     async () => {
       await load(true);
     },
     {
-      getIntervalMs: () => (hasRunningSync ? DASHBOARD_FAST_REFRESH_MS : DASHBOARD_IDLE_REFRESH_MS)
+      getIntervalMs
     }
   );
 

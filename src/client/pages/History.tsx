@@ -77,13 +77,17 @@ export default function History() {
   const runs = data?.results ?? [];
   const pageInfo = data?.pageInfo;
   const hasRunningSync = runs.some((run) => run.status === "running");
+  const getIntervalMs = useCallback(
+    () => (hasRunningSync ? HISTORY_FAST_REFRESH_MS : HISTORY_IDLE_REFRESH_MS),
+    [hasRunningSync]
+  );
 
   useLiveRefresh(
     async () => {
       await load(true);
     },
     {
-      getIntervalMs: () => (hasRunningSync ? HISTORY_FAST_REFRESH_MS : HISTORY_IDLE_REFRESH_MS)
+      getIntervalMs
     }
   );
 

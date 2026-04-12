@@ -56,7 +56,7 @@ export function useLiveRefresh(
         scheduleNextRefresh();
       }
     }
-  }, [clearScheduledRefresh, scheduleNextRefresh]);
+  }, [clearScheduledRefresh]);
 
   useEffect(() => {
     loadRef.current = load;

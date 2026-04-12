@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Film, Tv, ChevronLeft, ChevronRight, CheckCircle, XCircle } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { apiGet } from "../lib/api";
@@ -79,12 +79,14 @@ export default function Watchlists() {
     }
   }
 
+  const getIntervalMs = useCallback(() => WATCHLISTS_REFRESH_MS, []);
+
   useLiveRefresh(
     async () => {
       await load(true);
     },
     {
-      getIntervalMs: () => WATCHLISTS_REFRESH_MS
+      getIntervalMs
     }
   );
 
