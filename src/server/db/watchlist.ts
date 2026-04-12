@@ -17,11 +17,12 @@ export function getWatchlistDiscoverKey(db: Database.Database, plexItemId: strin
 }
 
 export function upsertWatchlistItem(db: Database.Database, userId: number, item: WatchlistItem): void {
+  const discoverKey = item.discoverKey ?? null;
   db.prepare(`
     INSERT INTO watchlist_cache (
-      user_id, plex_item_id, title, type, year, thumb, source, added_at, matched_rating_key, raw_payload
+      user_id, plex_item_id, title, type, year, thumb, source, added_at, matched_rating_key, raw_payload, discover_key
     )
-    VALUES (@userId, @plexItemId, @title, @type, @year, @thumb, @source, @addedAt, @matchedRatingKey, @rawPayload)
+    VALUES (@userId, @plexItemId, @title, @type, @year, @thumb, @source, @addedAt, @matchedRatingKey, @rawPayload, @discoverKey)
     ON CONFLICT(user_id, plex_item_id) DO UPDATE SET
       title = excluded.title,
       year = excluded.year,
@@ -29,26 +30,27 @@ export function upsertWatchlistItem(db: Database.Database, userId: number, item:
       matched_rating_key = COALESCE(excluded.matched_rating_key, matched_rating_key),
       source = excluded.source,
       raw_payload = excluded.raw_payload,
+      discover_key = COALESCE(excluded.discover_key, discover_key),
       added_at = CASE
         WHEN added_at = '2001-01-01T00:00:00.000Z' THEN excluded.added_at
         ELSE added_at
       END
-  `).run({ userId, ...item, rawPayload: JSON.stringify(item) });
+  `).run({ userId, ...item, rawPayload: JSON.stringify(item), discoverKey });
 }
 
 export function replaceWatchlistItems(db: Database.Database, userId: number, items: WatchlistItem[]): void {
   const del = db.prepare("DELETE FROM watchlist_cache WHERE user_id = ?");
   const insert = db.prepare(`
     INSERT INTO watchlist_cache (
-      user_id, plex_item_id, title, type, year, thumb, source, added_at, matched_rating_key, raw_payload
+      user_id, plex_item_id, title, type, year, thumb, source, added_at, matched_rating_key, raw_payload, discover_key
     )
-    VALUES (@userId, @plexItemId, @title, @type, @year, @thumb, @source, @addedAt, @matchedRatingKey, @rawPayload)
+    VALUES (@userId, @plexItemId, @title, @type, @year, @thumb, @source, @addedAt, @matchedRatingKey, @rawPayload, @discoverKey)
   `);
 
   db.transaction(() => {
     del.run(userId);
     for (const item of items) {
-      insert.run({ userId, ...item, rawPayload: JSON.stringify(item) });
+      insert.run({ userId, ...item, rawPayload: JSON.stringify(item), discoverKey: item.discoverKey ?? null });
     }
   })();
 }
@@ -56,11 +58,13 @@ export function replaceWatchlistItems(db: Database.Database, userId: number, ite
 export function getWatchlistItems(db: Database.Database, userId?: number): WatchlistItem[] {
   const query = userId
     ? db.prepare(`
-        SELECT plex_item_id AS plexItemId, title, type, year, thumb, source, added_at AS addedAt, matched_rating_key AS matchedRatingKey, raw_payload AS rawPayload
+        SELECT plex_item_id AS plexItemId, title, type, year, thumb, source, added_at AS addedAt,
+               matched_rating_key AS matchedRatingKey, raw_payload AS rawPayload, discover_key AS discoverKey
         FROM watchlist_cache WHERE user_id = ? ORDER BY added_at DESC, title ASC
       `)
     : db.prepare(`
-        SELECT plex_item_id AS plexItemId, title, type, year, thumb, source, added_at AS addedAt, matched_rating_key AS matchedRatingKey, raw_payload AS rawPayload
+        SELECT plex_item_id AS plexItemId, title, type, year, thumb, source, added_at AS addedAt,
+               matched_rating_key AS matchedRatingKey, raw_payload AS rawPayload, discover_key AS discoverKey
         FROM watchlist_cache ORDER BY added_at DESC, title ASC
       `);
 
@@ -73,13 +77,11 @@ export function getWatchlistItems(db: Database.Database, userId?: number): Watch
       const parsed = JSON.parse(rawPayload) as Partial<WatchlistItem>;
       return {
         ...row,
-        // guids and discoverKey are stored only in raw_payload (not dedicated columns)
-        // because they are wide/variable-length arrays not needed for SQL filtering.
+        // guids and releaseDate are stored only in raw_payload — they are wide/variable-length
+        // arrays not needed for SQL filtering. discoverKey is now a dedicated column but
+        // we fall back to raw_payload for any rows written before migration v7.
         guids: Array.isArray(parsed.guids) ? parsed.guids : undefined,
-        discoverKey: typeof parsed.discoverKey === "string" ? parsed.discoverKey : undefined,
-        // releaseDate is persisted inside raw_payload (the full serialised WatchlistItem)
-        // rather than as a dedicated column. Restore it here so the rest of the app
-        // can rely on it without a schema migration.
+        discoverKey: row.discoverKey ?? (typeof parsed.discoverKey === "string" ? parsed.discoverKey : undefined),
         releaseDate: typeof parsed.releaseDate === "string" ? parsed.releaseDate : (row.releaseDate ?? null)
       };
     } catch {

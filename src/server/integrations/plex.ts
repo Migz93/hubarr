@@ -93,6 +93,7 @@ interface PlexActivityFeedNode {
     title: string;
     type: string;
     key: string | null;
+    guid: string | null;
   } | null;
 }
 
@@ -753,7 +754,7 @@ export class PlexIntegration {
              nodes {
                date
                userV2 { id username displayName }
-               metadataItem { id title type key }
+               metadataItem { id title type key guid }
              }
              pageInfo { endCursor hasNextPage }
            }
@@ -769,7 +770,8 @@ export class PlexIntegration {
           break;
         }
         if (!node.metadataItem) continue;
-        const plexItemId = this.buildPlexItemId(node.metadataItem.key ?? node.metadataItem.id);
+        const guids = node.metadataItem.guid ? [node.metadataItem.guid] : undefined;
+        const plexItemId = this.buildPlexItemId(node.metadataItem.key ?? node.metadataItem.id, guids);
         results.push({
           plexItemId,
           plexUserId: node.userV2.id,

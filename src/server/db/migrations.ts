@@ -211,6 +211,92 @@ const migrations: Migration[] = [
         ALTER TABLE users ADD COLUMN collection_sort_order_override TEXT;
       `);
     }
+  },
+  {
+    version: 7,
+    up(db) {
+      // Add a dedicated discover_key column to watchlist_cache so the
+      // /library/metadata/<hex> form of each item's ID is queryable without
+      // JSON-parsing raw_payload. Populated from raw_payload on migration.
+      db.exec(`
+        ALTER TABLE watchlist_cache ADD COLUMN discover_key TEXT;
+
+        UPDATE watchlist_cache
+        SET discover_key = json_extract(raw_payload, '$.discoverKey')
+        WHERE discover_key IS NULL;
+      `);
+
+      // Normalise RSS item plex_item_ids that were stored as stableKeys
+      // (e.g. "<userUUID>::imdb://...|tmdb://...") to the canonical plex://
+      // GUID format used by all GraphQL items. The plex:// GUID is already
+      // present in the raw_payload guids array after enrichment.
+      //
+      // If a row with the target plex:// ID already exists for the same user
+      // (i.e. the item was also cached via GraphQL), the stale RSS row is
+      // deleted to eliminate the duplicate. Otherwise the plex_item_id and
+      // discover_key are updated in place.
+      //
+      // image_cache poster entries keyed on the old stableKey are updated or
+      // removed to match.
+      const rssRows = db.prepare(`
+        SELECT id, user_id, plex_item_id, raw_payload
+        FROM watchlist_cache
+        WHERE plex_item_id NOT LIKE 'plex://%'
+          AND source = 'rss'
+      `).all() as Array<{ id: number; user_id: number; plex_item_id: string; raw_payload: string }>;
+
+      const findExisting = db.prepare(
+        "SELECT id FROM watchlist_cache WHERE user_id = ? AND plex_item_id = ?"
+      );
+      const updateRow = db.prepare(
+        "UPDATE watchlist_cache SET plex_item_id = ?, discover_key = ? WHERE id = ?"
+      );
+      const deleteRow = db.prepare("DELETE FROM watchlist_cache WHERE id = ?");
+      const updateImageCache = db.prepare(
+        "UPDATE image_cache SET cache_key = ?, entity_id = ? WHERE cache_key = ?"
+      );
+      const deleteImageCache = db.prepare(
+        "DELETE FROM image_cache WHERE cache_key = ?"
+      );
+
+      db.transaction(() => {
+        for (const row of rssRows) {
+          let payload: { guids?: string[]; discoverKey?: string };
+          try {
+            payload = JSON.parse(row.raw_payload) as typeof payload;
+          } catch {
+            continue;
+          }
+
+          const plexGuid = payload.guids?.find((g) => g.startsWith("plex://"));
+          if (!plexGuid) continue;
+
+          const discoverKey = payload.discoverKey ?? null;
+          const oldCacheKey = `poster:${row.plex_item_id}`;
+          const newCacheKey = `poster:${plexGuid}`;
+
+          const existing = findExisting.get(row.user_id, plexGuid) as { id: number } | undefined;
+          if (existing) {
+            // A canonical GraphQL row already exists — delete the stale RSS duplicate.
+            deleteRow.run(row.id);
+            deleteImageCache.run(oldCacheKey);
+          } else {
+            updateRow.run(plexGuid, discoverKey, row.id);
+            updateImageCache.run(newCacheKey, plexGuid, oldCacheKey);
+          }
+        }
+      })();
+
+      // Clear the activity cache so it repopulates with normalised plex://
+      // IDs on the next scheduled fetch (the fetcher now requests the guid
+      // field and prefers it over the raw /library/metadata/ key).
+      db.exec(`
+        DELETE FROM watchlist_activity_cache;
+        UPDATE job_run_state
+        SET last_run_at = NULL, updated_at = datetime('now')
+        WHERE job_id = 'activity-cache-fetch';
+      `);
+    }
   }
 ];
 
