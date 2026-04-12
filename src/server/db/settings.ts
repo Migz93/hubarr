@@ -29,7 +29,8 @@ export const defaultAppSettings: AppSettings = {
   },
   fullSyncOnStartup: false,
   defaultMovieLibraryId: null,
-  defaultShowLibraryId: null
+  defaultShowLibraryId: null,
+  trustProxy: false
 };
 
 /**
