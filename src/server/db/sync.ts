@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import type { DashboardResponse, RecentlyAddedItem, SyncRun } from "../../shared/types.js";
+import type { DashboardResponse, RecentlyAddedItem, SyncRun, WatchlistItem } from "../../shared/types.js";
 import { calculateHistoryRetentionEvents, getAppSettings } from "./settings.js";
 
 // -------------------------------------------------------------------------
@@ -157,6 +157,7 @@ export function buildDashboard(db: Database.Database): DashboardResponse {
     posterUrl: string | null;
     addedAt: string;
     matchedRatingKey: string | null;
+    rawPayload: string;
     userId: number;
     userDisplayName: string;
     userAvatarUrl: string | null;
@@ -168,6 +169,7 @@ export function buildDashboard(db: Database.Database): DashboardResponse {
              ip.local_web_path AS posterUrl,
              w.added_at AS addedAt,
              w.matched_rating_key AS matchedRatingKey,
+             w.raw_payload AS rawPayload,
              f.id AS userId,
              COALESCE(f.display_name_override, f.username) AS userDisplayName,
              ia.local_web_path AS userAvatarUrl
@@ -183,6 +185,9 @@ export function buildDashboard(db: Database.Database): DashboardResponse {
   // Group by plexItemId so the same movie watchlisted by multiple users
   // appears once, showing all users and the most recent watchlist date.
   const grouped = new Map<string, RecentlyAddedItem>();
+  // Track GUIDs per item so the dashboard can collapse the same media when
+  // Plex has cached it under different ID formats for different users.
+  const itemGuids = new Map<string, string[]>();
   for (const row of recentRows) {
     const userEntry = {
       userId: row.userId,
@@ -192,7 +197,9 @@ export function buildDashboard(db: Database.Database): DashboardResponse {
     };
     const existing = grouped.get(row.plexItemId);
     if (existing) {
-      existing.users.push(userEntry);
+      if (!existing.users.some((user) => user.userId === userEntry.userId)) {
+        existing.users.push(userEntry);
+      }
       if (row.addedAt > existing.addedAt) existing.addedAt = row.addedAt;
       existing.plexAvailable = existing.plexAvailable || Boolean(row.matchedRatingKey);
     } else {
@@ -206,30 +213,59 @@ export function buildDashboard(db: Database.Database): DashboardResponse {
         users: [userEntry],
         plexAvailable: Boolean(row.matchedRatingKey)
       });
+      try {
+        const payload = JSON.parse(row.rawPayload) as Partial<WatchlistItem>;
+        if (Array.isArray(payload.guids) && payload.guids.length > 0) {
+          itemGuids.set(row.plexItemId, payload.guids.map((guid) => guid.toLowerCase()));
+        }
+      } catch {
+        // Unparseable payload: keep the dashboard entry, just skip GUID merging.
+      }
     }
   }
 
-  const recentlyAdded: RecentlyAddedItem[] = Array.from(grouped.values())
-    .sort((a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime())
-    .slice(0, 12);
+  const guidToCanonical = new Map<string, string>();
+  const mergeInto = new Map<string, string>();
+
+  for (const [plexItemId, guids] of itemGuids) {
+    for (const guid of guids) {
+      if (guidToCanonical.has(guid)) {
+        const canonical = guidToCanonical.get(guid)!;
+        if (canonical !== plexItemId && !mergeInto.has(plexItemId)) {
+          mergeInto.set(plexItemId, canonical);
+        }
+      } else {
+        guidToCanonical.set(guid, plexItemId);
+      }
+    }
+  }
+
+  for (const [sourceId, targetId] of mergeInto) {
+    const source = grouped.get(sourceId);
+    const target = grouped.get(targetId);
+    if (!source || !target) continue;
+
+    for (const user of source.users) {
+      if (!target.users.some((existingUser) => existingUser.userId === user.userId)) {
+        target.users.push(user);
+      }
+    }
+
+    if (source.addedAt > target.addedAt) target.addedAt = source.addedAt;
+    target.plexAvailable = target.plexAvailable || source.plexAvailable;
+    grouped.delete(sourceId);
+  }
+
+  const allRecentItems = Array.from(grouped.values()).sort(
+    (a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime()
+  );
+
+  const recentlyAdded = allRecentItems.slice(0, 12);
 
   const enabledCount = (db.prepare("SELECT COUNT(*) AS count FROM users WHERE enabled = 1").get() as { count: number }).count;
 
-  const movieCount = (
-    db
-      .prepare(
-        "SELECT COUNT(DISTINCT w.plex_item_id) AS count FROM watchlist_cache w JOIN users f ON f.id = w.user_id WHERE f.enabled = 1 AND w.type = 'movie'"
-      )
-      .get() as { count: number }
-  ).count;
-
-  const showCount = (
-    db
-      .prepare(
-        "SELECT COUNT(DISTINCT w.plex_item_id) AS count FROM watchlist_cache w JOIN users f ON f.id = w.user_id WHERE f.enabled = 1 AND w.type = 'show'"
-      )
-      .get() as { count: number }
-  ).count;
+  const movieCount = allRecentItems.filter((item) => item.type === "movie").length;
+  const showCount = allRecentItems.filter((item) => item.type === "show").length;
 
   return {
     recentlyAdded,
