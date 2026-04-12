@@ -192,10 +192,10 @@ function StatChip({
 }
 
 const KIND_LABELS: Record<string, string> = {
-  full: "Full",
+  full: "GraphQL",
   rss: "RSS",
   user: "Manual",
-  publish: "Publish"
+  publish: "Collection"
 };
 
 function formatCompactSummary(run: SyncRun): string {
