@@ -9,7 +9,6 @@ export function createTestDatabase(): { db: HubarrDatabase; cleanup: () => void 
   const config: RuntimeConfig = {
     port: 9301,
     dataDir,
-    sessionSecret: "test-session-secret",
     sessionCookieName: "hubarr_session",
     sessionTtlMs: 1000 * 60 * 60,
     logLevel: "error"

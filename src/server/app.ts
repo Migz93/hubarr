@@ -49,6 +49,7 @@ function signedValue(secret: string, value: string) {
 export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   const logger = new Logger(config.dataDir);
   const db = new HubarrDatabase(config);
+  const sessionSecret = db.getSessionSecret();
   const imageCache = new ImageCacheService(config.dataDir, db, logger);
   const services = new HubarrServices(db, logger, imageCache);
   const app = express();
@@ -93,7 +94,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       return next();
     }
     const [sessionId, signature] = raw.split(".");
-    if (!sessionId || !signature || signedValue(config.sessionSecret, sessionId) !== signature) {
+    if (!sessionId || !signature || signedValue(sessionSecret, sessionId) !== signature) {
       req.sessionUser = null;
       return next();
     }
@@ -110,7 +111,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   }
 
   function setSessionCookie(res: Response, sessionId: string) {
-    const signed = `${sessionId}.${signedValue(config.sessionSecret, sessionId)}`;
+    const signed = `${sessionId}.${signedValue(sessionSecret, sessionId)}`;
     res.setHeader(
       "Set-Cookie",
       `${config.sessionCookieName}=${encodeURIComponent(signed)}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${Math.floor(config.sessionTtlMs / 1000)}`
