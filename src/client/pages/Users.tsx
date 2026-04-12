@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Edit2, Play, RefreshCw, X } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
+import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { Field, SelectInput, ToggleField } from "../components/FormControls";
-import type { CollectionSortOrder, UserRecord, ManagedUserRecord, SettingsResponse, VisibilityConfig } from "../../shared/types";
+import type { CollectionSortOrder, UserRecord, ManagedUserRecord, JobInfo, SettingsResponse, VisibilityConfig } from "../../shared/types";
 
 /** Human-readable labels for each CollectionSortOrder value, matching the
  *  dropdown text used in CollectionsConfigForm and the EditModal. */
@@ -15,12 +16,17 @@ const SORT_ORDER_LABELS: Record<string, string> = {
   "watchlist-date-asc": "Watchlisted Date (Old to New)"
 };
 
+const USERS_FAST_REFRESH_MS = 3_000;
+const USERS_IDLE_REFRESH_MS = 30_000;
+const USERS_DISCOVER_JOB_ID = "users-discover";
+
 export default function Users() {
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [managedUsers, setManagedUsers] = useState<ManagedUserRecord[]>([]);
+  const [usersDiscoverJob, setUsersDiscoverJob] = useState<JobInfo | null>(null);
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [triggeringRefresh, setTriggeringRefresh] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [syncingId, setSyncingId] = useState<number | null>(null);
@@ -28,17 +34,19 @@ export default function Users() {
   const [disabledOpen, setDisabledOpen] = useState(false);
   const [managedOpen, setManagedOpen] = useState(false);
 
-  async function load() {
-    setLoading(true);
+  async function load(background = false) {
+    setLoading((current) => current || !background);
     try {
-      const [usersResult, managedResult, settingsResult] = await Promise.all([
+      const [usersResult, managedResult, settingsResult, jobsResult] = await Promise.all([
         apiGet<UserRecord[]>("/api/users"),
         apiGet<ManagedUserRecord[]>("/api/users/managed"),
-        apiGet<SettingsResponse>("/api/settings")
+        apiGet<SettingsResponse>("/api/settings"),
+        apiGet<JobInfo[]>("/api/settings/jobs")
       ]);
       setUsers(usersResult);
       setManagedUsers(managedResult);
       setSettings(settingsResult);
+      setUsersDiscoverJob(jobsResult.find((job) => job.id === USERS_DISCOVER_JOB_ID) ?? null);
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -47,16 +55,30 @@ export default function Users() {
     }
   }
 
+  const refreshInProgress = triggeringRefresh || (usersDiscoverJob?.isRunning ?? false);
+  const getIntervalMs = useCallback(
+    () => (refreshInProgress ? USERS_FAST_REFRESH_MS : USERS_IDLE_REFRESH_MS),
+    [refreshInProgress]
+  );
+  const { refreshNow } = useLiveRefresh(
+    async () => {
+      await load(true);
+    },
+    {
+      getIntervalMs
+    }
+  );
+
   async function refreshUsers() {
-    setRefreshing(true);
+    setTriggeringRefresh(true);
     setError(null);
     try {
-      await apiPost("/api/users/discover");
-      await load();
+      await apiPost("/api/settings/jobs/users-discover/run");
+      await refreshNow();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      setRefreshing(false);
+      setTriggeringRefresh(false);
     }
   }
 
@@ -65,7 +87,7 @@ export default function Users() {
     try {
       await apiPost("/api/users/bulk", { ids: selectedIds, enabled });
       setSelectedIds([]);
-      await load();
+      await refreshNow();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
@@ -75,7 +97,7 @@ export default function Users() {
     setSyncingId(userId);
     try {
       await apiPost(`/api/users/${userId}/sync`);
-      await load();
+      await refreshNow();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -96,7 +118,7 @@ export default function Users() {
     );
   }
 
-  if (loading) {
+  if (loading && users.length === 0 && settings === null) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-on-surface-variant text-sm">Loading users...</div>
@@ -112,8 +134,8 @@ export default function Users() {
           onClick={() => void refreshUsers()}
           className="flex items-center gap-2 bg-surface-container-high hover:bg-surface-bright text-on-surface text-sm font-medium rounded-xl px-3 py-2.5 transition-colors border border-outline-variant/20"
         >
-          <RefreshCw size={15} className={refreshing ? "animate-spin" : ""} />
-          Refresh Users
+          <RefreshCw size={15} className={refreshInProgress ? "animate-spin" : ""} />
+          {refreshInProgress ? "Refreshing..." : "Refresh Users"}
         </button>
       </div>
 
@@ -215,7 +237,7 @@ export default function Users() {
           onSave={async (patch) => {
             await apiPatch(`/api/users/${editingId}`, patch);
             setEditingId(null);
-            await load();
+            await refreshNow();
           }}
         />
       )}
@@ -525,7 +547,10 @@ function EditModal({
                 </button>
               )}
             </div>
-            <Field label="Collection ordering" hint={`Global default: ${SORT_ORDER_LABELS[settings.collections.collectionSortOrder] ?? settings.collections.collectionSortOrder}`}>
+            <div className="text-xs text-on-surface-variant mb-1.5">
+              {`Global default: ${SORT_ORDER_LABELS[settings.collections.collectionSortOrder] ?? settings.collections.collectionSortOrder}`}
+            </div>
+            <div>
               <SelectInput
                 value={collectionSortOrderOverride ?? ""}
                 onChange={(value) =>
@@ -539,7 +564,7 @@ function EditModal({
                 <option value="watchlist-date-desc">Watchlisted Date (New to Old)</option>
                 <option value="watchlist-date-asc">Watchlisted Date (Old to New)</option>
               </SelectInput>
-            </Field>
+            </div>
           </div>
         </div>
 

@@ -1,11 +1,15 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, Film, Tv, Users, Library, CheckCircle, XCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { apiGet, apiPost } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
+import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { formatRelativeTime, formatWatchlistDateShort } from "../lib/utils";
 import { WatchlistItemModal } from "../components/WatchlistItemModal";
 import type { DashboardResponse, RecentlyAddedItem, SyncRun } from "../../shared/types";
+
+const DASHBOARD_FAST_REFRESH_MS = 2_500;
+const DASHBOARD_IDLE_REFRESH_MS = 15_000;
 
 export default function Dashboard() {
   const [data, setData] = useState<DashboardResponse | null>(null);
@@ -14,8 +18,8 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<RecentlyAddedItem | null>(null);
 
-  async function load() {
-    setLoading(true);
+  async function load(background = false) {
+    setLoading((current) => current || !background);
     try {
       const result = await apiGet<DashboardResponse>("/api/dashboard");
       setData(result);
@@ -27,11 +31,25 @@ export default function Dashboard() {
     }
   }
 
+  const hasRunningSync = data?.syncActivity.some((run) => run.status === "running") ?? false;
+  const getIntervalMs = useCallback(
+    () => (hasRunningSync ? DASHBOARD_FAST_REFRESH_MS : DASHBOARD_IDLE_REFRESH_MS),
+    [hasRunningSync]
+  );
+  const { refreshNow } = useLiveRefresh(
+    async () => {
+      await load(true);
+    },
+    {
+      getIntervalMs
+    }
+  );
+
   async function runFullSync() {
     setSyncing(true);
     try {
       await apiPost("/api/watchlists/refresh");
-      await load();
+      await refreshNow();
     } catch {
       // non-critical
     } finally {
@@ -43,7 +61,7 @@ export default function Dashboard() {
     void load();
   }, []);
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-on-surface-variant text-sm">Loading dashboard...</div>
@@ -51,7 +69,7 @@ export default function Dashboard() {
     );
   }
 
-  if (error) {
+  if (error && !data) {
     return (
       <div className="p-6">
         <div className="bg-error/10 border border-error/30 rounded-lg px-4 py-3 text-error text-sm">
@@ -77,6 +95,12 @@ export default function Dashboard() {
           {syncing ? "Syncing..." : "Run Sync"}
         </button>
       </div>
+
+      {error && (
+        <div className="bg-error/10 border border-error/30 rounded-lg px-4 py-3 text-error text-sm mb-4">
+          {error}
+        </div>
+      )}
 
       <div className="flex flex-col gap-5">
       {/* Stats + Sync Activity row */}

@@ -178,6 +178,29 @@ export class HubarrServices {
     return users;
   }
 
+  async runUsersDiscoverJob() {
+    this.logger.info("User discovery started", {
+      label: "Refresh Users"
+    });
+
+    try {
+      const users = await this.discoverUsers();
+      this.logger.info("User discovery complete", {
+        label: "Refresh Users",
+        discoveredUsers: users.length,
+        managedUsers: this.db.listManagedUsers().length
+      });
+      return users;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn("User discovery failed", {
+        label: "Refresh Users",
+        message
+      });
+      throw error;
+    }
+  }
+
   getManagedUsers() {
     return this.db.listManagedUsers();
   }

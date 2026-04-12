@@ -87,6 +87,13 @@ Hubarr tries to match watchlist items against Plex library items so it can tell 
 
 Hubarr creates and updates Plex collections, applies Hubarr labels, configures sort behavior, and publishes those collections into Plex hubs.
 
+### Frontend freshness
+
+Hubarr's frontend uses page-level polling for views that need to reflect
+background sync and scheduler changes while they are open. Polling pauses when
+the tab is hidden, avoids overlapping requests, and uses faster intervals while
+the page is showing active work.
+
 ### Visibility isolation
 
 Hubarr rewrites Plex shared-user content filters so tracked users only see the watchlist rows intended for them, subject to Plex platform limitations.

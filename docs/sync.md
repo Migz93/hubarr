@@ -10,6 +10,7 @@ Hubarr uses separate background jobs so each job has one clear responsibility:
 - `Plex Recently Added Scan`
 - `Plex Full Library Scan`
 - `Collection Sync`
+- `Refresh Users`
 - `Plex Refresh Token`
 
 For a detailed explanation of how the three watchlist-specific jobs work together
@@ -209,3 +210,35 @@ Use Logs for:
 Use History for:
 - understanding what a specific sync run did
 - reviewing user-facing operational outcomes
+
+---
+
+## UI Freshness
+
+Hubarr uses a polling-first client refresh model for views that depend on
+background watchlist or scheduler activity. The client does not currently have
+an SSE/WebSocket push channel, so these pages refresh themselves while visible
+instead of waiting for a full browser reload.
+
+Pages that auto-refresh:
+
+- Dashboard
+- Watchlists
+- History
+- Users
+- Settings → Jobs
+- Settings → Logs
+
+Behavior notes:
+
+- refresh polling pauses when the browser tab is hidden
+- polling cadence speeds up while relevant work is actively running and slows
+  down again once the page is idle
+- manual actions still trigger an immediate reload so the UI responds before
+  the next scheduled poll
+
+Audit classification for the current frontend:
+
+- Needs live refresh: Dashboard, Watchlists, History, Users, Jobs
+- Already handled: Logs
+- No refresh needed: General, Plex, Collections, About, Login, Onboarding

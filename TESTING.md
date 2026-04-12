@@ -123,3 +123,16 @@ Tests that cached images are served correctly from `/images/`, that the route is
 | Dashboard recently added posters all load | Waits for the dashboard to finish loading, then checks every `img.object-cover[src*='/images/']` has loaded successfully (`complete && naturalWidth > 0`) |
 | Watchlists page 1 posters all load | Same check on the first page of the Watchlists grid |
 | Users page avatar images load from /images/ or show fallback | Checks every `img[src*='/images/']` on the Users page has loaded successfully |
+
+---
+
+### `tests/playwright/live-refresh.spec.ts` — Live refresh behavior
+
+These tests trigger real background work and verify that the open page updates
+without a browser reload. They are not read-only.
+
+| Test | What it checks |
+|---|---|
+| Dashboard recent syncs updates after a background collection sync starts and finishes | Opens `/dashboard`, triggers the collection-sync job through the API, and verifies the `Recent Syncs` panel first shows a running Publish entry and then updates to the finished summary without a reload |
+| History shows a new collection sync row move from running to its terminal status without reload | Opens `/history`, triggers the collection-sync job through the API, and verifies the newest row appears as running and then changes to its final status/summary automatically |
+| Jobs shows a scheduler-managed job running and then returning to Run Now after polling catches completion | Opens `Settings > Jobs`, clicks `Run Now` for `Collection Sync`, verifies the row enters a running state, and then returns to idle with an updated terminal status once the job finishes |
