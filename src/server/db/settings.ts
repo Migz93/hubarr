@@ -1,3 +1,6 @@
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import type Database from "better-sqlite3";
 import type {
   AppSettings,
@@ -9,7 +12,7 @@ import type {
   SessionUser
 } from "../../shared/types.js";
 
-export type SettingKey = "admin" | "plex" | "app";
+export type SettingKey = "admin" | "plex" | "app" | "session_secret";
 
 export const defaultAppSettings: AppSettings = {
   reconciliationIntervalMinutes: 60,
@@ -65,6 +68,35 @@ export function seedDefaultSettings(db: Database.Database): void {
   if (!getSetting<AppSettings>(db, "app")) {
     setSetting(db, "app", defaultAppSettings);
   }
+}
+
+/**
+ * Resolve the session signing secret from the database.
+ *
+ * On the first run after migrating from the file-based approach, any existing
+ * .session_secret file is read into the database and then deleted so that
+ * existing sessions remain valid. If no secret exists anywhere a new one is
+ * generated and persisted.
+ */
+export function resolveSessionSecret(db: Database.Database, dataDir: string): string {
+  const stored = getSetting<string>(db, "session_secret");
+  if (stored) {
+    return stored;
+  }
+
+  // One-time migration: pull the value out of the legacy file if it exists.
+  const legacyFile = path.join(dataDir, ".session_secret");
+  let secret: string;
+  try {
+    secret = fs.readFileSync(legacyFile, "utf8").trim();
+    fs.unlinkSync(legacyFile);
+  } catch {
+    // File didn't exist — generate a fresh secret.
+    secret = crypto.randomBytes(48).toString("hex");
+  }
+
+  setSetting(db, "session_secret", secret);
+  return secret;
 }
 
 // -------------------------------------------------------------------------

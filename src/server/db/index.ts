@@ -29,6 +29,7 @@ import * as watchlistRepo from "./watchlist.js";
 
 export class HubarrDatabase {
   private readonly db: Database.Database;
+  private readonly sessionSecret: string;
 
   constructor(config: RuntimeConfig) {
     this.db = new Database(path.join(config.dataDir, "hubarr.db"));
@@ -36,6 +37,11 @@ export class HubarrDatabase {
     this.db.pragma("foreign_keys = ON");
     runMigrations(this.db);
     settingsRepo.seedDefaultSettings(this.db);
+    this.sessionSecret = settingsRepo.resolveSessionSecret(this.db, config.dataDir);
+  }
+
+  getSessionSecret(): string {
+    return this.sessionSecret;
   }
 
   // -------------------------------------------------------------------------
