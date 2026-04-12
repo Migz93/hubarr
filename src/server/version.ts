@@ -20,8 +20,8 @@ export const APP_VERSION = readPackageVersion();
 export const PLEX_USER_AGENT = `Hubarr/${APP_VERSION}`;
 
 // BUILD_CHANNEL is baked into the Docker image at CI build time via --build-arg.
-// Values: "stable" (release workflow), "develop" (develop workflow), "local" (no arg passed, e.g. dev environment).
-export const BUILD_CHANNEL = (process.env.BUILD_CHANNEL ?? "local") as "stable" | "develop" | "local";
+// Values: "stable" (release workflow), "develop" (develop workflow), "custom" (no arg passed — any non-CI build).
+export const BUILD_CHANNEL = (process.env.BUILD_CHANNEL ?? "custom") as "stable" | "develop" | "custom";
 
 // Full commit SHA baked in at build time. "local" when running outside CI.
 const rawCommitSha = process.env.COMMIT_SHA ?? "local";

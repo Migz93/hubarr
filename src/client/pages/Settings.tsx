@@ -927,7 +927,7 @@ function AboutTab() {
               {index === 0 && (
                 <span className="flex-shrink-0 text-xs font-medium text-success bg-success/10 px-2 py-0.5 rounded-full border border-success/20">Latest</span>
               )}
-              {info?.version && (release.name === info.version || release.tag_name === `v${info.version}` || release.tag_name === info.version) && (
+              {info?.buildChannel === "stable" && info?.version && (release.name === info.version || release.tag_name === `v${info.version}` || release.tag_name === info.version) && (
                 <span className="flex-shrink-0 text-xs font-medium text-primary bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">Current</span>
               )}
               <span className="flex-shrink-0 text-xs text-on-surface-variant">

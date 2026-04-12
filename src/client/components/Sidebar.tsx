@@ -143,8 +143,8 @@ const CHANNEL_CONFIG = {
     label: "Hubarr Develop",
     Icon: Beaker,
   },
-  local: {
-    label: "Local Build",
+  custom: {
+    label: "Custom Build",
     Icon: Code2,
   },
 } as const;
@@ -158,17 +158,31 @@ function VersionFooter({ onMobileClose }: { onMobileClose: () => void }) {
       .catch(() => null);
   }, []);
 
-  const channel = info?.buildChannel ?? "stable";
-  const { label, Icon } = CHANNEL_CONFIG[channel];
+  // Don't render a channel label until the API has responded — any guess
+  // before that point could misrepresent the build (e.g. showing "Stable"
+  // for a develop image during the load window).
+  if (!info) {
+    return (
+      <div className="px-3 pb-3">
+        <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg">
+          <div className="w-8 h-8 rounded-lg bg-surface-container-highest flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-semibold text-on-surface-variant leading-tight">Hubarr</div>
+            <div className="text-xs text-on-surface-variant leading-tight mt-0.5">...</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-  // Show the commit SHA for develop/local builds, version number for stable
-  const subLabel = !info
-    ? "..."
-    : channel === "stable"
-      ? `v${info.version}`
-      : info.commitSha === "local"
-        ? "local"
-        : info.commitSha;
+  const { label, Icon } = CHANNEL_CONFIG[info.buildChannel];
+
+  // Show the commit SHA for develop/custom builds, version number for stable
+  const subLabel = info.buildChannel === "stable"
+    ? `v${info.version}`
+    : info.commitSha === "local"
+      ? "local"
+      : info.commitSha;
 
   return (
     <div className="px-3 pb-3">
