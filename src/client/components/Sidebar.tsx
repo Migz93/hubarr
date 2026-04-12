@@ -7,7 +7,9 @@ import {
   History,
   Settings,
   LogOut,
-  Server
+  Server,
+  Beaker,
+  Code2
 } from "lucide-react";
 import { apiGet } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
@@ -132,14 +134,55 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: S
   );
 }
 
+const CHANNEL_CONFIG = {
+  stable: {
+    label: "Hubarr Stable",
+    Icon: Server,
+  },
+  develop: {
+    label: "Hubarr Develop",
+    Icon: Beaker,
+  },
+  custom: {
+    label: "Custom Build",
+    Icon: Code2,
+  },
+} as const;
+
 function VersionFooter({ onMobileClose }: { onMobileClose: () => void }) {
-  const [version, setVersion] = useState<string | null>(null);
+  const [info, setInfo] = useState<AboutInfo | null>(null);
 
   useEffect(() => {
     apiGet<AboutInfo>("/api/settings/about")
-      .then((info) => setVersion(info.version))
+      .then((data) => setInfo(data))
       .catch(() => null);
   }, []);
+
+  // Don't render a channel label until the API has responded — any guess
+  // before that point could misrepresent the build (e.g. showing "Stable"
+  // for a develop image during the load window).
+  if (!info) {
+    return (
+      <div className="px-3 pb-3">
+        <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg">
+          <div className="w-8 h-8 rounded-lg bg-surface-container-highest flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-semibold text-on-surface-variant leading-tight">Hubarr</div>
+            <div className="text-xs text-on-surface-variant leading-tight mt-0.5">...</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const { label, Icon } = CHANNEL_CONFIG[info.buildChannel];
+
+  // Show the commit SHA for develop/custom builds, version number for stable
+  const subLabel = info.buildChannel === "stable"
+    ? `v${info.version}`
+    : info.commitSha === "local"
+      ? "local"
+      : info.commitSha;
 
   return (
     <div className="px-3 pb-3">
@@ -149,13 +192,11 @@ function VersionFooter({ onMobileClose }: { onMobileClose: () => void }) {
         className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-surface-container-high transition-colors group"
       >
         <div className="w-8 h-8 rounded-lg bg-surface-container-highest flex items-center justify-center flex-shrink-0">
-          <Server size={16} strokeWidth={1.75} className="text-on-surface-variant group-hover:text-on-surface transition-colors" />
+          <Icon size={16} strokeWidth={1.75} className="text-on-surface-variant group-hover:text-on-surface transition-colors" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-xs font-semibold text-on-surface leading-tight">Hubarr Stable</div>
-          <div className="text-xs text-on-surface-variant leading-tight mt-0.5">
-            {version ? `v${version}` : "..."}
-          </div>
+          <div className="text-xs font-semibold text-on-surface leading-tight">{label}</div>
+          <div className="text-xs text-on-surface-variant leading-tight mt-0.5 font-mono">{subLabel}</div>
         </div>
       </Link>
     </div>

@@ -21,7 +21,7 @@ import { JobScheduler } from "./job-scheduler.js";
 import { Logger } from "./logger.js";
 import { ImageCacheService } from "./image-cache.js";
 import { HubarrServices } from "./services.js";
-import { APP_VERSION } from "./version.js";
+import { APP_VERSION, BUILD_CHANNEL, BUILD_COMMIT } from "./version.js";
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -994,6 +994,8 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   app.get("/api/settings/about", requireAuth, (_req, res) => {
     res.json({
       version: APP_VERSION,
+      buildChannel: BUILD_CHANNEL,
+      commitSha: BUILD_COMMIT,
       nodeVersion: process.version,
       platform: process.platform,
       dataDir: config.dataDir,
