@@ -258,6 +258,9 @@ const migrations: Migration[] = [
       const deleteImageCache = db.prepare(
         "DELETE FROM image_cache WHERE cache_key = ?"
       );
+      const checkImageCacheKey = db.prepare(
+        "SELECT 1 FROM image_cache WHERE cache_key = ?"
+      );
 
       db.transaction(() => {
         for (const row of rssRows) {
@@ -282,7 +285,14 @@ const migrations: Migration[] = [
             deleteImageCache.run(oldCacheKey);
           } else {
             updateRow.run(plexGuid, discoverKey, row.id);
-            updateImageCache.run(newCacheKey, plexGuid, oldCacheKey);
+            if (checkImageCacheKey.get(newCacheKey)) {
+              // The canonical poster key already exists (from a prior GraphQL fetch or a
+              // sibling RSS row processed earlier in this loop) — drop the stale duplicate
+              // rather than attempting a rename that would violate the UNIQUE constraint.
+              deleteImageCache.run(oldCacheKey);
+            } else {
+              updateImageCache.run(newCacheKey, plexGuid, oldCacheKey);
+            }
           }
         }
       })();
