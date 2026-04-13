@@ -50,7 +50,6 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
       const token = await oauth.login();
       await apiPost("/api/auth/plex", { authToken: token });
       await loadSetupState();
-      setStep("plex");
     } catch (caught) {
       setAuthError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -65,8 +64,12 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
     if (step === "plex") {
       return { authDone: true, plexDone: false };
     }
-    return { authDone: true, plexDone: true };
-  }, [step]);
+    return {
+      authDone: true,
+      plexDone: true,
+      collectionsDone: Boolean(setupStatus?.collectionsConfigured)
+    };
+  }, [setupStatus?.collectionsConfigured, step]);
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -82,7 +85,7 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
           <div className="w-8 h-px bg-outline-variant/40" />
           <StepDot number={2} active={step === "plex"} done={stepState.plexDone} label="Configure Plex" />
           <div className="w-8 h-px bg-outline-variant/40" />
-          <StepDot number={3} active={step === "collections"} done={false} label="Collections" />
+          <StepDot number={3} active={step === "collections"} done={stepState.collectionsDone ?? false} label="Collections" />
         </div>
 
         {step === "auth" && (

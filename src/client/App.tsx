@@ -31,13 +31,20 @@ export default function App() {
         apiGet<BootstrapStatus>("/api/bootstrap/status"),
         apiGet<{ authenticated: boolean; user: SessionUser | null }>("/api/auth/session")
       ]);
+
       setState({
         bootstrap,
         user: session.authenticated ? session.user : null,
         loading: false
       });
+
+      return {
+        bootstrap,
+        session
+      };
     } catch {
       setState((s) => ({ ...s, loading: false }));
+      return null;
     }
   }
 
@@ -46,9 +53,12 @@ export default function App() {
   }, []);
 
   async function onAuthenticated() {
-    await loadState();
-    const updated = await apiGet<BootstrapStatus>("/api/bootstrap/status");
-    if (!updated.setupComplete) {
+    const nextState = await loadState();
+    if (!nextState) {
+      return;
+    }
+
+    if (!nextState.bootstrap.setupComplete) {
       navigate("/onboarding");
     } else {
       navigate("/dashboard");
