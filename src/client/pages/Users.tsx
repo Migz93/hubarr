@@ -179,7 +179,6 @@ export default function Users() {
               onToggleSelected={() => toggleSelected(user.id)}
               onEdit={() => setEditingId(user.id)}
               onSync={() => void syncUser(user.id)}
-              canOpenWatchlist={user.enabled || Boolean(settings?.general.trackAllUsers)}
               onOpenWatchlist={() => navigate(`/watchlists?user=${user.id}`)}
               onShowNoData={() => setWatchlistInfoUser(user)}
             />
@@ -207,7 +206,6 @@ export default function Users() {
                   onToggleSelected={() => toggleSelected(user.id)}
                   onEdit={() => setEditingId(user.id)}
                   onSync={() => void syncUser(user.id)}
-                  canOpenWatchlist={user.enabled || Boolean(settings?.general.trackAllUsers)}
                   onOpenWatchlist={() => navigate(`/watchlists?user=${user.id}`)}
                   onShowNoData={() => setWatchlistInfoUser(user)}
                 />
@@ -289,7 +287,6 @@ function UserCard({
   onToggleSelected,
   onEdit,
   onSync,
-  canOpenWatchlist,
   onOpenWatchlist,
   onShowNoData
 }: {
@@ -299,7 +296,6 @@ function UserCard({
   onToggleSelected: () => void;
   onEdit: () => void;
   onSync: () => void;
-  canOpenWatchlist: boolean;
   onOpenWatchlist: () => void;
   onShowNoData: () => void;
 }) {
@@ -388,6 +384,17 @@ function WatchlistInfoModal({
   trackAllUsersEnabled: boolean;
   onClose: () => void;
 }) {
+  useEffect(() => {
+    function handleKeydown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeydown);
+    return () => document.removeEventListener("keydown", handleKeydown);
+  }, [onClose]);
+
   const detail = !user.enabled && !trackAllUsersEnabled
     ? "No watchlist data is available for this user right now. They are currently disabled in Hubarr and Track All Users is turned off."
     : "No watchlist data can be found for this user. This usually means their watchlist privacy is set to private or they currently have no items in their watchlist.";

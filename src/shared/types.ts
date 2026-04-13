@@ -7,7 +7,7 @@ export interface BootstrapStatus {
   hasActiveSession: boolean;
 }
 
-export type OnboardingStep = "auth" | "plex" | "collections";
+export type OnboardingStep = "auth" | "plex" | "general" | "collections";
 
 export interface SessionUser {
   plexId: string;
@@ -389,5 +389,4 @@ export interface PlexConfigPayload {
   hostname?: string;
   port?: number;
   useSsl?: boolean;
-  trackAllUsers?: boolean;
 }

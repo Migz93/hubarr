@@ -11,13 +11,11 @@ interface PlexConfigResponse {
 
 export default function PlexConfigForm({
   initialConfig,
-  initialTrackAllUsers = false,
   saveUrl,
   onSaved,
   saveLabel = "Save Plex"
 }: {
   initialConfig: PlexSettingsView | null;
-  initialTrackAllUsers?: boolean;
   saveUrl: string;
   onSaved?: (result: PlexConfigResponse) => void | Promise<void>;
   saveLabel?: string;
@@ -31,7 +29,6 @@ export default function PlexConfigForm({
   const [hostname, setHostname] = useState(initialConfig?.hostname ?? "");
   const [port, setPort] = useState(String(initialConfig?.port ?? 32400));
   const [useSsl, setUseSsl] = useState(initialConfig?.useSsl ?? false);
-  const [trackAllUsers, setTrackAllUsers] = useState(initialTrackAllUsers);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,13 +75,8 @@ export default function PlexConfigForm({
               mode: "manual",
               hostname,
               port: Number(port),
-              useSsl,
-              trackAllUsers
+              useSsl
             };
-
-      if (payload.mode === "preset") {
-        payload.trackAllUsers = trackAllUsers;
-      }
 
       const result = await apiPost<PlexConfigResponse>(saveUrl, payload);
       setSuccess(true);
@@ -172,13 +164,6 @@ export default function PlexConfigForm({
         switchToManual();
         setUseSsl(value);
       }} />
-
-      <ToggleField
-        label="Track All Users"
-        hint="Keep background watchlist tracking running for disabled users too. Disabled users still will not publish collections or appear in normal dashboard/watchlist views."
-        checked={trackAllUsers}
-        onChange={setTrackAllUsers}
-      />
 
       <SaveBar
         saving={saving}

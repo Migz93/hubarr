@@ -260,13 +260,15 @@ export class HubarrServices {
     };
   }
 
-  private listTrackedUsers() {
+  private getUserScopes() {
     const settings = this.db.getAppSettings();
-    return this.db.listUsers().filter((user) => user.enabled || settings.trackAllUsers);
-  }
-
-  private listPublishingUsers() {
-    return this.db.listUsers().filter((user) => user.enabled);
+    const users = this.db.listUsers();
+    return {
+      settings,
+      users,
+      trackedUsers: users.filter((user) => user.enabled || settings.trackAllUsers),
+      publishingUsers: users.filter((user) => user.enabled)
+    };
   }
 
   private buildWatchlistIdentityMap(items: WatchlistItem[]) {
@@ -349,7 +351,7 @@ export class HubarrServices {
     since?: Date;
   }) {
     const plex = this.getPlexIntegration();
-    const trackedUsers = this.listTrackedUsers();
+    const { trackedUsers } = this.getUserScopes();
     const libraries = new Map<string, { libraryId: string; mediaType: "movie" | "show"; userIds: number[] }>();
 
     for (const friend of trackedUsers) {
@@ -797,13 +799,14 @@ export class HubarrServices {
   async runFullSync() {
     const syncStart = Date.now();
     const runId = this.db.createSyncRun("full", "Full sync started.");
-    const friends = this.listTrackedUsers();
+    const { trackedUsers, publishingUsers } = this.getUserScopes();
+    const friends = trackedUsers;
     const failures: string[] = [];
 
     this.logger.info("Full sync started", {
       userCount: friends.length,
       trackedUsers: friends.length,
-      publishingUsers: this.listPublishingUsers().length
+      publishingUsers: publishingUsers.length
     });
 
     // Refresh self user account info (including avatar) on every full sync
@@ -947,7 +950,8 @@ export class HubarrServices {
   async runPublishPass() {
     const syncStart = Date.now();
     const runId = this.db.createSyncRun("publish", "Collection sync started.");
-    const friends = this.listPublishingUsers();
+    const { publishingUsers } = this.getUserScopes();
+    const friends = publishingUsers;
     const failures: string[] = [];
     const plex = this.getPlexIntegration();
 
@@ -1181,9 +1185,14 @@ export class HubarrServices {
    */
   async pollRss() {
     const runId = this.db.createSyncRun("rss", "RSS sync started.");
+    const { trackedUsers, publishingUsers } = this.getUserScopes();
 
     try {
       const plex = this.getPlexIntegration();
+      this.logger.info("RSS sync started", {
+        trackedUsers: trackedUsers.length,
+        publishingUsers: publishingUsers.length
+      });
 
       // Retry init for any feed not yet primed
       if (!this.selfRssPrimed || !this.usersRssPrimed) {
@@ -1239,7 +1248,12 @@ export class HubarrServices {
           const newItems = this.usersRssCache.diff(result.items);
           if (newItems.length > 0) {
             this.logger.info("Friends RSS feed detected new items", { count: newItems.length });
-            friendsProcessed = await this.processRssNewItems(newItems, runId, plex);
+            friendsProcessed = await this.processRssNewItems(
+              newItems,
+              runId,
+              plex,
+              trackedUsers.filter((user) => !user.isSelf)
+            );
           }
         }
       }
@@ -1297,7 +1311,8 @@ export class HubarrServices {
       return 0;
     }
 
-    if (!this.listTrackedUsers().some((user) => user.id === selfUser.id)) {
+    const settings = this.db.getAppSettings();
+    if (!selfUser.enabled && !settings.trackAllUsers) {
       this.logger.debug("Self user is not currently tracked, skipping self RSS items");
       return 0;
     }
@@ -1419,9 +1434,9 @@ export class HubarrServices {
   private async processRssNewItems(
     newItems: Array<RssFeedItem & { stableKey: string }>,
     runId: number,
-    plex: PlexIntegration
+    plex: PlexIntegration,
+    trackedUsers: UserRecord[]
   ): Promise<number> {
-    const trackedUsers = this.listTrackedUsers().filter((f) => !f.isSelf);
     let processedCount = 0;
 
     for (const item of newItems) {

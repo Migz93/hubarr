@@ -131,7 +131,7 @@ export function getCurrentOnboardingStep(db: Database.Database): OnboardingStep 
 
   const appSettings = getAppSettings(db);
   if (!appSettings.defaultMovieLibraryId || !appSettings.defaultShowLibraryId) {
-    return "collections";
+    return "general";
   }
 
   return "collections";

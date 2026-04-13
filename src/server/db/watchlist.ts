@@ -110,7 +110,6 @@ export function getWatchlistGrouped(
 ): WatchlistPageResponse {
   const { userId, mediaType, availability, sortBy = "added-desc", page, pageSize } = options;
   const offset = (page - 1) * pageSize;
-  const appSettings = getAppSettings(db);
   const selectedUser = userId
     ? (db.prepare(`
         SELECT
@@ -125,7 +124,11 @@ export function getWatchlistGrouped(
         | { userId: number; displayName: string; avatarUrl: string | null; enabled: number }
         | undefined)
     : undefined;
-  const allowSelectedDisabledOnly = Boolean(selectedUser && !selectedUser.enabled && appSettings.trackAllUsers);
+  const allowSelectedDisabledOnly = Boolean(
+    selectedUser &&
+    !selectedUser.enabled &&
+    getAppSettings(db).trackAllUsers
+  );
 
   type RawRow = {
     plex_item_id: string;

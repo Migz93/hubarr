@@ -160,27 +160,32 @@ export function updateUser(
     next.collectionNameOverride ?? null
   );
 
-  db.prepare(`
+  const updateUserRow = db.prepare(`
     UPDATE users
     SET enabled = ?, movie_library_id = ?, show_library_id = ?,
         visibility_override = ?, display_name_override = ?, collection_name_override = ?,
         collection_name = ?, collection_sort_order_override = ?
     WHERE id = ?
-  `).run(
-    next.enabled ? 1 : 0,
-    next.movieLibraryId ?? null,
-    next.showLibraryId ?? null,
-    next.visibilityOverride !== undefined ? JSON.stringify(next.visibilityOverride) : null,
-    next.displayNameOverride ?? null,
-    next.collectionNameOverride ?? null,
-    collectionName,
-    next.collectionSortOrderOverride ?? null,
-    id
-  );
+  `);
+  const deleteWatchlist = db.prepare("DELETE FROM watchlist_cache WHERE user_id = ?");
 
-  if (!next.enabled && !appSettings.trackAllUsers) {
-    db.prepare("DELETE FROM watchlist_cache WHERE user_id = ?").run(id);
-  }
+  db.transaction(() => {
+    updateUserRow.run(
+      next.enabled ? 1 : 0,
+      next.movieLibraryId ?? null,
+      next.showLibraryId ?? null,
+      next.visibilityOverride !== undefined ? JSON.stringify(next.visibilityOverride) : null,
+      next.displayNameOverride ?? null,
+      next.collectionNameOverride ?? null,
+      collectionName,
+      next.collectionSortOrderOverride ?? null,
+      id
+    );
+
+    if (!next.enabled && !appSettings.trackAllUsers) {
+      deleteWatchlist.run(id);
+    }
+  })();
 
   return getUser(db, id);
 }

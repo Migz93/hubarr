@@ -185,10 +185,6 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       showLibraryId: appSettings.defaultShowLibraryId || ""
     });
 
-    if (typeof payload.trackAllUsers === "boolean") {
-      services.updateSettings({ trackAllUsers: payload.trackAllUsers });
-    }
-
     services.upsertSelfUser().catch((err) => {
       logger.warn("Self user upsert failed after Plex settings save", {
         error: err instanceof Error ? err.message : String(err)

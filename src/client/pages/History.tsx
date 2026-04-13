@@ -368,7 +368,15 @@ function RunItems({ items }: { items: SyncRunItem[] }) {
       )}
 
       {/* Match failures */}
-      {failures.length > 0 && <MatchFailuresCollapsible items={failures} />}
+      {failures.length > 0 && (
+        <ItemSectionCollapsible
+          title="unmatched items"
+          count={failures.length}
+          tone="warning"
+          items={failures}
+          renderItem={(item) => <MatchFailureRow key={item.id} item={item} />}
+        />
+      )}
 
       {/* Watchlisted at date unresolved */}
       {unresolved.length > 0 && (
@@ -485,18 +493,6 @@ function MatchFailureRow({ item }: { item: SyncRunItem }) {
         </div>
       )}
     </div>
-  );
-}
-
-function MatchFailuresCollapsible({ items }: { items: SyncRunItem[] }) {
-  return (
-    <ItemSectionCollapsible
-      title="unmatched items"
-      count={items.length}
-      tone="warning"
-      items={items}
-      renderItem={(item) => <MatchFailureRow key={item.id} item={item} />}
-    />
   );
 }
 
