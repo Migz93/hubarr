@@ -157,30 +157,17 @@ export function listAllImageCacheWebPaths(db: Database.Database): string[] {
 }
 
 export function deleteOrphanedPosterCacheEntries(db: Database.Database): number {
-  const rows = db.prepare(`
-    SELECT cache_key
-    FROM image_cache ic
-    WHERE ic.kind = 'poster'
+  const result = db.prepare(`
+    DELETE FROM image_cache
+    WHERE kind = 'poster'
       AND NOT EXISTS (
         SELECT 1
         FROM watchlist_cache w
-        WHERE w.plex_item_id = ic.entity_id
+        WHERE w.plex_item_id = entity_id
       )
-  `).all() as Array<{ cache_key: string }>;
+  `).run();
 
-  if (rows.length === 0) {
-    return 0;
-  }
-
-  const del = db.prepare("DELETE FROM image_cache WHERE cache_key = ?");
-
-  db.transaction(() => {
-    for (const row of rows) {
-      del.run(row.cache_key);
-    }
-  })();
-
-  return rows.length;
+  return result.changes;
 }
 
 export function clearImageCacheTable(db: Database.Database): void {
