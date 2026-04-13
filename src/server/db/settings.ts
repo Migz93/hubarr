@@ -19,6 +19,7 @@ export const defaultAppSettings: AppSettings = {
   activityCacheFetchIntervalMinutes: 60,
   rssPollIntervalSeconds: 300,
   rssEnabled: true,
+  trackAllUsers: false,
   collectionPublishIntervalMinutes: 5,
   plexRecentlyAddedScanIntervalMinutes: 5,
   plexFullLibraryScanIntervalMinutes: 1440,

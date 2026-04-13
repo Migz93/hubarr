@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 import type { WatchlistGroupedItem, WatchlistItem, WatchlistPageResponse, WatchlistSortBy } from "../../shared/types.js";
 import { buildGuidMergePlan, mergeRawPayloadGuids } from "./guid-dedupe.js";
 import { getDiscoverKeyForPlexItemId, upsertMediaItemIdentifiers } from "./identifiers.js";
+import { getAppSettings } from "./settings.js";
 
 export function getWatchlistDiscoverKey(db: Database.Database, plexItemId: string): string | null {
   const explicitDiscoverKey = getDiscoverKeyForPlexItemId(db, plexItemId);
@@ -109,6 +110,22 @@ export function getWatchlistGrouped(
 ): WatchlistPageResponse {
   const { userId, mediaType, availability, sortBy = "added-desc", page, pageSize } = options;
   const offset = (page - 1) * pageSize;
+  const appSettings = getAppSettings(db);
+  const selectedUser = userId
+    ? (db.prepare(`
+        SELECT
+          u.id AS userId,
+          COALESCE(u.display_name_override, u.username) AS displayName,
+          ic.local_web_path AS avatarUrl,
+          u.enabled
+        FROM users u
+        LEFT JOIN image_cache ic ON ic.cache_key = 'avatar:' || u.plex_user_id
+        WHERE u.id = ?
+      `).get(userId) as
+        | { userId: number; displayName: string; avatarUrl: string | null; enabled: number }
+        | undefined)
+    : undefined;
+  const allowSelectedDisabledOnly = Boolean(selectedUser && !selectedUser.enabled && appSettings.trackAllUsers);
 
   type RawRow = {
     plex_item_id: string;
@@ -136,10 +153,10 @@ export function getWatchlistGrouped(
       JOIN users f ON f.id = w.user_id
       LEFT JOIN image_cache ip ON ip.cache_key = 'poster:' || w.plex_item_id
       LEFT JOIN image_cache ia ON ia.cache_key = 'avatar:' || f.plex_user_id
-      WHERE f.enabled = 1
+      WHERE ${allowSelectedDisabledOnly ? "f.id = ?" : "f.enabled = 1"}
       ORDER BY w.added_at DESC
     `)
-    .all() as RawRow[];
+    .all(...(allowSelectedDisabledOnly && userId ? [userId] : [])) as RawRow[];
 
   const enabledUsers = db
     .prepare(`
@@ -278,12 +295,30 @@ export function getWatchlistGrouped(
     },
     facets: {
       allUsersCount,
-      users: enabledUsers.map((user) => ({
-        ...user,
-        count: userCounts.get(user.userId) ?? 0
-      })),
+      users: [
+        ...enabledUsers.map((user) => ({
+          ...user,
+          count: userCounts.get(user.userId) ?? 0
+        })),
+        ...(allowSelectedDisabledOnly && selectedUser
+          ? [{
+              userId: selectedUser.userId,
+              displayName: selectedUser.displayName,
+              avatarUrl: selectedUser.avatarUrl,
+              count: userCounts.get(selectedUser.userId) ?? 0
+            }]
+          : [])
+      ],
       media: mediaCounts
-    }
+    },
+    selectedUser: selectedUser
+      ? {
+          userId: selectedUser.userId,
+          displayName: selectedUser.displayName,
+          avatarUrl: selectedUser.avatarUrl,
+          enabled: Boolean(selectedUser.enabled)
+        }
+      : null
   };
 }
 
@@ -340,5 +375,12 @@ export function getActivityCacheDate(
 export function clearActivityCache(db: Database.Database): number {
   const result = db.prepare("DELETE FROM watchlist_activity_cache").run();
   db.prepare("UPDATE job_run_state SET last_run_at = NULL, updated_at = datetime('now') WHERE job_id = 'activity-cache-fetch'").run();
+  return result.changes;
+}
+
+export function deleteWatchlistItemsForUsers(db: Database.Database, userIds: number[]): number {
+  if (userIds.length === 0) return 0;
+  const placeholders = userIds.map(() => "?").join(", ");
+  const result = db.prepare(`DELETE FROM watchlist_cache WHERE user_id IN (${placeholders})`).run(...userIds);
   return result.changes;
 }

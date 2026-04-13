@@ -93,7 +93,7 @@ Read-only. Safe to run against a live instance.
 |---|---|
 | All six tabs are visible | Navigates to `/settings`, asserts all six tab buttons (General, Plex, Collections, Logs, Jobs, About) are rendered |
 | Clicking a tab updates the URL | Clicks Plex, Jobs, and About tabs in turn; asserts the URL gains the expected `?tab=` parameter |
-| General tab shows Startup Sync toggle and History Retention field | Navigates to `/settings?tab=general`, waits for load, asserts both setting labels are visible |
+| General tab shows Track All Users, Startup Sync, and History Retention controls | Navigates to `/settings?tab=general`, waits for load, asserts all three setting labels are visible |
 | Jobs tab shows the jobs table | Navigates to `/settings?tab=jobs`, asserts the "Job Name" column header is visible |
 | Jobs tab lists the Maintenance Tasks job | Navigates to `/settings?tab=jobs`, asserts the `Maintenance Tasks` row is present with its daily schedule and `Run Now` button |
 | About tab shows version and support info | Navigates to `/settings?tab=about`, asserts "About Hubarr" and "Version" headings are visible |
@@ -109,6 +109,7 @@ Read-only. Safe to run against a live instance.
 |---|---|
 | Active users section heading is visible | Asserts the "Active (N)" heading renders |
 | Disabled users accordion toggle is visible | Asserts the "Disabled (N)" toggle button renders |
+| Disabled users never show a Sync Watchlist button | Expands the disabled users section and asserts no `Sync Watchlist` button is rendered there |
 | Refresh Users button is present | Asserts the Refresh Users button renders |
 | Edit modal shows collection ordering override section | Clicks the first user's edit button, asserts the "Collection Ordering" section is visible in the modal, and that the dropdown contains the two watchlist date sort options |
 

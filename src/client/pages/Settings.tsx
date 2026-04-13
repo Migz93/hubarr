@@ -142,7 +142,14 @@ function GeneralTab({
     setError(null);
     setSuccess(false);
     try {
-      await apiPatch("/api/settings", { general: { fullSyncOnStartup: form.fullSyncOnStartup, historyRetentionDays: form.historyRetentionDays, trustProxy: form.trustProxy } });
+      await apiPatch("/api/settings", {
+        general: {
+          fullSyncOnStartup: form.fullSyncOnStartup,
+          historyRetentionDays: form.historyRetentionDays,
+          trackAllUsers: form.trackAllUsers,
+          trustProxy: form.trustProxy
+        }
+      });
       setSuccess(true);
       await onSave();
     } catch (caught) {
@@ -218,6 +225,12 @@ function GeneralTab({
           checked={form.trustProxy}
           onChange={(value) => setForm((current) => ({ ...current, trustProxy: value }))}
           restartRequired
+        />
+        <ToggleField
+          label="Track All Users"
+          hint="Keep background watchlist tracking running for disabled users too. Turning this off deletes cached watchlist data for disabled users."
+          checked={form.trackAllUsers}
+          onChange={(value) => setForm((current) => ({ ...current, trackAllUsers: value }))}
         />
         <ToggleField
           label="Startup Sync"

@@ -100,9 +100,12 @@ export function listUsers(db: Database.Database): UserRecord[] {
         u.collection_name AS collectionName,
         u.collection_sort_order_override AS collectionSortOrderOverride,
         u.last_synced_at AS lastSyncedAt,
-        u.last_sync_error AS lastSyncError
+        u.last_sync_error AS lastSyncError,
+        COUNT(w.id) AS watchlistItemCount
       FROM users u
+      LEFT JOIN watchlist_cache w ON w.user_id = u.id
       LEFT JOIN image_cache ic ON ic.cache_key = 'avatar:' || u.plex_user_id
+      GROUP BY u.id
       ORDER BY u.is_self DESC, u.enabled DESC, LOWER(u.display_name) ASC
     `)
     .all()
@@ -111,6 +114,7 @@ export function listUsers(db: Database.Database): UserRecord[] {
         enabled: number;
         isSelf: number;
         visibilityOverride: string | null;
+        watchlistItemCount: number;
       };
       return {
         ...r,
@@ -174,14 +178,23 @@ export function updateUser(
     id
   );
 
+  if (!next.enabled && !appSettings.trackAllUsers) {
+    db.prepare("DELETE FROM watchlist_cache WHERE user_id = ?").run(id);
+  }
+
   return getUser(db, id);
 }
 
 export function bulkUpdateUsers(db: Database.Database, ids: number[], enabled: boolean): number[] {
   const stmt = db.prepare("UPDATE users SET enabled = ? WHERE id = ?");
+  const appSettings = getAppSettings(db);
+  const deleteWatchlist = db.prepare("DELETE FROM watchlist_cache WHERE user_id = ?");
   db.transaction(() => {
     for (const id of ids) {
       stmt.run(enabled ? 1 : 0, id);
+      if (!enabled && !appSettings.trackAllUsers) {
+        deleteWatchlist.run(id);
+      }
     }
   })();
   return ids;
@@ -218,6 +231,13 @@ export function refreshDerivedCollectionNames(db: Database.Database): void {
 export function markUserSyncResult(db: Database.Database, userId: number, error: string | null): void {
   db.prepare("UPDATE users SET last_synced_at = ?, last_sync_error = ? WHERE id = ?")
     .run(new Date().toISOString(), error, userId);
+}
+
+export function listDisabledUserIds(db: Database.Database): number[] {
+  return db
+    .prepare("SELECT id FROM users WHERE enabled = 0")
+    .all()
+    .map((row) => (row as { id: number }).id);
 }
 
 export function upsertManagedUsers(

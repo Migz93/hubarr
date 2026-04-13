@@ -117,6 +117,7 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
         {step === "plex" && (
           <PlexConfigForm
             initialConfig={setupStatus?.plex ?? null}
+            initialTrackAllUsers={settings?.general.trackAllUsers ?? false}
             saveUrl="/api/setup/plex/save"
             saveLabel="Continue to Collections"
             onSaved={async () => {

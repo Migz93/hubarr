@@ -58,6 +58,7 @@ export interface AppSettings {
   activityCacheFetchIntervalMinutes: number;
   rssPollIntervalSeconds: number;
   rssEnabled: boolean;
+  trackAllUsers: boolean;
   collectionPublishIntervalMinutes: number;
   plexRecentlyAddedScanIntervalMinutes: number;
   plexFullLibraryScanIntervalMinutes: number;
@@ -89,6 +90,7 @@ export interface UserRecord {
   collectionSortOrderOverride: CollectionSortOrder | null;
   lastSyncedAt: string | null;
   lastSyncError: string | null;
+  watchlistItemCount: number;
 }
 
 export interface ManagedUserRecord {
@@ -179,6 +181,12 @@ export interface WatchlistPageResponse {
       show: number;
     };
   };
+  selectedUser: {
+    userId: number;
+    displayName: string;
+    avatarUrl: string | null;
+    enabled: boolean;
+  } | null;
 }
 
 export interface PlexCollectionRecord {
@@ -344,6 +352,7 @@ export interface SettingsResponse {
   general: {
     fullSyncOnStartup: boolean;
     historyRetentionDays: number;
+    trackAllUsers: boolean;
     trustProxy: boolean;
   };
   sync: {
@@ -380,4 +389,5 @@ export interface PlexConfigPayload {
   hostname?: string;
   port?: number;
   useSsl?: boolean;
+  trackAllUsers?: boolean;
 }

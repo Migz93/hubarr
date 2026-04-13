@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AlertCircle, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock, XCircle } from "lucide-react";
 import { apiGet } from "../lib/api";
@@ -357,32 +357,28 @@ function RunItems({ items }: { items: SyncRunItem[] }) {
       </div>
 
       {/* Errors */}
-      {errors.map((item) => (
-        <RunItemRow key={item.id} item={item} />
-      ))}
+      {errors.length > 0 && (
+        <ItemSectionCollapsible
+          title="errors"
+          count={errors.length}
+          tone="error"
+          items={errors}
+          renderItem={(item) => <RunItemRow key={item.id} item={item} />}
+        />
+      )}
 
       {/* Match failures */}
-      {failures.length > 0 && (
-        <div>
-          <div className="text-xs text-warning font-medium mb-1.5">Unmatched items ({failures.length})</div>
-          <div className="space-y-1">
-            {failures.map((item) => (
-              <MatchFailureRow key={item.id} item={item} />
-            ))}
-          </div>
-        </div>
-      )}
+      {failures.length > 0 && <MatchFailuresCollapsible items={failures} />}
 
       {/* Watchlisted at date unresolved */}
       {unresolved.length > 0 && (
-        <div>
-          <div className="text-xs text-warning font-medium mb-1.5">Watchlisted At Date Unresolved ({unresolved.length})</div>
-          <div className="space-y-1">
-            {unresolved.map((item) => (
-              <DateUnresolvedRow key={item.id} item={item} />
-            ))}
-          </div>
-        </div>
+        <ItemSectionCollapsible
+          title="watchlisted date unresolved"
+          count={unresolved.length}
+          tone="warning"
+          items={unresolved}
+          renderItem={(item) => <DateUnresolvedRow key={item.id} item={item} />}
+        />
       )}
 
       {/* Successful steps (collapsed by default) */}
@@ -492,6 +488,18 @@ function MatchFailureRow({ item }: { item: SyncRunItem }) {
   );
 }
 
+function MatchFailuresCollapsible({ items }: { items: SyncRunItem[] }) {
+  return (
+    <ItemSectionCollapsible
+      title="unmatched items"
+      count={items.length}
+      tone="warning"
+      items={items}
+      renderItem={(item) => <MatchFailureRow key={item.id} item={item} />}
+    />
+  );
+}
+
 interface DateUnresolvedDetails {
   title?: string;
   type?: string;
@@ -530,6 +538,42 @@ function StepsCollapsible({ items }: { items: SyncRunItem[] }) {
               )}
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ItemSectionCollapsible({
+  title,
+  count,
+  tone,
+  items,
+  renderItem
+}: {
+  title: string;
+  count: number;
+  tone: "warning" | "error";
+  items: SyncRunItem[];
+  renderItem: (item: SyncRunItem) => ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const toneClass = tone === "error"
+    ? "text-error hover:text-error/80"
+    : "text-warning hover:text-warning/80";
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen((value) => !value)}
+        className={`flex items-center gap-1 text-xs font-medium transition-colors ${toneClass}`}
+      >
+        {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        {open ? "Hide" : "Show"} {title} ({count})
+      </button>
+      {open && (
+        <div className="mt-2 space-y-1">
+          {items.map(renderItem)}
         </div>
       )}
     </div>

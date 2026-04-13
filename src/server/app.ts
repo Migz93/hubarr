@@ -185,6 +185,10 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       showLibraryId: appSettings.defaultShowLibraryId || ""
     });
 
+    if (typeof payload.trackAllUsers === "boolean") {
+      services.updateSettings({ trackAllUsers: payload.trackAllUsers });
+    }
+
     services.upsertSelfUser().catch((err) => {
       logger.warn("Self user upsert failed after Plex settings save", {
         error: err instanceof Error ? err.message : String(err)
@@ -556,6 +560,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       general: {
         fullSyncOnStartup: app.fullSyncOnStartup,
         historyRetentionDays: app.historyRetentionDays,
+        trackAllUsers: app.trackAllUsers,
         trustProxy: app.trustProxy
       },
       sync: {
@@ -577,7 +582,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   app.patch("/api/settings", requireAuth, (req, res) => {
     const body = req.body as {
-      general?: { fullSyncOnStartup?: boolean; historyRetentionDays?: number; trustProxy?: boolean };
+      general?: { fullSyncOnStartup?: boolean; historyRetentionDays?: number; trackAllUsers?: boolean; trustProxy?: boolean };
       collections?: {
         collectionNamePattern?: string;
         collectionSortOrder?: string;
@@ -600,6 +605,9 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       }
       if (body.general.historyRetentionDays !== undefined) {
         patch.historyRetentionDays = Math.max(1, Math.floor(body.general.historyRetentionDays));
+      }
+      if (typeof body.general.trackAllUsers === "boolean") {
+        patch.trackAllUsers = body.general.trackAllUsers;
       }
       if (typeof body.general.trustProxy === "boolean") {
         patch.trustProxy = body.general.trustProxy;
@@ -642,7 +650,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       }
     }
 
-    const updated = db.updateAppSettings(patch);
+    const updated = services.updateSettings(patch);
 
     scheduler?.updateJob("full-sync", {
       intervalMs: updated.reconciliationIntervalMinutes * 60 * 1000,

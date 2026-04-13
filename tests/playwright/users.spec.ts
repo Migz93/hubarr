@@ -23,6 +23,18 @@ test.describe("Users page structure", () => {
     await expect(page.getByRole("button", { name: /^Disabled \(/ })).toBeVisible();
   });
 
+  test("Disabled users never show a Sync Watchlist button", async ({ page }) => {
+    const disabledToggle = page.getByRole("button", { name: /^Disabled \(/ });
+    await expect(disabledToggle).toBeVisible();
+    await disabledToggle.click();
+
+    const disabledSection = page.locator("div.mb-6").filter({
+      has: page.getByRole("button", { name: /^Disabled \(/ })
+    }).first();
+
+    await expect(disabledSection.getByRole("button", { name: /sync watchlist/i })).toHaveCount(0);
+  });
+
   test("Refresh Users button is present", async ({ page }) => {
     await expect(page.getByRole("button", { name: /refresh users/i })).toBeVisible();
   });
