@@ -156,6 +156,33 @@ export function listAllImageCacheWebPaths(db: Database.Database): string[] {
   return rows.map((r) => r.local_web_path);
 }
 
+export function deleteOrphanedPosterCacheEntries(db: Database.Database): number {
+  const rows = db.prepare(`
+    SELECT cache_key
+    FROM image_cache ic
+    WHERE ic.kind = 'poster'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM watchlist_cache w
+        WHERE w.plex_item_id = ic.entity_id
+      )
+  `).all() as Array<{ cache_key: string }>;
+
+  if (rows.length === 0) {
+    return 0;
+  }
+
+  const del = db.prepare("DELETE FROM image_cache WHERE cache_key = ?");
+
+  db.transaction(() => {
+    for (const row of rows) {
+      del.run(row.cache_key);
+    }
+  })();
+
+  return rows.length;
+}
+
 export function clearImageCacheTable(db: Database.Database): void {
   db.prepare("DELETE FROM image_cache").run();
 }

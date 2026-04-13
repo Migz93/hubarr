@@ -12,6 +12,7 @@ Hubarr uses separate background jobs so each job has one clear responsibility:
 - `Collection Sync`
 - `Refresh Users`
 - `Plex Refresh Token`
+- `Maintenance Tasks`
 
 For a detailed explanation of how the three watchlist-specific jobs work together
 — including date resolution, RSS deduplication, and the activity feed cache —
@@ -61,6 +62,7 @@ The most important data groups are:
 - `Collection Sync` interval
 - `Plex Recently Added Scan` interval
 - `Plex Full Library Scan` interval
+- daily `Maintenance Tasks`
 
 ---
 
@@ -97,6 +99,11 @@ History page.
 
 The persisted last-run timestamp and status used by the Jobs page so run times
 remain truthful across restarts.
+
+#### Maintenance task
+
+Scheduled housekeeping work that keeps derived or cached data tidy without
+changing the main sync flow.
 
 ---
 
@@ -154,6 +161,22 @@ How it works:
 Only this job should perform collection updates. The watchlist sync jobs
 (RSS and GraphQL) trigger a collection sync immediately after processing
 changes — see [docs/watchlist.md](watchlist.md) for details.
+
+---
+
+## Maintenance Tasks
+
+Purpose:
+- run daily housekeeping that is useful for long-term correctness or storage
+  hygiene, but does not need to run inline with a sync
+
+How it works:
+- runs as a separate daily scheduler-managed job
+- delegates task-specific cleanup to the subsystem that owns the data
+- records last-run state so `Settings → Jobs` stays truthful across restarts
+
+For the current task list and extension guidance, see
+[docs/maintenance.md](maintenance.md).
 
 ---
 

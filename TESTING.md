@@ -95,6 +95,7 @@ Read-only. Safe to run against a live instance.
 | Clicking a tab updates the URL | Clicks Plex, Jobs, and About tabs in turn; asserts the URL gains the expected `?tab=` parameter |
 | General tab shows Startup Sync toggle and History Retention field | Navigates to `/settings?tab=general`, waits for load, asserts both setting labels are visible |
 | Jobs tab shows the jobs table | Navigates to `/settings?tab=jobs`, asserts the "Job Name" column header is visible |
+| Jobs tab lists the Maintenance Tasks job | Navigates to `/settings?tab=jobs`, asserts the `Maintenance Tasks` row is present with its daily schedule and `Run Now` button |
 | About tab shows version and support info | Navigates to `/settings?tab=about`, asserts "About Hubarr" and "Version" headings are visible |
 | Collections tab shows watchlisted date sort options | Navigates to `/settings?tab=collections`, asserts the ordering `<select>` contains the "Watchlisted Date (New to Old)" and "Watchlisted Date (Old to New)" options |
 

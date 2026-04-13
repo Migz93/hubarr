@@ -16,6 +16,8 @@ long gone.
   GraphQL/RSS/activity-cache behavior, date resolution, and sync flows
 - [image-caching.md](image-caching.md) — poster/avatar caching design, stale
   refresh behavior, storage model, and cache lifecycle details
+- [maintenance.md](maintenance.md) — scheduled housekeeping tasks, current
+  cleanup responsibilities, and how to add new maintenance work safely
 
 ## When To Read Which Doc
 
@@ -27,6 +29,8 @@ long gone.
   `addedAt` handling, or collection publish triggers.
 - Read [image-caching.md](image-caching.md) when changing poster/avatar fetch,
   storage, refresh, or serving behavior.
+- Read [maintenance.md](maintenance.md) when adding background cleanup,
+  consistency checks, pruning, or other housekeeping tasks.
 
 ## Maintenance Rule
 

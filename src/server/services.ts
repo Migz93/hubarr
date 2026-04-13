@@ -201,6 +201,21 @@ export class HubarrServices {
     }
   }
 
+  runMaintenanceTasks() {
+    this.logger.info("Maintenance tasks started", {
+      label: "Maintenance Tasks"
+    });
+
+    const result = this.imageCache.runMaintenanceTasks();
+
+    this.logger.info("Maintenance tasks complete", {
+      label: "Maintenance Tasks",
+      ...result
+    });
+
+    return result;
+  }
+
   getManagedUsers() {
     return this.db.listManagedUsers();
   }

@@ -178,6 +178,35 @@ export class ImageCacheService {
   }
 
   /**
+   * Remove watchlist-owned poster metadata rows whose item no longer exists in
+   * watchlist_cache, then delete any now-unreferenced files left on disk.
+   */
+  runMaintenanceTasks(): { orphanedPosterRowsRemoved: number; orphanedFilesRemoved: number } {
+    const orphanedPosterRowsRemoved = this.db.deleteOrphanedPosterCacheEntries();
+
+    if (orphanedPosterRowsRemoved > 0) {
+      this.logger.info("ImageCache: removed orphaned watchlist poster rows", {
+        action: "maintenance",
+        orphanedPosterRowsRemoved
+      });
+    } else {
+      this.logger.debug("ImageCache: no orphaned watchlist poster rows found", {
+        action: "maintenance"
+      });
+    }
+
+    const orphanedFilesRemoved = this.pruneOrphaned();
+
+    this.logger.info("ImageCache: maintenance tasks complete", {
+      action: "maintenance",
+      orphanedPosterRowsRemoved,
+      orphanedFilesRemoved
+    });
+
+    return { orphanedPosterRowsRemoved, orphanedFilesRemoved };
+  }
+
+  /**
    * Delete all files and clear all image_cache metadata rows.
    * Returns the number of files removed.
    */
