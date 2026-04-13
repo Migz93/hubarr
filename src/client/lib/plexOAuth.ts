@@ -82,13 +82,10 @@ class PlexOAuth {
       "context[device][platform]": this.headers["X-Plex-Platform"],
       "context[device][layout]": "desktop",
       code: this.pin.code,
-      // After auth, plex.tv redirects the popup to this URL. The page calls
-      // window.close() on itself, which is the only reliable way to close a
-      // popup on mobile browsers — calling popup.close() from the opener is
-      // blocked on some mobile browsers once the popup has navigated cross-origin.
-      // Using window.location.origin means this works correctly behind a reverse
-      // proxy without any extra configuration.
-      forwardUrl: `${window.location.origin}/plex-auth-done`
+      // No forwardUrl — after auth the popup stays on plex.tv. The opener
+      // closes it via popup.close() once polling detects the token. This is
+      // more reliable than redirecting back and calling window.close() in the
+      // popup itself, which mobile browsers block after cross-origin navigation.
     };
 
     if (this.popup) {
@@ -100,9 +97,9 @@ class PlexOAuth {
 
   private async pollForToken(): Promise<string> {
     return new Promise((resolve, reject) => {
-      // On mobile, the popup may close (via window.close() in the forwardUrl page, or
-      // manually) a moment before the Plex API returns the token. Allow a few extra
-      // polls after detecting closure so we don't reject a successful auth too early.
+      // The user may close the popup manually before the token arrives. Allow a
+      // few extra polls after detecting closure before giving up, in case the
+      // Plex API response is slightly delayed.
       let gracePollsLeft = 5;
 
       const poll = async () => {
