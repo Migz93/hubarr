@@ -1277,12 +1277,12 @@ export class HubarrServices {
 
     for (const item of newItems) {
       const libraryId = item.type === "movie" ? selfLibraries.movieLibraryId : selfLibraries.showLibraryId;
-      const plexGuid = item.guids.find((g) => g.startsWith("plex://"));
-      const plexItemId = plexGuid ?? item.stableKey;
 
       let matchedRatingKey: string | null = null;
       let watchlistItem: WatchlistItem = {
-        plexItemId,
+        // Use stableKey as a temporary ID — replaced below after enrichment
+        // adds the plex:// GUID to the guids array if the RSS feed omitted it.
+        plexItemId: item.stableKey,
         title: item.title,
         type: item.type,
         year: item.year,
@@ -1299,6 +1299,19 @@ export class HubarrServices {
       };
 
       watchlistItem = await plex.enrichWatchlistItem(watchlistItem);
+
+      // Resolve the canonical plex:// GUID now that enrichment has populated
+      // the full guids array. The RSS feed itself often omits the plex:// GUID,
+      // so we defer this until after enrichment rather than using item.guids.
+      const enrichedPlexGuid = watchlistItem.guids?.find((g) => g.startsWith("plex://"));
+      if (enrichedPlexGuid) {
+        const hex = enrichedPlexGuid.replace(/^plex:\/\/(?:movie|show)\//, "");
+        watchlistItem = {
+          ...watchlistItem,
+          plexItemId: enrichedPlexGuid,
+          discoverKey: `/library/metadata/${hex}`
+        };
+      }
 
       try {
         const match = await plex.searchLibraryItem(item.title, item.type, libraryId, watchlistItem.year || undefined, item.guids);
@@ -1400,12 +1413,12 @@ export class HubarrServices {
       }
 
       const libraryId = item.type === "movie" ? effectiveLibraries.movieLibraryId : effectiveLibraries.showLibraryId;
-      const plexGuid = item.guids.find((g) => g.startsWith("plex://"));
-      const plexItemId = plexGuid ?? item.stableKey;
 
       let matchedRatingKey: string | null = null;
       let watchlistItem: WatchlistItem = {
-        plexItemId,
+        // Use stableKey as a temporary ID — replaced below after enrichment
+        // adds the plex:// GUID to the guids array if the RSS feed omitted it.
+        plexItemId: item.stableKey,
         title: item.title,
         type: item.type,
         year: item.year,
@@ -1422,6 +1435,19 @@ export class HubarrServices {
       };
 
       watchlistItem = await plex.enrichWatchlistItem(watchlistItem);
+
+      // Resolve the canonical plex:// GUID now that enrichment has populated
+      // the full guids array. The RSS feed itself often omits the plex:// GUID,
+      // so we defer this until after enrichment rather than using item.guids.
+      const enrichedPlexGuid = watchlistItem.guids?.find((g) => g.startsWith("plex://"));
+      if (enrichedPlexGuid) {
+        const hex = enrichedPlexGuid.replace(/^plex:\/\/(?:movie|show)\//, "");
+        watchlistItem = {
+          ...watchlistItem,
+          plexItemId: enrichedPlexGuid,
+          discoverKey: `/library/metadata/${hex}`
+        };
+      }
 
       try {
         const match = await plex.searchLibraryItem(item.title, item.type, libraryId, watchlistItem.year || undefined, item.guids);
