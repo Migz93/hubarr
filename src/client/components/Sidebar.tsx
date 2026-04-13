@@ -149,6 +149,10 @@ const CHANNEL_CONFIG = {
   },
 } as const;
 
+function getChannelConfig(buildChannel: string) {
+  return CHANNEL_CONFIG[buildChannel as keyof typeof CHANNEL_CONFIG] ?? CHANNEL_CONFIG.custom;
+}
+
 function VersionFooter({ onMobileClose }: { onMobileClose: () => void }) {
   const [info, setInfo] = useState<AboutInfo | null>(null);
 
@@ -175,7 +179,7 @@ function VersionFooter({ onMobileClose }: { onMobileClose: () => void }) {
     );
   }
 
-  const { label, Icon } = CHANNEL_CONFIG[info.buildChannel];
+  const { label, Icon } = getChannelConfig(info.buildChannel);
 
   // Show the commit SHA for develop/custom builds, version number for stable
   const subLabel = info.buildChannel === "stable"

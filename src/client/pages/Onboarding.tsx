@@ -7,10 +7,11 @@ import CollectionsConfigForm from "../components/CollectionsConfigForm";
 import type { OnboardingStep, SetupStatusResponse, SettingsResponse } from "../../shared/types";
 
 interface OnboardingProps {
+  authenticated?: boolean;
   onComplete: () => Promise<void>;
 }
 
-export default function Onboarding({ onComplete }: OnboardingProps) {
+export default function Onboarding({ authenticated = false, onComplete }: OnboardingProps) {
   const [step, setStep] = useState<OnboardingStep>("auth");
   const [setupStatus, setSetupStatus] = useState<SetupStatusResponse | null>(null);
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
@@ -33,8 +34,12 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
   }
 
   useEffect(() => {
+    if (!authenticated) {
+      setStep("auth");
+      return;
+    }
     void loadSetupState();
-  }, []);
+  }, [authenticated]);
 
   async function handlePlexAuth() {
     setAuthError(null);

@@ -87,7 +87,7 @@ export default function App() {
       <Routes>
         <Route
           path="/onboarding"
-          element={<Onboarding onComplete={onSetupComplete} />}
+          element={<Onboarding authenticated={false} onComplete={onSetupComplete} />}
         />
         <Route path="*" element={<Navigate to="/onboarding" replace />} />
       </Routes>
@@ -113,7 +113,7 @@ export default function App() {
       <Routes>
         <Route
           path="/onboarding"
-          element={<Onboarding onComplete={onSetupComplete} />}
+          element={<Onboarding authenticated onComplete={onSetupComplete} />}
         />
         <Route path="*" element={<Navigate to="/onboarding" replace />} />
       </Routes>
