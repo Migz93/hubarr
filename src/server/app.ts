@@ -1044,6 +1044,23 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   });
 
   // ---------------------------------------------------------------------------
+  // Plex OAuth popup self-close endpoint
+  // ---------------------------------------------------------------------------
+
+  // After Plex auth completes, plex.tv redirects the popup to this URL
+  // (set as forwardUrl in the OAuth params). The page calls window.close() on
+  // itself, which is the only reliable way to dismiss the popup on mobile —
+  // calling popup.close() from the opener is blocked by some mobile browsers
+  // once the window has navigated to a cross-origin page.
+  app.get("/plex-auth-done", (_req, res) => {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(
+      "<!DOCTYPE html><html><head><title>Plex Auth</title></head>" +
+        "<body><script>window.close();</script></body></html>"
+    );
+  });
+
+  // ---------------------------------------------------------------------------
   // Static file serving
   // ---------------------------------------------------------------------------
 
