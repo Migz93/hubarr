@@ -228,6 +228,19 @@ real `addedAt`. Items that remain unresolved after this lookup are recorded in
 the sync run as `watchlist.date_unresolved` and appear in the History page
 (see [Unresolved Dates in History](#unresolved-dates-in-history)).
 
+As of migration `v8`, Hubarr resolves this through explicit identifier tables
+rather than ad hoc service-layer fallbacks:
+
+- `user_identifier_aliases` stores known Plex user IDs for the same local user
+  record, including the self user's numeric Plex ID and GraphQL UUID
+- `media_items` stores one canonical `plex://...` item identity per media item
+- `media_item_identifiers` stores additional aliases for the same media item,
+  such as `/library/metadata/...` discover keys and external GUIDs
+
+That means the activity-cache lookup can match the same conceptual item and the
+same conceptual user across multiple Plex identifier formats without manually
+trying permutations in `services.ts`.
+
 ### Limitation
 
 The activity feed does not retain infinite history. Items watchlisted before the
@@ -294,6 +307,7 @@ naturally trend towards zero for most users.
 | `src/server/integrations/plex.ts` | `fetchGraphqlWatchlist()`, `fetchWatchlistActivityFeed()`, `fetchRssFeedItems()`, `fetchRssUrl()` |
 | `src/server/services.ts` | `syncUser()`, `runFullSync()`, `runUserSync()`, `syncActivityCache()`, `buildAllRssDateMaps()`, `pollRss()`, `processSelfRssNewItems()`, `processRssNewItems()`, `runPublishPass()` |
 | `src/server/db/watchlist.ts` | Watchlist and activity cache DB helpers |
+| `src/server/db/identifiers.ts` | Explicit media/user identifier catalog and alias-based lookup helpers |
 | `src/server/db/migrations.ts` | Schema — `watchlist_cache` (v1), `watchlist_activity_cache` (v5) |
 | `src/server/rss-cache.ts` | In-memory RSS diff cache — author-keyed deduplication, `prime()`, `diff()` |
 | `src/server/index.ts` | Job registrations for all three sync mechanisms |

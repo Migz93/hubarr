@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import type { ManagedUserRecord, UserRecord } from "../../shared/types.js";
+import { upsertUserIdentifierAlias } from "./identifiers.js";
 import { getAppSettings } from "./settings.js";
 
 function buildCollectionName(
@@ -34,6 +35,13 @@ export function upsertUsers(
   db.transaction(() => {
     for (const user of users) {
       stmt.run({ ...user, collectionName: buildCollectionName(user.username, appSettings.collectionNamePattern, null) });
+
+      const row = db
+        .prepare("SELECT id FROM users WHERE plex_user_id = ?")
+        .get(user.plexUserId) as { id: number } | undefined;
+      if (row) {
+        upsertUserIdentifierAlias(db, row.id, user.plexUserId);
+      }
     }
   })();
 
@@ -62,6 +70,13 @@ export function upsertSelfUser(
       avatar_url = excluded.avatar_url,
       is_self = 1
   `).run({ ...account, collectionName });
+
+  const row = db
+    .prepare("SELECT id FROM users WHERE plex_user_id = ?")
+    .get(account.plexUserId) as { id: number } | undefined;
+  if (row) {
+    upsertUserIdentifierAlias(db, row.id, account.plexUserId);
+  }
 }
 
 export function listUsers(db: Database.Database): UserRecord[] {

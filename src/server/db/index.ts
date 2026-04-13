@@ -19,6 +19,7 @@ import type {
 } from "../../shared/types.js";
 import type { RuntimeConfig } from "../config.js";
 import * as collectionsRepo from "./collections.js";
+import * as identifiersRepo from "./identifiers.js";
 import * as imageCacheRepo from "./image-cache.js";
 import type { ImageCacheRow } from "./image-cache.js";
 import { runMigrations } from "./migrations.js";
@@ -192,6 +193,10 @@ export class HubarrDatabase {
     usersRepo.markUserSyncResult(this.db, userId, error);
   }
 
+  upsertUserIdentifierAlias(userId: number, identifierValue: string): void {
+    identifiersRepo.upsertUserIdentifierAlias(this.db, userId, identifierValue);
+  }
+
   // -------------------------------------------------------------------------
   // Watchlist
   // -------------------------------------------------------------------------
@@ -202,6 +207,10 @@ export class HubarrDatabase {
 
   upsertWatchlistItem(userId: number, item: WatchlistItem): void {
     watchlistRepo.upsertWatchlistItem(this.db, userId, item);
+  }
+
+  upsertMediaItemIdentifiers(item: Pick<WatchlistItem, "plexItemId" | "type" | "guids" | "discoverKey">): void {
+    identifiersRepo.upsertMediaItemIdentifiers(this.db, item);
   }
 
   replaceWatchlistItems(userId: number, items: WatchlistItem[]): void {
@@ -235,6 +244,10 @@ export class HubarrDatabase {
 
   getActivityCacheDate(plexItemId: string, plexUserId: string): string | null {
     return watchlistRepo.getActivityCacheDate(this.db, plexItemId, plexUserId);
+  }
+
+  getActivityCacheDateForUserItem(userId: number, plexItemId: string): string | null {
+    return watchlistRepo.getActivityCacheDateForUserItem(this.db, userId, plexItemId);
   }
 
   clearActivityCache(): number {

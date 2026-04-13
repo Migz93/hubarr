@@ -32,6 +32,25 @@ function inferSchemaVersion(db: Database.Database): number {
   return 0;
 }
 
+function normalizeIdentifierValue(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function inferUserIdentifierType(value: string): "plex_user" | "plex_numeric" | "plex_uuid" {
+  if (/^\d+$/.test(value)) return "plex_numeric";
+  if (/^[a-f0-9-]{32,36}$/i.test(value)) return "plex_uuid";
+  return "plex_user";
+}
+
+function inferMediaIdentifierType(value: string): "plex_guid" | "discover_key" | "imdb" | "tmdb" | "tvdb" | "guid" {
+  if (value.startsWith("plex://")) return "plex_guid";
+  if (value.startsWith("/library/metadata/")) return "discover_key";
+  if (value.startsWith("imdb://")) return "imdb";
+  if (value.startsWith("tmdb://")) return "tmdb";
+  if (value.startsWith("tvdb://")) return "tvdb";
+  return "guid";
+}
+
 const migrations: Migration[] = [
   {
     version: 1,
@@ -306,6 +325,118 @@ const migrations: Migration[] = [
         SET last_run_at = NULL, updated_at = datetime('now')
         WHERE job_id = 'activity-cache-fetch';
       `);
+    }
+  },
+  {
+    version: 8,
+    up(db) {
+      db.exec(`
+        CREATE TABLE media_items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          canonical_plex_item_id TEXT NOT NULL UNIQUE,
+          media_type TEXT NOT NULL CHECK(media_type IN ('movie', 'show'))
+        );
+
+        CREATE TABLE media_item_identifiers (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          media_item_id INTEGER NOT NULL,
+          identifier_type TEXT NOT NULL,
+          identifier_value TEXT NOT NULL,
+          UNIQUE(identifier_type, identifier_value),
+          FOREIGN KEY (media_item_id) REFERENCES media_items(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX idx_media_item_identifiers_media_item_id
+          ON media_item_identifiers(media_item_id);
+
+        CREATE TABLE user_identifier_aliases (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          identifier_type TEXT NOT NULL,
+          identifier_value TEXT NOT NULL,
+          UNIQUE(identifier_type, identifier_value),
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX idx_user_identifier_aliases_user_id
+          ON user_identifier_aliases(user_id);
+      `);
+
+      const upsertMediaItem = db.prepare(`
+        INSERT INTO media_items (canonical_plex_item_id, media_type)
+        VALUES (?, ?)
+        ON CONFLICT(canonical_plex_item_id) DO UPDATE SET
+          media_type = excluded.media_type
+      `);
+      const findMediaItem = db.prepare(
+        "SELECT id FROM media_items WHERE canonical_plex_item_id = ?"
+      );
+      const upsertMediaIdentifier = db.prepare(`
+        INSERT INTO media_item_identifiers (media_item_id, identifier_type, identifier_value)
+        VALUES (?, ?, ?)
+        ON CONFLICT(identifier_type, identifier_value) DO UPDATE SET
+          media_item_id = excluded.media_item_id
+      `);
+      const upsertUserAlias = db.prepare(`
+        INSERT INTO user_identifier_aliases (user_id, identifier_type, identifier_value)
+        VALUES (?, ?, ?)
+        ON CONFLICT(identifier_type, identifier_value) DO UPDATE SET
+          user_id = excluded.user_id
+      `);
+
+      const users = db.prepare("SELECT id, plex_user_id FROM users").all() as Array<{
+        id: number;
+        plex_user_id: string;
+      }>;
+      for (const user of users) {
+        const normalized = normalizeIdentifierValue(user.plex_user_id);
+        if (!normalized) continue;
+        upsertUserAlias.run(user.id, inferUserIdentifierType(normalized), normalized);
+      }
+
+      const watchlistRows = db.prepare(`
+        SELECT plex_item_id, type, discover_key, raw_payload
+        FROM watchlist_cache
+      `).all() as Array<{
+        plex_item_id: string;
+        type: "movie" | "show";
+        discover_key: string | null;
+        raw_payload: string;
+      }>;
+
+      db.transaction(() => {
+        for (const row of watchlistRows) {
+          const canonicalPlexItemId = normalizeIdentifierValue(row.plex_item_id);
+          if (!canonicalPlexItemId) continue;
+
+          upsertMediaItem.run(canonicalPlexItemId, row.type);
+          const mediaItem = findMediaItem.get(canonicalPlexItemId) as { id: number } | undefined;
+          if (!mediaItem) continue;
+
+          const identifiers = new Set<string>([canonicalPlexItemId]);
+          if (row.discover_key) {
+            identifiers.add(normalizeIdentifierValue(row.discover_key));
+          }
+
+          try {
+            const payload = JSON.parse(row.raw_payload) as { guids?: unknown[]; discoverKey?: string };
+            if (typeof payload.discoverKey === "string" && payload.discoverKey.trim()) {
+              identifiers.add(normalizeIdentifierValue(payload.discoverKey));
+            }
+            for (const guid of payload.guids ?? []) {
+              if (typeof guid === "string" && guid.trim()) {
+                identifiers.add(normalizeIdentifierValue(guid));
+              }
+            }
+          } catch {
+            // Keep the canonical item record even if the payload is not parseable.
+          }
+
+          for (const identifier of identifiers) {
+            upsertMediaIdentifier.run(mediaItem.id, inferMediaIdentifierType(identifier), identifier);
+          }
+        }
+      })();
     }
   }
 ];
