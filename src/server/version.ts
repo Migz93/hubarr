@@ -5,6 +5,9 @@ type PackageJson = {
   version?: string;
 };
 
+const VALID_BUILD_CHANNELS = ["stable", "develop", "custom"] as const;
+type BuildChannel = (typeof VALID_BUILD_CHANNELS)[number];
+
 function readPackageVersion() {
   const packageJsonPath = path.resolve(process.cwd(), "package.json");
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as PackageJson;
@@ -21,7 +24,14 @@ export const PLEX_USER_AGENT = `Hubarr/${APP_VERSION}`;
 
 // BUILD_CHANNEL is baked into the Docker image at CI build time via --build-arg.
 // Values: "stable" (release workflow), "develop" (develop workflow), "custom" (no arg passed — any non-CI build).
-export const BUILD_CHANNEL = (process.env.BUILD_CHANNEL ?? "custom") as "stable" | "develop" | "custom";
+function normalizeBuildChannel(value: string | undefined): BuildChannel {
+  if (value && VALID_BUILD_CHANNELS.includes(value as BuildChannel)) {
+    return value as BuildChannel;
+  }
+  return "custom";
+}
+
+export const BUILD_CHANNEL = normalizeBuildChannel(process.env.BUILD_CHANNEL);
 
 // Full commit SHA baked in at build time. "local" when running outside CI.
 const rawCommitSha = process.env.COMMIT_SHA ?? "local";
