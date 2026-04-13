@@ -56,10 +56,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   // Enable trust proxy if configured — required for express-rate-limit to
   // correctly identify clients by their real IP when Hubarr runs behind a
-  // reverse proxy that injects X-Forwarded-For headers.
+  // reverse proxy that injects X-Forwarded-For headers. Trust only a single
+  // proxy hop so forwarded headers are honored without accepting arbitrary
+  // client-supplied proxy chains.
   if (db.getAppSettings().trustProxy) {
-    app.set("trust proxy", true);
-    logger.info("Trust proxy enabled — using X-Forwarded-For for client IP identification");
+    app.set("trust proxy", 1);
+    logger.info("Trust proxy enabled — using one trusted proxy hop for client IP identification");
   }
 
   app.use(helmet({
