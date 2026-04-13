@@ -47,7 +47,7 @@ test.describe("Live refresh", () => {
     const runningRun = await waitForNewRun(request, "publish", latestBefore?.startedAt ?? null, "running");
     const completedRun = await waitForRunCompletion(request, "publish", runningRun.startedAt);
     await expect(recentSyncsPanel).not.toHaveText(panelTextBefore, { timeout: 30_000 });
-    await expect(recentSyncsPanel).toContainText("Publish", { timeout: 30_000 });
+    await expect(recentSyncsPanel).toContainText("Collection", { timeout: 30_000 });
     await expect(recentSyncsPanel).toContainText("success", { timeout: 30_000 });
     await expect(recentSyncsPanel).toContainText(compactDashboardSummary(completedRun), { timeout: 30_000 });
   });
