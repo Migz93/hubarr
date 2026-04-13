@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import type { ManagedUserRecord, UserRecord } from "../../shared/types.js";
+import { upsertUserIdentifierAlias } from "./identifiers.js";
 import { getAppSettings } from "./settings.js";
 
 function buildCollectionName(
@@ -29,11 +30,18 @@ export function upsertUsers(
       username = excluded.username,
       display_name = excluded.display_name,
       avatar_url = excluded.avatar_url
+    RETURNING id
   `);
 
   db.transaction(() => {
     for (const user of users) {
-      stmt.run({ ...user, collectionName: buildCollectionName(user.username, appSettings.collectionNamePattern, null) });
+      const row = stmt.get({
+        ...user,
+        collectionName: buildCollectionName(user.username, appSettings.collectionNamePattern, null)
+      }) as { id: number } | undefined;
+      if (row) {
+        upsertUserIdentifierAlias(db, row.id, user.plexUserId);
+      }
     }
   })();
 
@@ -51,7 +59,7 @@ export function upsertSelfUser(
 ): void {
   const appSettings = getAppSettings(db);
   const collectionName = buildCollectionName(account.username, appSettings.collectionNamePattern, null);
-  db.prepare(`
+  const stmt = db.prepare(`
     INSERT INTO users (
       plex_user_id, username, display_name, avatar_url, is_self, enabled, visibility_mode, collection_name
     )
@@ -61,7 +69,15 @@ export function upsertSelfUser(
       display_name = excluded.display_name,
       avatar_url = excluded.avatar_url,
       is_self = 1
-  `).run({ ...account, collectionName });
+    RETURNING id
+  `);
+
+  db.transaction(() => {
+    const row = stmt.get({ ...account, collectionName }) as { id: number } | undefined;
+    if (row) {
+      upsertUserIdentifierAlias(db, row.id, account.plexUserId);
+    }
+  })();
 }
 
 export function listUsers(db: Database.Database): UserRecord[] {

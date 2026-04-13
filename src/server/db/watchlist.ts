@@ -2,8 +2,12 @@ import crypto from "node:crypto";
 import type Database from "better-sqlite3";
 import type { WatchlistGroupedItem, WatchlistItem, WatchlistPageResponse, WatchlistSortBy } from "../../shared/types.js";
 import { buildGuidMergePlan, mergeRawPayloadGuids } from "./guid-dedupe.js";
+import { getDiscoverKeyForPlexItemId, upsertMediaItemIdentifiers } from "./identifiers.js";
 
 export function getWatchlistDiscoverKey(db: Database.Database, plexItemId: string): string | null {
+  const explicitDiscoverKey = getDiscoverKeyForPlexItemId(db, plexItemId);
+  if (explicitDiscoverKey) return explicitDiscoverKey;
+
   const row = db
     .prepare("SELECT raw_payload FROM watchlist_cache WHERE plex_item_id = ? LIMIT 1")
     .get(plexItemId) as { raw_payload: string } | undefined;
@@ -36,6 +40,7 @@ export function upsertWatchlistItem(db: Database.Database, userId: number, item:
         ELSE added_at
       END
   `).run({ userId, ...item, rawPayload: JSON.stringify(item), discoverKey });
+  upsertMediaItemIdentifiers(db, item);
 }
 
 export function replaceWatchlistItems(db: Database.Database, userId: number, items: WatchlistItem[]): void {
@@ -51,6 +56,7 @@ export function replaceWatchlistItems(db: Database.Database, userId: number, ite
     del.run(userId);
     for (const item of items) {
       insert.run({ userId, ...item, rawPayload: JSON.stringify(item), discoverKey: item.discoverKey ?? null });
+      upsertMediaItemIdentifiers(db, item);
     }
   })();
 }

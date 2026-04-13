@@ -461,9 +461,9 @@ export class HubarrServices {
     // the merge and activity cache lookup below are responsible for resolving it.
     //
     // For the self user, also fetch their Plex UUID. Plex uses two ID formats
-    // for the admin account: a legacy numeric ID (stored in users.plex_user_id)
-    // and a hex UUID (used by the GraphQL activityFeed). The activity cache
-    // stores events under the UUID, so we need both to resolve dates.
+    // for the admin account: a legacy numeric ID and a GraphQL UUID. We store
+    // both as explicit aliases on the same local user record so downstream
+    // lookups can resolve activity rows without hand-written fallback chains.
     const [rawItems, selfPlexUuid] = await (async () => {
       if (friend.isSelf) {
         const [items, uuid] = await Promise.all([
@@ -479,6 +479,10 @@ export class HubarrServices {
     const showItems = await plex.resolveWatchlistItems(rawItems, "show", showLibraryId);
     const fetched: ResolvedWatchlistItem[] = [...movieItems, ...showItems].sort((a, b) => a.title.localeCompare(b.title));
 
+    if (selfPlexUuid) {
+      this.db.upsertUserIdentifierAlias(friend.id, selfPlexUuid);
+    }
+
     const matchedCount = fetched.filter((i) => i.matchedRatingKey).length;
     const unmatchedItems = fetched.filter((i) => !i.matchedRatingKey);
     this.logger.info("Watchlist resolved", {
@@ -492,22 +496,20 @@ export class HubarrServices {
     const existingItems = this.db.getWatchlistItems(friend.id);
     const merged = this.mergeFetchedWatchlistItems(existingItems, fetched);
 
-    // Step 1: Resolve addedAt from the activity cache for items still carrying the sentinel.
-    // The activity cache stores discover-key IDs (/library/metadata/<hex>) while the
-    // watchlist cache stores plex:// GUIDs (plex://movie/<hex>). Try both so that
-    // items fetched via either path can be matched.
+    // Pre-register merged item identifiers before the activity-cache lookup so
+    // newly fetched items can resolve dates through the alias catalog on this
+    // same sync pass, before replaceWatchlistItems persists the watchlist.
+    for (const item of merged) {
+      this.db.upsertMediaItemIdentifiers(item);
+    }
+
+    // Step 1: Resolve addedAt from the activity cache for items still carrying
+    // the sentinel. Identifier aliasing is resolved via the DB's explicit user
+    // and media identifier tables, so the lookup can match across self-user ID
+    // aliases and media ID forms without duplicating fallback logic here.
     const afterActivityCache = merged.map((item) => {
       if (item.addedAt !== WATCHLIST_DATE_UNKNOWN_SENTINEL) return item;
-      // Try all combinations of ID format (plex:// GUID vs discover key) and
-      // user ID format (numeric legacy vs UUID). The activity cache stores
-      // discover-key item IDs under the UUID form of the user ID, so for the
-      // self user we must try both plexUserId ("8448953") and plexUuid ("77b5c…").
-      const tryLookup = (userId: string) =>
-        this.db.getActivityCacheDate(item.plexItemId, userId) ??
-        (item.discoverKey ? this.db.getActivityCacheDate(item.discoverKey, userId) : null);
-      const cached =
-        tryLookup(friend.plexUserId) ??
-        (selfPlexUuid ? tryLookup(selfPlexUuid) : null);
+      const cached = this.db.getActivityCacheDateForUserItem(friend.id, item.plexItemId);
       if (cached) {
         this.logger.debug("Resolved addedAt from activity cache", { title: item.title, watchlistedAt: cached });
         return { ...item, addedAt: cached };
