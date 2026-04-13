@@ -438,6 +438,17 @@ const migrations: Migration[] = [
         }
       })();
     }
+  },
+  {
+    version: 9,
+    up(db) {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_user_identifier_aliases_value
+          ON user_identifier_aliases(identifier_value);
+        CREATE INDEX IF NOT EXISTS idx_media_item_identifiers_value
+          ON media_item_identifiers(identifier_value);
+      `);
+    }
   }
 ];
 

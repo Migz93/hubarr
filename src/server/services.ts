@@ -496,6 +496,9 @@ export class HubarrServices {
     const existingItems = this.db.getWatchlistItems(friend.id);
     const merged = this.mergeFetchedWatchlistItems(existingItems, fetched);
 
+    // Pre-register merged item identifiers before the activity-cache lookup so
+    // newly fetched items can resolve dates through the alias catalog on this
+    // same sync pass, before replaceWatchlistItems persists the watchlist.
     for (const item of merged) {
       this.db.upsertMediaItemIdentifiers(item);
     }

@@ -47,17 +47,14 @@ export function upsertMediaItemIdentifiers(
   const canonicalPlexItemId = normalizeIdentifierValue(item.plexItemId);
   if (!canonicalPlexItemId) return;
 
-  db.prepare(`
+  const mediaItem = db.prepare(`
     INSERT INTO media_items (canonical_plex_item_id, media_type)
     VALUES (?, ?)
     ON CONFLICT(canonical_plex_item_id) DO UPDATE SET
       media_type = excluded.media_type
-  `).run(canonicalPlexItemId, item.type);
-
-  const existing = db
-    .prepare("SELECT id FROM media_items WHERE canonical_plex_item_id = ?")
-    .get(canonicalPlexItemId) as { id: number } | undefined;
-  if (!existing) return;
+    RETURNING id
+  `).get(canonicalPlexItemId, item.type) as { id: number } | undefined;
+  if (!mediaItem) return;
 
   const identifiers = new Set<string>([canonicalPlexItemId]);
   if (item.discoverKey) identifiers.add(normalizeIdentifierValue(item.discoverKey));
@@ -75,7 +72,7 @@ export function upsertMediaItemIdentifiers(
   `);
 
   for (const identifier of identifiers) {
-    stmt.run(existing.id, inferMediaIdentifierType(identifier), identifier);
+    stmt.run(mediaItem.id, inferMediaIdentifierType(identifier), identifier);
   }
 }
 

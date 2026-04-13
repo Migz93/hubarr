@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import type Database from "better-sqlite3";
 import type { WatchlistGroupedItem, WatchlistItem, WatchlistPageResponse, WatchlistSortBy } from "../../shared/types.js";
 import { buildGuidMergePlan, mergeRawPayloadGuids } from "./guid-dedupe.js";
-import { getActivityCacheDateForUserItem as getActivityCacheDateForUserItemFromIdentifiers, getDiscoverKeyForPlexItemId, upsertMediaItemIdentifiers } from "./identifiers.js";
+import { getDiscoverKeyForPlexItemId, upsertMediaItemIdentifiers } from "./identifiers.js";
 
 export function getWatchlistDiscoverKey(db: Database.Database, plexItemId: string): string | null {
   const explicitDiscoverKey = getDiscoverKeyForPlexItemId(db, plexItemId);
@@ -330,14 +330,6 @@ export function getActivityCacheDate(
     .prepare("SELECT watchlisted_at FROM watchlist_activity_cache WHERE plex_item_id = ? AND plex_user_id = ?")
     .get(plexItemId, plexUserId) as { watchlisted_at: string } | undefined;
   return row?.watchlisted_at ?? null;
-}
-
-export function getActivityCacheDateForUserItem(
-  db: Database.Database,
-  userId: number,
-  plexItemId: string
-): string | null {
-  return getActivityCacheDateForUserItemFromIdentifiers(db, userId, plexItemId);
 }
 
 /**
