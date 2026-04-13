@@ -150,6 +150,10 @@ export class HubarrDatabase {
     return usersRepo.listUsers(this.db);
   }
 
+  listDisabledUserIds(): number[] {
+    return usersRepo.listDisabledUserIds(this.db);
+  }
+
   upsertManagedUsers(
     users: Array<{
       plexUserId: string;
@@ -252,6 +256,10 @@ export class HubarrDatabase {
 
   clearActivityCache(): number {
     return watchlistRepo.clearActivityCache(this.db);
+  }
+
+  deleteWatchlistItemsForUsers(userIds: number[]): number {
+    return watchlistRepo.deleteWatchlistItemsForUsers(this.db, userIds);
   }
 
   // -------------------------------------------------------------------------

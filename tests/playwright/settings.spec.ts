@@ -31,9 +31,10 @@ test.describe("Settings tabs", () => {
     await expect(page).toHaveURL(/[?&]tab=about/);
   });
 
-  test("General tab shows Startup Sync toggle and History Retention field", async ({ page }) => {
+  test("General tab shows Track All Users, Startup Sync, and History Retention controls", async ({ page }) => {
     await page.goto("/settings?tab=general");
     await expect(page.getByText("Loading settings...")).not.toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Track All Users")).toBeVisible();
     await expect(page.getByText("Startup Sync")).toBeVisible();
     await expect(page.getByText("History Retention")).toBeVisible();
   });

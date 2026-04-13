@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { ChevronDown, ChevronRight, Edit2, Play, RefreshCw, X } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
@@ -21,6 +22,7 @@ const USERS_IDLE_REFRESH_MS = 30_000;
 const USERS_DISCOVER_JOB_ID = "users-discover";
 
 export default function Users() {
+  const navigate = useNavigate();
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [managedUsers, setManagedUsers] = useState<ManagedUserRecord[]>([]);
   const [usersDiscoverJob, setUsersDiscoverJob] = useState<JobInfo | null>(null);
@@ -33,6 +35,7 @@ export default function Users() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [disabledOpen, setDisabledOpen] = useState(false);
   const [managedOpen, setManagedOpen] = useState(false);
+  const [watchlistInfoUser, setWatchlistInfoUser] = useState<UserRecord | null>(null);
 
   async function load(background = false) {
     setLoading((current) => current || !background);
@@ -176,6 +179,8 @@ export default function Users() {
               onToggleSelected={() => toggleSelected(user.id)}
               onEdit={() => setEditingId(user.id)}
               onSync={() => void syncUser(user.id)}
+              onOpenWatchlist={() => navigate(`/watchlists?user=${user.id}`)}
+              onShowNoData={() => setWatchlistInfoUser(user)}
             />
           ))}
         </div>
@@ -201,6 +206,8 @@ export default function Users() {
                   onToggleSelected={() => toggleSelected(user.id)}
                   onEdit={() => setEditingId(user.id)}
                   onSync={() => void syncUser(user.id)}
+                  onOpenWatchlist={() => navigate(`/watchlists?user=${user.id}`)}
+                  onShowNoData={() => setWatchlistInfoUser(user)}
                 />
               ))}
             </div>
@@ -241,6 +248,14 @@ export default function Users() {
           }}
         />
       )}
+
+      {watchlistInfoUser && (
+        <WatchlistInfoModal
+          user={watchlistInfoUser}
+          trackAllUsersEnabled={Boolean(settings?.general.trackAllUsers)}
+          onClose={() => setWatchlistInfoUser(null)}
+        />
+      )}
     </div>
   );
 }
@@ -271,7 +286,9 @@ function UserCard({
   syncing,
   onToggleSelected,
   onEdit,
-  onSync
+  onSync,
+  onOpenWatchlist,
+  onShowNoData
 }: {
   user: UserRecord;
   selected: boolean;
@@ -279,6 +296,8 @@ function UserCard({
   onToggleSelected: () => void;
   onEdit: () => void;
   onSync: () => void;
+  onOpenWatchlist: () => void;
+  onShowNoData: () => void;
 }) {
   const displayName = user.displayNameOverride?.trim() ? user.displayName : user.username;
   const showUsernameHint = Boolean(user.displayNameOverride?.trim());
@@ -295,6 +314,14 @@ function UserCard({
         onChange={onToggleSelected}
         className="absolute top-3 left-3 accent-primary w-4 h-4 cursor-pointer"
       />
+
+      <button
+        onClick={onEdit}
+        className="absolute top-3 right-3 p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors border border-outline-variant/20"
+        title="Edit user"
+      >
+        <Edit2 size={14} />
+      </button>
 
       <Avatar avatarUrl={user.avatarUrl} displayName={displayName} size="w-16 h-16" />
 
@@ -317,7 +344,22 @@ function UserCard({
         )}
       </div>
 
-      <div className="flex items-center gap-1.5 mt-auto pt-1 w-full justify-center flex-wrap">
+      <div className="flex items-center gap-1.5 mt-auto pt-2 w-full justify-center flex-wrap">
+        {user.watchlistItemCount > 0 ? (
+          <button
+            onClick={onOpenWatchlist}
+            className="flex items-center gap-1 bg-surface-container-high hover:bg-surface-bright text-on-surface text-xs font-medium rounded-lg px-2.5 py-1.5 transition-colors border border-outline-variant/20"
+          >
+            {user.watchlistItemCount} Watchlist {user.watchlistItemCount === 1 ? "Item" : "Items"}
+          </button>
+        ) : (
+          <button
+            onClick={onShowNoData}
+            className="flex items-center gap-1 bg-surface-container-high hover:bg-surface-bright text-on-surface-variant text-xs font-medium rounded-lg px-2.5 py-1.5 transition-colors border border-outline-variant/20"
+          >
+            No Watchlist Data
+          </button>
+        )}
         {user.enabled && (
           <button
             disabled={syncing}
@@ -328,13 +370,68 @@ function UserCard({
             {syncing ? "Syncing…" : "Sync Watchlist"}
           </button>
         )}
-        <button
-          onClick={onEdit}
-          className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors border border-outline-variant/20"
-          title="Edit user"
-        >
-          <Edit2 size={14} />
-        </button>
+      </div>
+    </div>
+  );
+}
+
+function WatchlistInfoModal({
+  user,
+  trackAllUsersEnabled,
+  onClose
+}: {
+  user: UserRecord;
+  trackAllUsersEnabled: boolean;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    function handleKeydown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeydown);
+    return () => document.removeEventListener("keydown", handleKeydown);
+  }, [onClose]);
+
+  const detail = !user.enabled && !trackAllUsersEnabled
+    ? "No watchlist data is available for this user right now. They are currently disabled in Hubarr and Track All Users is turned off."
+    : "No watchlist data can be found for this user. This usually means their watchlist privacy is set to private or they currently have no items in their watchlist.";
+
+  return (
+    <div
+      className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-surface-container rounded-2xl p-6 w-full max-w-md border border-outline-variant/20 shadow-xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-headline font-semibold text-lg text-on-surface">
+            {user.displayName}
+          </h3>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <p className="text-sm text-on-surface-variant leading-6">
+          {detail}
+        </p>
+
+        <div className="mt-6">
+          <button
+            onClick={onClose}
+            className="w-full bg-primary hover:bg-primary-dim text-on-primary text-sm font-semibold rounded-xl py-2.5 transition-colors"
+          >
+            Close
+          </button>
+        </div>
       </div>
     </div>
   );

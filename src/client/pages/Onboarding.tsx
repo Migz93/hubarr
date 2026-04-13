@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Check, ChevronRight } from "lucide-react";
-import { apiGet, apiPost } from "../lib/api";
+import { apiGet, apiPatch, apiPost } from "../lib/api";
 import PlexOAuth from "../lib/plexOAuth";
 import PlexConfigForm from "../components/PlexConfigForm";
 import CollectionsConfigForm from "../components/CollectionsConfigForm";
+import { SaveBar, SectionCard, ToggleField } from "../components/FormControls";
 import type { OnboardingStep, SetupStatusResponse, SettingsResponse } from "../../shared/types";
 
 interface OnboardingProps {
@@ -59,14 +60,18 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
 
   const stepState = useMemo(() => {
     if (step === "auth") {
-      return { authDone: false, plexDone: false };
+      return { authDone: false, plexDone: false, generalDone: false };
     }
     if (step === "plex") {
-      return { authDone: true, plexDone: false };
+      return { authDone: true, plexDone: false, generalDone: false };
+    }
+    if (step === "general") {
+      return { authDone: true, plexDone: true, generalDone: false };
     }
     return {
       authDone: true,
       plexDone: true,
+      generalDone: true,
       collectionsDone: Boolean(setupStatus?.collectionsConfigured)
     };
   }, [setupStatus?.collectionsConfigured, step]);
@@ -85,7 +90,9 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
           <div className="w-8 h-px bg-outline-variant/40" />
           <StepDot number={2} active={step === "plex"} done={stepState.plexDone} label="Configure Plex" />
           <div className="w-8 h-px bg-outline-variant/40" />
-          <StepDot number={3} active={step === "collections"} done={stepState.collectionsDone ?? false} label="Collections" />
+          <StepDot number={3} active={step === "general"} done={stepState.generalDone ?? false} label="General" />
+          <div className="w-8 h-px bg-outline-variant/40" />
+          <StepDot number={4} active={step === "collections"} done={stepState.collectionsDone ?? false} label="Collections" />
         </div>
 
         {step === "auth" && (
@@ -118,7 +125,17 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
           <PlexConfigForm
             initialConfig={setupStatus?.plex ?? null}
             saveUrl="/api/setup/plex/save"
-            saveLabel="Continue to Collections"
+            saveLabel="Continue to General"
+            onSaved={async () => {
+              await loadSetupState();
+              setStep("general");
+            }}
+          />
+        )}
+
+        {step === "general" && settings && (
+          <GeneralOnboardingStep
+            settings={settings}
             onSaved={async () => {
               await loadSetupState();
               setStep("collections");
@@ -138,6 +155,75 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
         )}
       </div>
     </div>
+  );
+}
+
+function GeneralOnboardingStep({
+  settings,
+  onSaved
+}: {
+  settings: SettingsResponse;
+  onSaved: () => Promise<void>;
+}) {
+  const [trackAllUsers, setTrackAllUsers] = useState(settings.general.trackAllUsers);
+  const [fullSyncOnStartup, setFullSyncOnStartup] = useState(settings.general.fullSyncOnStartup);
+  const [saving, setSaving] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTrackAllUsers(settings.general.trackAllUsers);
+    setFullSyncOnStartup(settings.general.fullSyncOnStartup);
+  }, [settings.general.fullSyncOnStartup, settings.general.trackAllUsers]);
+
+  async function save() {
+    setSaving(true);
+    setSuccess(false);
+    setError(null);
+    try {
+      await apiPatch("/api/settings", {
+        general: {
+          trackAllUsers,
+          fullSyncOnStartup
+        }
+      });
+      setSuccess(true);
+      await onSaved();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <SectionCard
+      title="General Settings"
+      description="Choose how Hubarr should behave after Plex is connected. You can change these again later in Settings."
+      wide
+    >
+      <div className="space-y-4">
+        <ToggleField
+          label="Track All Users"
+          hint="Keep background watchlist tracking running for disabled users too. Turning this off deletes cached watchlist data for disabled users."
+          checked={trackAllUsers}
+          onChange={setTrackAllUsers}
+        />
+        <ToggleField
+          label="Startup Sync"
+          hint="When Hubarr starts, run a Plex full library scan, then a watchlist GraphQL sync, then a collection sync."
+          checked={fullSyncOnStartup}
+          onChange={setFullSyncOnStartup}
+        />
+      </div>
+      <SaveBar
+        saving={saving}
+        success={success}
+        error={error}
+        onSave={() => void save()}
+        label="Continue to Collections"
+      />
+    </SectionCard>
   );
 }
 

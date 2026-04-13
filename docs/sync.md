@@ -45,6 +45,7 @@ The most important data groups are:
 
 - `Startup Sync`
 - `History Retention`
+- `Track All Users`
 
 #### Collections
 
@@ -81,6 +82,16 @@ in a Plex library.
 
 The job that updates Plex collections and hub visibility from cached Hubarr
 state.
+
+#### Tracked user
+
+A user whose watchlist Hubarr should keep in sync. This always includes enabled
+users, and also includes disabled users when `Track All Users` is enabled.
+
+#### Publishing user
+
+An enabled user that participates in collection publishing, dashboard
+visibility, default watchlist views, and isolation rules.
 
 #### Startup Sync
 
@@ -152,7 +163,7 @@ Purpose:
 - perform all collection and hub-row updates
 
 How it works:
-- loads the cached watchlist state for each enabled user
+- loads the cached watchlist state for each publishing user
 - builds the movie and TV collections for that user from matched items
 - ensures collection labels and sort behavior are correct
 - updates Plex hub visibility settings
@@ -184,6 +195,7 @@ For the current task list and extension guidance, see
 
 - Watchlist items are matched against Plex library items
 - RSS and GraphQL syncs both try to match immediately
+- Background tracking may update disabled users too when `Track All Users` is enabled
 - Plex library scans exist to catch items that appear later
 - Availability is represented by whether a watchlist item has a `matchedRatingKey`
 

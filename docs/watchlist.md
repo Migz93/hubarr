@@ -21,6 +21,13 @@ The GraphQL sync is the source of truth for what is on a watchlist right now.
 The RSS feeds catch new items quickly between full syncs. The activity feed
 cache fills in when items were added, which GraphQL alone cannot answer.
 
+Hubarr distinguishes between:
+
+- `publishing users` — enabled users that participate in collections, dashboard
+  visibility, default watchlist views, and isolation
+- `tracked users` — publishing users plus disabled users when `Track All Users`
+  is enabled
+
 ---
 
 ## GraphQL Full Sync
@@ -33,7 +40,7 @@ optionally on startup if `fullSyncOnStartup` is enabled.
 
 ### What it does
 
-For each enabled user (self and friends), Hubarr queries the Plex Community
+For each tracked user (self and friends), Hubarr queries the Plex Community
 GraphQL API for their full watchlist. The query paginates in batches of 100
 until all items are retrieved:
 
@@ -79,9 +86,8 @@ watchlist for that user.
 
 ### Ad-hoc sync (button press)
 
-When a sync is triggered manually — either the dashboard "Run Sync" button
-(all users) or the per-user sync button — the flow is extended beyond a plain
-GraphQL fetch:
+When a sync is triggered manually, the flow is extended beyond a plain GraphQL
+fetch:
 
 1. **Activity cache refresh** — the activity feed is fetched incrementally
    before the GraphQL pass, so date resolution uses the freshest available data.
@@ -93,8 +99,10 @@ GraphQL fetch:
 4. **Collection publish** — runs immediately after the sync so Plex collections
    are updated without waiting for the next scheduled publish job.
 
-The per-user sync button fetches the activity cache for all users (the feed is
-global) but scopes the RSS date map to that specific user's author entries.
+- The dashboard "Run Sync" button processes all tracked users.
+- The per-user sync button remains enabled-user only, but still fetches the
+  activity cache for all users (the feed is global) and scopes the RSS date map
+  to that specific user's author entries.
 
 ---
 
@@ -114,7 +122,7 @@ Hubarr maintains two RSS feeds:
 | Feed | Covers | `feedType` |
 |---|---|---|
 | Self watchlist | Admin's own additions only | `watchlist` |
-| Friends watchlist | All enabled friends combined | `friendsWatchlist` |
+| Friends watchlist | All tracked friends combined | `friendsWatchlist` |
 
 On startup both caches are primed with the current feed state. On each poll,
 the feed is diffed against the in-memory cache — only new items (those not seen
@@ -135,9 +143,8 @@ Each RSS item includes:
 - `author` — the Plex UUID of the user who added the item
 
 The `author` field is used to attribute friends-feed items to the correct
-enabled user. Items whose `author` does not match any enabled user are skipped
-by the RSS path — if that user is disabled in Hubarr, they will also not appear
-in the GraphQL sync, so their items are intentionally ignored across both paths.
+tracked user. Items whose `author` does not match any tracked user are skipped
+by the RSS path and left for the next full GraphQL sync.
 
 ### Limitation
 
@@ -156,9 +163,9 @@ processed — one does not silently shadow the other.
 ### Collection publish on new items
 
 When the background RSS poll detects new items and processes them, a collection
-publish is triggered immediately afterwards. Plex collections are updated as
-soon as the RSS item is ingested rather than waiting for the next scheduled
-publish job.
+publish is triggered immediately afterwards. Only enabled users publish
+collections, so disabled tracked users may refresh cached watchlist state
+without becoming visible in Plex or the main Hubarr watchlist views.
 
 ---
 

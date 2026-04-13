@@ -260,6 +260,17 @@ export class HubarrServices {
     };
   }
 
+  private getUserScopes() {
+    const settings = this.db.getAppSettings();
+    const users = this.db.listUsers();
+    return {
+      settings,
+      users,
+      trackedUsers: users.filter((user) => user.enabled || settings.trackAllUsers),
+      publishingUsers: users.filter((user) => user.enabled)
+    };
+  }
+
   private buildWatchlistIdentityMap(items: WatchlistItem[]) {
     const byItemId = new Map<string, WatchlistItem>();
     const byGuid = new Map<string, WatchlistItem>();
@@ -340,10 +351,10 @@ export class HubarrServices {
     since?: Date;
   }) {
     const plex = this.getPlexIntegration();
-    const enabledUsers = this.db.listUsers().filter((friend) => friend.enabled);
+    const { trackedUsers } = this.getUserScopes();
     const libraries = new Map<string, { libraryId: string; mediaType: "movie" | "show"; userIds: number[] }>();
 
-    for (const friend of enabledUsers) {
+    for (const friend of trackedUsers) {
       const effectiveLibraries = this.getEffectiveLibraryIds(friend);
 
       if (effectiveLibraries.movieLibraryId) {
@@ -394,7 +405,7 @@ export class HubarrServices {
       }
 
       for (const friendId of library.userIds) {
-        const friend = enabledUsers.find((entry) => entry.id === friendId);
+        const friend = trackedUsers.find((entry) => entry.id === friendId);
         if (!friend) {
           continue;
         }
@@ -454,9 +465,6 @@ export class HubarrServices {
   }
 
   async syncUser(friend: UserRecord, runId: number, rssDateMap?: Map<string, string>) {
-    if (!friend.enabled) {
-      throw new Error("Friend must be enabled before syncing.");
-    }
     const { movieLibraryId, showLibraryId } = this.getEffectiveLibraryIds(friend);
     if (!movieLibraryId || !showLibraryId) {
       throw new Error("Friend must have both target libraries selected.");
@@ -466,7 +474,8 @@ export class HubarrServices {
     this.logger.info("Starting watchlist sync", {
       userId: friend.id,
       displayName: friend.displayName,
-      isSelf: friend.isSelf
+      isSelf: friend.isSelf,
+      enabled: friend.enabled
     });
 
     const plex = this.getPlexIntegration();
@@ -790,10 +799,15 @@ export class HubarrServices {
   async runFullSync() {
     const syncStart = Date.now();
     const runId = this.db.createSyncRun("full", "Full sync started.");
-    const friends = this.db.listUsers().filter((friend) => friend.enabled);
+    const { trackedUsers, publishingUsers } = this.getUserScopes();
+    const friends = trackedUsers;
     const failures: string[] = [];
 
-    this.logger.info("Full sync started", { userCount: friends.length });
+    this.logger.info("Full sync started", {
+      userCount: friends.length,
+      trackedUsers: friends.length,
+      publishingUsers: publishingUsers.length
+    });
 
     // Refresh self user account info (including avatar) on every full sync
     await this.upsertSelfUser();
@@ -874,6 +888,13 @@ export class HubarrServices {
     if (!friend) {
       throw new Error("Friend not found.");
     }
+    if (!friend.enabled) {
+      this.logger.warn("Manual sync rejected for disabled user", {
+        userId: friend.id,
+        displayName: friend.displayName
+      });
+      throw new Error("Disabled users can only be tracked by background sync.");
+    }
 
     const label = friend.isSelf ? "self" : friend.displayName;
     const runId = this.db.createSyncRun("user", `Manual sync for ${label}.`);
@@ -929,7 +950,8 @@ export class HubarrServices {
   async runPublishPass() {
     const syncStart = Date.now();
     const runId = this.db.createSyncRun("publish", "Collection sync started.");
-    const friends = this.db.listUsers().filter((friend) => friend.enabled);
+    const { publishingUsers } = this.getUserScopes();
+    const friends = publishingUsers;
     const failures: string[] = [];
     const plex = this.getPlexIntegration();
 
@@ -1163,9 +1185,14 @@ export class HubarrServices {
    */
   async pollRss() {
     const runId = this.db.createSyncRun("rss", "RSS sync started.");
+    const { settings, trackedUsers, publishingUsers } = this.getUserScopes();
 
     try {
       const plex = this.getPlexIntegration();
+      this.logger.info("RSS sync started", {
+        trackedUsers: trackedUsers.length,
+        publishingUsers: publishingUsers.length
+      });
 
       // Retry init for any feed not yet primed
       if (!this.selfRssPrimed || !this.usersRssPrimed) {
@@ -1201,7 +1228,7 @@ export class HubarrServices {
           const newItems = this.selfRssCache.diff(result.items);
           if (newItems.length > 0) {
             this.logger.info("Self RSS feed detected new items", { count: newItems.length });
-            selfProcessed = await this.processSelfRssNewItems(newItems, runId, plex);
+            selfProcessed = await this.processSelfRssNewItems(newItems, runId, plex, settings);
           }
         }
       }
@@ -1221,7 +1248,12 @@ export class HubarrServices {
           const newItems = this.usersRssCache.diff(result.items);
           if (newItems.length > 0) {
             this.logger.info("Friends RSS feed detected new items", { count: newItems.length });
-            friendsProcessed = await this.processRssNewItems(newItems, runId, plex);
+            friendsProcessed = await this.processRssNewItems(
+              newItems,
+              runId,
+              plex,
+              trackedUsers.filter((user) => !user.isSelf)
+            );
           }
         }
       }
@@ -1270,7 +1302,8 @@ export class HubarrServices {
   private async processSelfRssNewItems(
     newItems: Array<RssFeedItem & { stableKey: string }>,
     runId: number,
-    plex: PlexIntegration
+    plex: PlexIntegration,
+    settings: AppSettings
   ): Promise<number> {
     const selfUser = this.db.listUsers().find((f) => f.isSelf);
 
@@ -1279,8 +1312,8 @@ export class HubarrServices {
       return 0;
     }
 
-    if (!selfUser.enabled) {
-      this.logger.debug("Self user is not enabled, skipping self RSS items");
+    if (!selfUser.enabled && !settings.trackAllUsers) {
+      this.logger.debug("Self user is not currently tracked, skipping self RSS items");
       return 0;
     }
 
@@ -1401,21 +1434,21 @@ export class HubarrServices {
   private async processRssNewItems(
     newItems: Array<RssFeedItem & { stableKey: string }>,
     runId: number,
-    plex: PlexIntegration
+    plex: PlexIntegration,
+    trackedUsers: UserRecord[]
   ): Promise<number> {
-    const enabledUsers = this.db.listUsers().filter((f) => f.enabled && !f.isSelf);
     let processedCount = 0;
 
     for (const item of newItems) {
       const friend = item.author
-        ? enabledUsers.find((f) => f.plexUserId === item.author)
+        ? trackedUsers.find((f) => f.plexUserId === item.author)
         : null;
 
       if (!friend) {
-        this.logger.warn("RSS item author not matched to any enabled friend — will be caught by full sync", {
+        this.logger.warn("RSS item author not matched to any tracked friend — will be caught by full sync", {
           title: item.title,
           author: item.author || "(none)",
-          knownFriendIds: enabledUsers.map((f) => f.plexUserId)
+          knownFriendIds: trackedUsers.map((f) => f.plexUserId)
         });
         continue;
       }
@@ -1518,6 +1551,7 @@ export class HubarrServices {
 
       this.logger.info("RSS item cached", {
         userId: friend.id,
+        enabled: friend.enabled,
         title: item.title,
         type: item.type,
         matchedRatingKey: matchedRatingKey ?? "(not in library)"
@@ -1565,7 +1599,17 @@ export class HubarrServices {
   }
 
   updateSettings(patch: Partial<AppSettings>) {
-    return this.db.updateAppSettings(patch);
+    const current = this.db.getAppSettings();
+    const next = this.db.updateAppSettings(patch);
+
+    if (current.trackAllUsers && !next.trackAllUsers) {
+      const removed = this.db.deleteWatchlistItemsForUsers(this.db.listDisabledUserIds());
+      this.logger.info("Disabled-user watchlist cache deleted after Track All Users was disabled", {
+        removed
+      });
+    }
+
+    return next;
   }
 
   async resetCollections() {
