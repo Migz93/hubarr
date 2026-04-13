@@ -1185,7 +1185,7 @@ export class HubarrServices {
    */
   async pollRss() {
     const runId = this.db.createSyncRun("rss", "RSS sync started.");
-    const { trackedUsers, publishingUsers } = this.getUserScopes();
+    const { settings, trackedUsers, publishingUsers } = this.getUserScopes();
 
     try {
       const plex = this.getPlexIntegration();
@@ -1228,7 +1228,7 @@ export class HubarrServices {
           const newItems = this.selfRssCache.diff(result.items);
           if (newItems.length > 0) {
             this.logger.info("Self RSS feed detected new items", { count: newItems.length });
-            selfProcessed = await this.processSelfRssNewItems(newItems, runId, plex);
+            selfProcessed = await this.processSelfRssNewItems(newItems, runId, plex, settings);
           }
         }
       }
@@ -1302,7 +1302,8 @@ export class HubarrServices {
   private async processSelfRssNewItems(
     newItems: Array<RssFeedItem & { stableKey: string }>,
     runId: number,
-    plex: PlexIntegration
+    plex: PlexIntegration,
+    settings: AppSettings
   ): Promise<number> {
     const selfUser = this.db.listUsers().find((f) => f.isSelf);
 
@@ -1311,7 +1312,6 @@ export class HubarrServices {
       return 0;
     }
 
-    const settings = this.db.getAppSettings();
     if (!selfUser.enabled && !settings.trackAllUsers) {
       this.logger.debug("Self user is not currently tracked, skipping self RSS items");
       return 0;

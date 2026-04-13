@@ -85,6 +85,21 @@ Read-only. Safe to run against a live instance.
 
 ---
 
+### Onboarding flow
+
+Not covered by automated tests (requires a fresh unconfigured instance). The flow has four steps:
+
+| Step | What it covers |
+|---|---|
+| 1 — Auth | Plex OAuth sign-in |
+| 2 — Configure Plex | Server URL, port, SSL, and library selection |
+| 3 — General | Track All Users and Startup Sync toggles |
+| 4 — Collections | Collection name pattern and sort order |
+
+Step order is enforced server-side by `getCurrentOnboardingStep` in `src/server/db/settings.ts`.
+
+---
+
 ### `tests/playwright/settings.spec.ts` — Settings tabs
 
 Read-only. Safe to run against a live instance.
