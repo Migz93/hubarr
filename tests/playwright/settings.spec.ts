@@ -45,6 +45,17 @@ test.describe("Settings tabs", () => {
     await expect(page.getByText("Job Name")).toBeVisible();
   });
 
+  test("Jobs tab lists the Maintenance Tasks job", async ({ page }) => {
+    await page.goto("/settings?tab=jobs");
+    await expect(page.getByText("Loading settings...")).not.toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Loading jobs...")).not.toBeVisible({ timeout: 10_000 });
+
+    const row = page.locator("tr", { hasText: "Maintenance Tasks" });
+    await expect(row).toBeVisible();
+    await expect(row).toContainText("Daily at 5:30 AM");
+    await expect(row.getByRole("button", { name: "Run Now", exact: true })).toBeVisible();
+  });
+
   test("About tab shows version and support info", async ({ page }) => {
     await page.goto("/settings?tab=about");
     await expect(page.getByText("Loading settings...")).not.toBeVisible({ timeout: 10_000 });

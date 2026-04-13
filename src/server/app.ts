@@ -849,6 +849,15 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         lastRunStatus: scheduler?.getLastRunStatus("users-discover") ?? null
       },
       {
+        id: "maintenance-tasks",
+        name: "Maintenance Tasks",
+        intervalDescription: "Daily at 5:30 AM",
+        isRunning: scheduler?.isRunning("maintenance-tasks") ?? false,
+        nextRunAt: scheduler?.getNextRunAt("maintenance-tasks") ?? null,
+        lastRunAt: scheduler?.getLastRunAt("maintenance-tasks") ?? null,
+        lastRunStatus: scheduler?.getLastRunStatus("maintenance-tasks") ?? null
+      },
+      {
         id: "rss-sync",
         name: "Watchlist RSS Sync",
         intervalDescription: settings.rssEnabled
@@ -916,6 +925,13 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         res.json({ triggered: true });
       } else if (jobId === "users-discover") {
         const triggered = scheduler?.runNow("users-discover") ?? false;
+        if (!triggered) {
+          res.status(404).json({ error: "Unknown job." });
+          return;
+        }
+        res.json({ triggered: true });
+      } else if (jobId === "maintenance-tasks") {
+        const triggered = scheduler?.runNow("maintenance-tasks") ?? false;
         if (!triggered) {
           res.status(404).json({ error: "Unknown job." });
           return;

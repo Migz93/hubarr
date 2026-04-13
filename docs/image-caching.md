@@ -146,6 +146,16 @@ Scans the cache directory and deletes any `.jpg` file whose web path is not
 present in `image_cache.local_web_path`. Safe to call at any time — only
 removes files with no matching metadata row.
 
+### `runMaintenanceTasks()`
+
+Performs image-cache housekeeping used by the daily `Maintenance Tasks` job:
+
+1. delete orphaned watchlist poster rows from `image_cache`
+2. prune any local files no longer referenced by metadata
+
+This cleanup is intentionally scoped to watchlist-owned poster cache entries.
+Avatar cache rows are left alone.
+
 ---
 
 ## Stale-while-refresh detail

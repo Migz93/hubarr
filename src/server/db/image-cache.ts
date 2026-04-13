@@ -156,6 +156,20 @@ export function listAllImageCacheWebPaths(db: Database.Database): string[] {
   return rows.map((r) => r.local_web_path);
 }
 
+export function deleteOrphanedPosterCacheEntries(db: Database.Database): number {
+  const result = db.prepare(`
+    DELETE FROM image_cache
+    WHERE kind = 'poster'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM watchlist_cache w
+        WHERE w.plex_item_id = entity_id
+      )
+  `).run();
+
+  return result.changes;
+}
+
 export function clearImageCacheTable(db: Database.Database): void {
   db.prepare("DELETE FROM image_cache").run();
 }

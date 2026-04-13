@@ -77,6 +77,15 @@ scheduler.registerDailyJob({
   }
 });
 
+scheduler.registerDailyJob({
+  id: "maintenance-tasks",
+  hour: 5,
+  minute: 30,
+  task: async () => {
+    services.runMaintenanceTasks();
+  }
+});
+
 // Activity cache — run on startup (full fetch on first run, incremental thereafter)
 services.syncActivityCache().catch((error) => {
   logger.warn("Activity cache sync failed at startup", {

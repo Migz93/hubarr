@@ -282,6 +282,10 @@ export class HubarrDatabase {
     return imageCacheRepo.listAllImageCacheWebPaths(this.db);
   }
 
+  deleteOrphanedPosterCacheEntries(): number {
+    return imageCacheRepo.deleteOrphanedPosterCacheEntries(this.db);
+  }
+
   clearImageCacheTable(): void {
     imageCacheRepo.clearImageCacheTable(this.db);
   }
