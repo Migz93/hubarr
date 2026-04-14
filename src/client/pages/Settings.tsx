@@ -642,7 +642,8 @@ function JobsTab() {
       await load(true);
     },
     {
-      getIntervalMs
+      getIntervalMs,
+      pauseWhenHidden: false
     }
   );
 

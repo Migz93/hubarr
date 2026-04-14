@@ -153,3 +153,16 @@ without a browser reload. They are not read-only.
 | Dashboard recent syncs updates after a background collection sync starts and finishes | Opens `/dashboard`, triggers the collection-sync job through the API, and verifies the `Recent Syncs` panel first shows a running Publish entry and then updates to the finished summary without a reload |
 | History shows a new collection sync row move from running to its terminal status without reload | Opens `/history`, triggers the collection-sync job through the API, and verifies the newest row appears as running and then changes to its final status/summary automatically |
 | Jobs shows a scheduler-managed job running and then returning to Run Now after polling catches completion | Opens `Settings > Jobs`, clicks `Run Now` for `Collection Sync`, verifies the row enters a running state, and then returns to idle with an updated terminal status once the job finishes |
+
+---
+
+### `tests/playwright/history-background-refresh.spec.ts` — History background polling
+
+Read-only. Safe to run against a live instance. These tests stub the History API
+responses in-browser so they can verify polling behavior without triggering real
+jobs on the server.
+
+| Test | What it checks |
+|---|---|
+| History list keeps polling while the tab is hidden when a run is active | Opens `/history` with a stubbed running sync, switches to another tab, and verifies the hidden History page still polls `/api/history` |
+| Expanded history details keep polling while the tab is hidden when a run is active | Expands a stubbed running History row, switches to another tab, and verifies the hidden page keeps polling `/api/history/:runId` for updated details |
