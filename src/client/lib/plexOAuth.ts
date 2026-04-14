@@ -105,9 +105,7 @@ class PlexOAuth {
       forwardUrl: `${window.location.origin}/login/plex/done`
     };
 
-    if (this.popup) {
-      this.popup.location.href = `https://app.plex.tv/auth/#!?${encodeParams(params)}`;
-    }
+    this.popup.location.href = `https://app.plex.tv/auth/#!?${encodeParams(params)}`;
 
     return this.pollForToken();
   }
@@ -129,6 +127,9 @@ class PlexOAuth {
           const response = await fetch(`https://plex.tv/api/v2/pins/${this.pin.id}`, {
             headers: this.headers
           });
+          if (!response.ok) {
+            throw new Error(`Failed to poll Plex PIN: ${response.status}`);
+          }
           const data = (await response.json()) as { authToken?: string | null };
 
           if (data.authToken) {
@@ -136,7 +137,8 @@ class PlexOAuth {
             this.popup = undefined;
             resolve(data.authToken);
           } else if (this.popup?.closed) {
-            if (gracePollsLeft-- > 0) {
+            if (gracePollsLeft > 0) {
+              gracePollsLeft -= 1;
               setTimeout(poll, 1000);
             } else {
               reject(new Error("Plex login popup was closed before authorization completed."));

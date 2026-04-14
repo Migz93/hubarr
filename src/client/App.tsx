@@ -20,12 +20,6 @@ interface AppState {
 
 export default function App() {
   const location = useLocation();
-  const navigate = useNavigate();
-  const [state, setState] = useState<AppState>({
-    bootstrap: null,
-    user: null,
-    loading: true
-  });
 
   // Keep the Plex popup on a lightweight same-origin page so mobile browsers
   // treat the auth window as a user-opened tab before it navigates to plex.tv.
@@ -36,6 +30,17 @@ export default function App() {
   if (location.pathname === "/login/plex/done") {
     return <PlexPopupDone />;
   }
+
+  return <MainApp />;
+}
+
+function MainApp() {
+  const navigate = useNavigate();
+  const [state, setState] = useState<AppState>({
+    bootstrap: null,
+    user: null,
+    loading: true
+  });
 
   async function loadState() {
     try {
@@ -180,7 +185,7 @@ function PlexPopupDone() {
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <RefreshCw size={28} className="animate-spin text-primary" aria-label="Loading" />
+      <p className="text-on-surface-variant text-sm">Authentication complete. You can close this tab.</p>
     </div>
   );
 }
