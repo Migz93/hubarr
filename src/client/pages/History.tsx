@@ -257,12 +257,13 @@ interface SyncUserErrorDetails {
 }
 
 function titleCaseStatus(status: SyncRun["status"]): string {
-  return status.charAt(0).toUpperCase() + status.slice(1);
+  return capitalizeSentence(status);
 }
 
-function formatRunDuration(run: SyncRun): string | null {
+function formatRunDuration(run: SyncRun, now = Date.now()): string | null {
   const endTime = run.completedAt ? new Date(run.completedAt).getTime() : Date.now();
-  const durationMs = Math.max(0, endTime - new Date(run.startedAt).getTime());
+  const effectiveEndTime = run.completedAt ? endTime : now;
+  const durationMs = Math.max(0, effectiveEndTime - new Date(run.startedAt).getTime());
   const durationSeconds = Math.floor(durationMs / 1000);
 
   if (run.status === "running") {
@@ -361,14 +362,30 @@ function groupSuccessfulSteps(run: SyncRun, items: SyncRunItem[]): HistoryStep[]
       const name = details?.displayName ?? "Unknown user";
       const mediaType = formatMediaTypeLabel(details?.mediaType);
       const key = `${name}-${mediaType}`;
+      const collectionName = details?.collectionName;
+      const collectionLabel = collectionName
+        ? `Published ${mediaType} collection "${collectionName}" for ${name}`
+        : `Published ${mediaType} collection for ${name}`;
       grouped.set(key, {
         id: `${item.id}-${key}`,
         status: "success",
-        label: `Published ${mediaType} collection for ${name}`,
+        label: collectionLabel,
         meta: typeof details?.matchedItems === "number" ? `${details.matchedItems} matched items` : undefined
       });
     }
     steps.push(...grouped.values());
+
+    const genericSuccesses = items.filter(
+      (item) => item.status === "success" && item.action !== "collection.publish"
+    );
+    for (const item of genericSuccesses) {
+      steps.push({
+        id: `${item.id}-generic-success`,
+        status: "success",
+        label: formatStepLabel(item),
+        meta: formatStepMeta(item)
+      });
+    }
   } else if (run.kind === "rss") {
     const feedChecks = items.filter(
       (item) =>
@@ -399,6 +416,23 @@ function groupSuccessfulSteps(run: SyncRun, items: SyncRunItem[]): HistoryStep[]
         meta: details?.matchedRatingKey ? "Matched in Plex library" : "Not matched in Plex library"
       });
     }
+
+    const genericSuccesses = items.filter(
+      (item) =>
+        item.status === "success" &&
+        item.action !== "rss.feed.check.self" &&
+        item.action !== "rss.feed.check.friends" &&
+        item.action !== "watchlist.rss" &&
+        item.action !== "watchlist.rss.self"
+    );
+    for (const item of genericSuccesses) {
+      steps.push({
+        id: `${item.id}-generic-success`,
+        status: "success",
+        label: formatStepLabel(item),
+        meta: formatStepMeta(item)
+      });
+    }
   } else {
     const genericSuccesses = items.filter(
       (item) =>
@@ -417,29 +451,33 @@ function groupSuccessfulSteps(run: SyncRun, items: SyncRunItem[]): HistoryStep[]
     }
   }
 
-  const extraGenericSuccesses = items.filter((item) => {
-    if (item.status !== "success") return false;
-    if (run.kind === "publish") return item.action !== "collection.publish";
-    if (run.kind === "rss") {
-      return item.action !== "rss.feed.check.self" &&
-        item.action !== "rss.feed.check.friends" &&
-        item.action !== "watchlist.rss" &&
-        item.action !== "watchlist.rss.self";
-    }
-    return item.action === "collection.publish.followup" || item.action === "isolation.filters";
-  });
+  return steps;
+}
 
-  for (const item of extraGenericSuccesses) {
-    if (steps.some((step) => step.id.startsWith(`${item.id}-`))) continue;
-    steps.push({
-      id: `${item.id}-extra-success`,
-      status: "success",
-      label: formatStepLabel(item),
-      meta: formatStepMeta(item)
-    });
+function normalizeErrorText(text: string): string {
+  return text.trim().replace(/[.\s]+$/g, "").toLowerCase();
+}
+
+function shouldSuppressItemError(run: SyncRun, item: SyncRunItem, meta?: string): boolean {
+  if (!run.error || !meta) return false;
+
+  const normalizedRunSegments = run.error
+    .split("|")
+    .map((segment) => normalizeErrorText(segment))
+    .filter(Boolean);
+
+  const normalizedMeta = normalizeErrorText(meta);
+  if (normalizedRunSegments.includes(normalizedMeta)) return true;
+
+  if (item.action === "collection.publish" || item.action === "sync.user") {
+    const details = item.details as CollectionPublishDetails | SyncUserErrorDetails | null;
+    const displayName = details?.displayName?.trim();
+    if (!displayName) return false;
+    const structuredMessage = normalizeErrorText(`${displayName}: ${meta}`);
+    return normalizedRunSegments.includes(structuredMessage);
   }
 
-  return steps;
+  return false;
 }
 
 function collectErrorSteps(run: SyncRun, items: SyncRunItem[]): HistoryStep[] {
@@ -463,7 +501,7 @@ function collectErrorSteps(run: SyncRun, items: SyncRunItem[]): HistoryStep[] {
 
   for (const item of errorItems) {
     const meta = formatStepMeta(item);
-    if (item.action === "collection.publish" && run.error && meta && run.error === meta) {
+    if (shouldSuppressItemError(run, item, meta)) {
       continue;
     }
     steps.push({
@@ -482,6 +520,7 @@ function RunRow({ run }: { run: SyncRun }) {
   const [detail, setDetail] = useState<SyncRunDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   const loadDetail = useCallback(async (background = false) => {
     setDetailLoading((current) => current || !background);
@@ -523,6 +562,19 @@ function RunRow({ run }: { run: SyncRun }) {
 
   const liveRun = detail ?? run;
 
+  useEffect(() => {
+    if (liveRun.status !== "running") return;
+
+    setNow(Date.now());
+    const timer = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [liveRun.status, liveRun.startedAt]);
+
   const statusConfig = {
     success: {
       icon: <CheckCircle size={18} className="text-success" />,
@@ -543,7 +595,7 @@ function RunRow({ run }: { run: SyncRun }) {
   };
 
   const config = statusConfig[liveRun.status];
-  const durationText = formatRunDuration(liveRun);
+  const durationText = formatRunDuration(liveRun, now);
 
   return (
     <div className="bg-surface-container rounded-xl border border-outline-variant/20 overflow-hidden">
