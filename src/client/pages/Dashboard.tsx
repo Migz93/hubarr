@@ -41,8 +41,7 @@ export default function Dashboard() {
       await load(true);
     },
     {
-      getIntervalMs,
-      pauseWhenHidden: false
+      getIntervalMs
     }
   );
 

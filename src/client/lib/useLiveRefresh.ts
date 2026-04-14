@@ -3,19 +3,16 @@ import { useCallback, useEffect, useRef } from "react";
 interface LiveRefreshOptions {
   enabled?: boolean;
   getIntervalMs: () => number | null;
-  pauseWhenHidden?: boolean;
 }
 
 export function useLiveRefresh(
   load: () => Promise<void>,
-  { enabled = true, getIntervalMs, pauseWhenHidden = true }: LiveRefreshOptions
+  { enabled = true, getIntervalMs }: LiveRefreshOptions
 ) {
   const mountedRef = useRef(true);
   const loadRef = useRef(load);
   const getIntervalMsRef = useRef(getIntervalMs);
   const enabledRef = useRef(enabled);
-  const pauseWhenHiddenRef = useRef(pauseWhenHidden);
-  const visibleRef = useRef(typeof document === "undefined" ? true : document.visibilityState === "visible");
   const inFlightRef = useRef(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runRefreshRef = useRef<() => Promise<void>>(async () => {});
@@ -30,10 +27,6 @@ export function useLiveRefresh(
   const scheduleNextRefresh = useCallback(() => {
     clearScheduledRefresh();
     if (!mountedRef.current || !enabledRef.current) {
-      return;
-    }
-
-    if (pauseWhenHiddenRef.current && !visibleRef.current) {
       return;
     }
 
@@ -71,9 +64,8 @@ export function useLiveRefresh(
   useEffect(() => {
     getIntervalMsRef.current = getIntervalMs;
     enabledRef.current = enabled;
-    pauseWhenHiddenRef.current = pauseWhenHidden;
     scheduleNextRefresh();
-  }, [enabled, getIntervalMs, pauseWhenHidden, scheduleNextRefresh]);
+  }, [enabled, getIntervalMs, scheduleNextRefresh]);
 
   useEffect(() => {
     runRefreshRef.current = runRefresh;
@@ -85,11 +77,8 @@ export function useLiveRefresh(
     mountedRef.current = true;
 
     function handleVisibilityChange() {
-      visibleRef.current = document.visibilityState === "visible";
-      if (visibleRef.current) {
+      if (document.visibilityState === "visible") {
         void runRefreshRef.current();
-      } else if (pauseWhenHiddenRef.current) {
-        clearScheduledRefresh();
       }
     }
 

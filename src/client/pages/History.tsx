@@ -87,8 +87,7 @@ export default function History() {
       await load(true);
     },
     {
-      getIntervalMs,
-      pauseWhenHidden: false
+      getIntervalMs
     }
   );
 
@@ -205,12 +204,18 @@ function RunRow({ run }: { run: SyncRun }) {
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState<SyncRunDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
 
   const loadDetail = useCallback(async (background = false) => {
     setDetailLoading((current) => current || !background);
     try {
       const result = await apiGet<SyncRunDetail>(`/api/history/${run.id}`);
       setDetail(result);
+      setDetailError(null);
+    } catch (caught) {
+      if (!background) {
+        setDetailError(caught instanceof Error ? caught.message : String(caught));
+      }
     } finally {
       if (!background) {
         setDetailLoading(false);
@@ -235,8 +240,7 @@ function RunRow({ run }: { run: SyncRun }) {
     },
     {
       enabled: expanded,
-      getIntervalMs: getDetailIntervalMs,
-      pauseWhenHidden: false
+      getIntervalMs: getDetailIntervalMs
     }
   );
 
@@ -327,6 +331,16 @@ function RunRow({ run }: { run: SyncRun }) {
           <div className="px-4 pb-3">
             {detailLoading ? (
               <div className="text-xs text-on-surface-variant py-2">Loading details...</div>
+            ) : detailError ? (
+              <div className="py-2">
+                <div className="text-xs text-error">{detailError}</div>
+                <button
+                  onClick={() => void loadDetail()}
+                  className="mt-2 text-xs font-medium text-primary hover:text-primary-dim transition-colors"
+                >
+                  Retry loading details
+                </button>
+              </div>
             ) : detail ? (
               <RunItems items={detail.items} />
             ) : null}

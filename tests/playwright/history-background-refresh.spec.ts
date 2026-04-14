@@ -69,9 +69,7 @@ test.describe("History background refresh", () => {
     await expect(otherPage.getByRole("heading", { name: "Dashboard" })).toBeVisible();
     await otherPage.bringToFront();
 
-    await historyPage.waitForTimeout(6_000);
-
-    expect(historyRequestCount).toBeGreaterThan(initialRequestCount);
+    await expect.poll(() => historyRequestCount, { timeout: 10_000 }).toBeGreaterThan(initialRequestCount);
 
     await context.close();
   });
@@ -153,9 +151,7 @@ test.describe("History background refresh", () => {
     await expect(otherPage.getByRole("heading", { name: "Dashboard" })).toBeVisible();
     await otherPage.bringToFront();
 
-    await historyPage.waitForTimeout(6_000);
-
-    expect(detailRequestCount).toBeGreaterThan(initialDetailRequestCount);
+    await expect.poll(() => detailRequestCount, { timeout: 10_000 }).toBeGreaterThan(initialDetailRequestCount);
 
     await context.close();
   });

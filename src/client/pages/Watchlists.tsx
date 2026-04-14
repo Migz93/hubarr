@@ -86,8 +86,7 @@ export default function Watchlists() {
       await load(true);
     },
     {
-      getIntervalMs,
-      pauseWhenHidden: false
+      getIntervalMs
     }
   );
 

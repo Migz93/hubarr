@@ -68,8 +68,7 @@ export default function Users() {
       await load(true);
     },
     {
-      getIntervalMs,
-      pauseWhenHidden: false
+      getIntervalMs
     }
   );
 
