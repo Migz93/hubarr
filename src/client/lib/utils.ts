@@ -40,7 +40,7 @@ export function formatRelativeTime(isoString: string): string {
   const diffHours = Math.floor(diffMins / 60);
   const diffDays = Math.floor(diffHours / 24);
 
-  if (diffSecs < 60) return "just now";
+  if (diffSecs < 60) return "Just now";
 
   if (diffMs > 0) {
     if (diffMins < 60) return `in ${diffMins}m`;
