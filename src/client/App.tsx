@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { RefreshCw } from "lucide-react";
 import { apiGet, apiPost } from "./lib/api";
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
@@ -18,12 +19,23 @@ interface AppState {
 }
 
 export default function App() {
+  const location = useLocation();
   const navigate = useNavigate();
   const [state, setState] = useState<AppState>({
     bootstrap: null,
     user: null,
     loading: true
   });
+
+  // Keep the Plex popup on a lightweight same-origin page so mobile browsers
+  // treat the auth window as a user-opened tab before it navigates to plex.tv.
+  if (location.pathname === "/login/plex/loading") {
+    return <PlexPopupLoading />;
+  }
+
+  if (location.pathname === "/login/plex/done") {
+    return <PlexPopupDone />;
+  }
 
   async function loadState() {
     try {
@@ -142,5 +154,33 @@ export default function App() {
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>
+  );
+}
+
+function PlexPopupLoading() {
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <RefreshCw size={28} className="animate-spin text-primary" aria-label="Loading" />
+    </div>
+  );
+}
+
+function PlexPopupDone() {
+  useEffect(() => {
+    window.close();
+
+    const retryId = window.setTimeout(() => {
+      window.close();
+    }, 250);
+
+    return () => {
+      window.clearTimeout(retryId);
+    };
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <RefreshCw size={28} className="animate-spin text-primary" aria-label="Loading" />
+    </div>
   );
 }

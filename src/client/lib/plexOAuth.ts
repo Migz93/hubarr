@@ -23,6 +23,12 @@ function encodeParams(data: Record<string, string>): string {
     .join("&");
 }
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 class PlexOAuth {
   private headers?: PlexHeaders;
   private pin?: PlexPin;
@@ -57,19 +63,30 @@ class PlexOAuth {
   public preparePopup(): void {
     const w = 600;
     const h = 700;
-    const left = window.screenLeft + window.innerWidth / 2 - w / 2;
-    const top = window.screenTop + window.innerHeight / 2 - h / 2;
+    const leftSource = window.screenLeft ?? window.screenX;
+    const topSource = window.screenTop ?? window.screenY;
+    const left = leftSource + window.innerWidth / 2 - w / 2;
+    const top = topSource + window.innerHeight / 2 - h / 2;
     const newWindow = window.open(
-      "about:blank",
+      "/login/plex/loading",
       "Plex Auth",
       `scrollbars=yes,width=${w},height=${h},top=${top},left=${left}`
     );
     if (newWindow) {
+      newWindow.focus();
       this.popup = newWindow;
     }
   }
 
   public async login(): Promise<string> {
+    if (!this.popup || this.popup.closed) {
+      throw new Error("Plex login popup could not be opened. Check your browser popup settings and try again.");
+    }
+
+    // Give mobile browsers a moment to commit the user-opened same-origin tab
+    // before redirecting it to the cross-origin Plex auth page.
+    await wait(1500);
+
     this.initHeaders();
     await this.getPin();
 
@@ -82,10 +99,10 @@ class PlexOAuth {
       "context[device][platform]": this.headers["X-Plex-Platform"],
       "context[device][layout]": "desktop",
       code: this.pin.code,
-      // No forwardUrl — after auth the popup stays on plex.tv. The opener
-      // closes it via popup.close() once polling detects the token. This is
-      // more reliable than redirecting back and calling window.close() in the
-      // popup itself, which mobile browsers block after cross-origin navigation.
+      // Redirect back to a Hubarr-owned page so the popup can close itself
+      // after Plex auth instead of relying on the opener to close a
+      // cross-origin Plex tab, which mobile browsers often block.
+      forwardUrl: `${window.location.origin}/login/plex/done`
     };
 
     if (this.popup) {
