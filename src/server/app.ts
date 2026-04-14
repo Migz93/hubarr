@@ -393,6 +393,34 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     }
   });
 
+  /**
+   * Step 5 (final onboarding step): streams preload progress via Server-Sent
+   * Events.  The client connects once collections are saved and listens until
+   * a "complete" phase event signals that all three phases have finished.
+   *
+   * Phases emitted: discover-users → activity-cache → graphql-sync → complete
+   */
+  app.get("/api/setup/preload", requireAuth, async (_req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    try {
+      await services.runOnboardingPreload((event) => {
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      });
+    } catch (err) {
+      // Top-level guard — runOnboardingPreload handles per-phase errors
+      // internally, so this only fires on truly unexpected failures.
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error("Onboarding preload aborted with unexpected error", { message });
+      res.write(`data: ${JSON.stringify({ phase: "complete", status: "error", message })}\n\n`);
+    }
+
+    res.end();
+  });
+
   // ---------------------------------------------------------------------------
   // Dashboard
   // ---------------------------------------------------------------------------

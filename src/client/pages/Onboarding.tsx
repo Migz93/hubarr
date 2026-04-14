@@ -1,11 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
-import { Check, ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, ChevronRight, Loader2, X } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "../lib/api";
 import PlexOAuth from "../lib/plexOAuth";
 import PlexConfigForm from "../components/PlexConfigForm";
 import CollectionsConfigForm from "../components/CollectionsConfigForm";
 import { SaveBar, SectionCard, ToggleField } from "../components/FormControls";
-import type { OnboardingStep, SetupStatusResponse, SettingsResponse } from "../../shared/types";
+import type {
+  OnboardingStep,
+  PreloadPhase,
+  PreloadProgressEvent,
+  SetupStatusResponse,
+  SettingsResponse
+} from "../../shared/types";
 
 interface OnboardingProps {
   authenticated?: boolean;
@@ -60,20 +66,25 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
 
   const stepState = useMemo(() => {
     if (step === "auth") {
-      return { authDone: false, plexDone: false, generalDone: false };
+      return { authDone: false, plexDone: false, generalDone: false, collectionsDone: false, preloadDone: false };
     }
     if (step === "plex") {
-      return { authDone: true, plexDone: false, generalDone: false };
+      return { authDone: true, plexDone: false, generalDone: false, collectionsDone: false, preloadDone: false };
     }
     if (step === "general") {
-      return { authDone: true, plexDone: true, generalDone: false };
+      return { authDone: true, plexDone: true, generalDone: false, collectionsDone: false, preloadDone: false };
     }
-    return {
-      authDone: true,
-      plexDone: true,
-      generalDone: true,
-      collectionsDone: Boolean(setupStatus?.collectionsConfigured)
-    };
+    if (step === "collections") {
+      return {
+        authDone: true,
+        plexDone: true,
+        generalDone: true,
+        collectionsDone: Boolean(setupStatus?.collectionsConfigured),
+        preloadDone: false
+      };
+    }
+    // preload
+    return { authDone: true, plexDone: true, generalDone: true, collectionsDone: true, preloadDone: false };
   }, [setupStatus?.collectionsConfigured, step]);
 
   return (
@@ -86,13 +97,15 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
         </div>
 
         <div className="flex items-center justify-center gap-3 mb-6">
-          <StepDot number={1} active={step === "auth"} done={stepState.authDone} label="Sign in with Plex" />
-          <div className="w-8 h-px bg-outline-variant/40" />
+          <StepDot number={1} active={step === "auth"} done={stepState.authDone} label="Sign in" />
+          <div className="w-6 h-px bg-outline-variant/40" />
           <StepDot number={2} active={step === "plex"} done={stepState.plexDone} label="Configure Plex" />
-          <div className="w-8 h-px bg-outline-variant/40" />
+          <div className="w-6 h-px bg-outline-variant/40" />
           <StepDot number={3} active={step === "general"} done={stepState.generalDone ?? false} label="General" />
-          <div className="w-8 h-px bg-outline-variant/40" />
+          <div className="w-6 h-px bg-outline-variant/40" />
           <StepDot number={4} active={step === "collections"} done={stepState.collectionsDone ?? false} label="Collections" />
+          <div className="w-6 h-px bg-outline-variant/40" />
+          <StepDot number={5} active={step === "preload"} done={stepState.preloadDone} label="Preloading" />
         </div>
 
         {step === "auth" && (
@@ -149,14 +162,194 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
             librariesUrl="/api/setup/plex/libraries"
             saveLabel="Finish Setup"
             onSaved={async () => {
-              await onComplete();
+              setStep("preload");
             }}
           />
+        )}
+
+        {step === "preload" && (
+          <PreloadStep onComplete={onComplete} />
         )}
       </div>
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Preload step
+// ---------------------------------------------------------------------------
+
+interface PhaseState {
+  status: "idle" | "running" | "done" | "error";
+  message: string;
+  progress?: number;
+  total?: number;
+}
+
+const INITIAL_PHASES: Record<PreloadPhase, PhaseState> = {
+  "discover-users": { status: "idle", message: "" },
+  "activity-cache": { status: "idle", message: "" },
+  "graphql-sync": { status: "idle", message: "" },
+  "complete": { status: "idle", message: "" }
+};
+
+const PHASE_LABELS: Record<Exclude<PreloadPhase, "complete">, string> = {
+  "discover-users": "Fetch Plex users & avatars",
+  "activity-cache": "Sync activity feed",
+  "graphql-sync": "Sync watchlists"
+};
+
+function PreloadStep({ onComplete }: { onComplete: () => Promise<void> }) {
+  const [phases, setPhases] = useState<Record<PreloadPhase, PhaseState>>(INITIAL_PHASES);
+  const [done, setDone] = useState(false);
+  const [fatalError, setFatalError] = useState<string | null>(null);
+  // Prevent double-entering the app if the EventSource fires multiple complete events
+  const enteringRef = useRef(false);
+
+  useEffect(() => {
+    const es = new EventSource("/api/setup/preload");
+
+    es.onmessage = (e: MessageEvent<string>) => {
+      let event: PreloadProgressEvent;
+      try {
+        event = JSON.parse(e.data) as PreloadProgressEvent;
+      } catch {
+        return;
+      }
+
+      if (event.phase === "complete") {
+        es.close();
+        setDone(true);
+        // Enter the app automatically after a short pause so the user can see
+        // the completed state before navigating away.
+        if (!enteringRef.current) {
+          enteringRef.current = true;
+          window.setTimeout(() => void onComplete(), 1500);
+        }
+        return;
+      }
+
+      setPhases((prev) => ({
+        ...prev,
+        [event.phase]: {
+          status: event.status,
+          message: event.message,
+          progress: event.progress,
+          total: event.total
+        }
+      }));
+    };
+
+    es.onerror = () => {
+      es.close();
+      setFatalError("Connection to server lost. Please refresh and try again.");
+    };
+
+    return () => {
+      es.close();
+    };
+    // onComplete is stable (passed from App level), so the empty dep array is intentional
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="bg-surface-container rounded-2xl p-6 border border-outline-variant/20 max-w-xl mx-auto">
+      <h2 className="font-headline font-semibold text-lg text-on-surface mb-1">
+        Getting Hubarr Ready
+      </h2>
+      <p className="text-on-surface-variant text-sm mb-6">
+        Loading your data in the background — this only happens once.
+      </p>
+
+      <div className="space-y-3">
+        {(["discover-users", "activity-cache", "graphql-sync"] as const).map((phase) => (
+          <PreloadPhaseRow
+            key={phase}
+            label={PHASE_LABELS[phase]}
+            state={phases[phase]}
+          />
+        ))}
+      </div>
+
+      {done && (
+        <div className="mt-6 pt-5 border-t border-outline-variant/20 flex flex-col items-center gap-3">
+          <div className="flex items-center gap-2 text-success text-sm font-medium">
+            <Check size={16} />
+            Hubarr is ready — entering now…
+          </div>
+        </div>
+      )}
+
+      {fatalError && (
+        <div className="mt-4 bg-error/10 border border-error/30 rounded-lg px-4 py-3 text-error text-sm">
+          {fatalError}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PreloadPhaseRow({ label, state }: { label: string; state: PhaseState }) {
+  const isIdle = state.status === "idle";
+  const isRunning = state.status === "running";
+  const isDone = state.status === "done";
+  const isError = state.status === "error";
+
+  return (
+    <div className="flex items-start gap-3">
+      {/* Status icon */}
+      <div className="mt-0.5 w-5 h-5 flex items-center justify-center shrink-0">
+        {isIdle && (
+          <div className="w-4 h-4 rounded-full border-2 border-outline-variant/40" />
+        )}
+        {isRunning && (
+          <Loader2 size={16} className="animate-spin text-primary" />
+        )}
+        {isDone && (
+          <div className="w-4 h-4 rounded-full bg-success flex items-center justify-center">
+            <Check size={10} className="text-white" />
+          </div>
+        )}
+        {isError && (
+          <div className="w-4 h-4 rounded-full bg-error/20 flex items-center justify-center">
+            <X size={10} className="text-error" />
+          </div>
+        )}
+      </div>
+
+      {/* Label and message */}
+      <div className="flex-1 min-w-0">
+        <p className={`text-sm font-medium leading-tight ${isIdle ? "text-on-surface-variant" : "text-on-surface"}`}>
+          {label}
+        </p>
+        {state.message && (
+          <p className={`text-xs mt-0.5 ${isError ? "text-error" : "text-on-surface-variant"}`}>
+            {state.message}
+            {/* Inline progress counter for the graphql-sync phase */}
+            {isRunning && state.total !== undefined && state.total > 0 && state.progress !== undefined && (
+              <span className="ml-1 text-on-surface-variant/60">
+                ({state.progress}/{state.total})
+              </span>
+            )}
+          </p>
+        )}
+        {/* Progress bar for graphql-sync */}
+        {isRunning && state.total !== undefined && state.total > 0 && (
+          <div className="mt-1.5 h-1 rounded-full bg-surface-container-high overflow-hidden">
+            <div
+              className="h-full bg-primary rounded-full transition-all duration-300"
+              style={{ width: `${Math.round(((state.progress ?? 0) / state.total) * 100)}%` }}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// General step
+// ---------------------------------------------------------------------------
 
 function GeneralOnboardingStep({
   settings,
@@ -226,6 +419,10 @@ function GeneralOnboardingStep({
     </SectionCard>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Step indicator dot
+// ---------------------------------------------------------------------------
 
 function StepDot({
   number,

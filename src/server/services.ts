@@ -1,6 +1,8 @@
 import type {
   AppSettings,
   CollectionSortOrder,
+  PreloadPhase,
+  PreloadProgressEvent,
   UserRecord,
   PlexSettingsInput,
   WatchlistItem
@@ -214,6 +216,99 @@ export class HubarrServices {
       });
       throw error;
     }
+  }
+
+  /**
+   * Runs the three-phase onboarding preload sequence and streams progress
+   * events back to the caller via the provided callback.
+   *
+   * Phases:
+   *  1. discover-users  — fetch Plex friends + managed users, cache avatars
+   *  2. activity-cache  — initial watchlist activity feed sync
+   *  3. graphql-sync    — watchlist GraphQL sync for all tracked users
+   *
+   * Individual phase failures are reported but do not abort the remaining
+   * phases — the sequence always runs to completion.
+   */
+  async runOnboardingPreload(onProgress: (event: PreloadProgressEvent) => void): Promise<void> {
+    this.logger.info("Onboarding preload started");
+
+    const emit = (phase: PreloadPhase, status: PreloadProgressEvent["status"], message: string, extra?: Pick<PreloadProgressEvent, "progress" | "total">) => {
+      onProgress({ phase, status, message, ...extra });
+    };
+
+    // ------------------------------------------------------------------
+    // Phase 1: Discover users and cache avatars
+    // ------------------------------------------------------------------
+    emit("discover-users", "running", "Fetching Plex users and avatars...");
+    try {
+      const users = await this.discoverUsers();
+      const count = users.length;
+      emit("discover-users", "done", `Found ${count} user${count !== 1 ? "s" : ""}`);
+      this.logger.info("Onboarding preload: user discovery complete", { userCount: count });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn("Onboarding preload: user discovery failed — continuing", { message });
+      emit("discover-users", "error", `Could not fetch users: ${message}`);
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 2: Activity cache sync
+    // ------------------------------------------------------------------
+    emit("activity-cache", "running", "Syncing activity feed...");
+    try {
+      await this.syncActivityCache();
+      emit("activity-cache", "done", "Activity feed synced");
+      this.logger.info("Onboarding preload: activity cache sync complete");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn("Onboarding preload: activity cache sync failed — continuing", { message });
+      emit("activity-cache", "error", `Could not sync activity feed: ${message}`);
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 3: GraphQL watchlist sync for tracked users
+    // ------------------------------------------------------------------
+    const { trackedUsers } = this.getUserScopes();
+    if (trackedUsers.length === 0) {
+      emit("graphql-sync", "done", "No users to sync yet", { progress: 0, total: 0 });
+      this.logger.info("Onboarding preload: no tracked users, skipping watchlist sync");
+    } else {
+      const total = trackedUsers.length;
+      emit("graphql-sync", "running", `Syncing watchlists for ${total} user${total !== 1 ? "s" : ""}...`, { progress: 0, total });
+
+      const runId = this.db.createSyncRun("full", "Onboarding preload watchlist sync.");
+      let succeeded = 0;
+
+      for (let i = 0; i < trackedUsers.length; i++) {
+        const user = trackedUsers[i];
+        emit("graphql-sync", "running", `Syncing ${user.displayName}...`, { progress: i, total });
+        try {
+          await this.syncUser(user, runId);
+          succeeded++;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.logger.warn("Onboarding preload: user sync failed — continuing", {
+            userId: user.id,
+            displayName: user.displayName,
+            message
+          });
+          this.db.addSyncRunItem(runId, "sync.user", "error", {
+            userId: user.id,
+            displayName: user.displayName,
+            message
+          }, user.id);
+        }
+      }
+
+      const runStatus = succeeded === total ? "success" : "error";
+      this.db.completeSyncRun(runId, runStatus, `Onboarding preload: ${succeeded}/${total} users synced.`, null);
+      emit("graphql-sync", "done", `Synced watchlists for ${succeeded} of ${total} user${total !== 1 ? "s" : ""}`, { progress: total, total });
+      this.logger.info("Onboarding preload: watchlist sync complete", { succeeded, failed: total - succeeded });
+    }
+
+    emit("complete", "done", "Hubarr is ready");
+    this.logger.info("Onboarding preload complete");
   }
 
   runMaintenanceTasks() {

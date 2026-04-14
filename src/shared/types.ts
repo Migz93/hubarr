@@ -7,7 +7,19 @@ export interface BootstrapStatus {
   hasActiveSession: boolean;
 }
 
-export type OnboardingStep = "auth" | "plex" | "general" | "collections";
+export type OnboardingStep = "auth" | "plex" | "general" | "collections" | "preload";
+
+export type PreloadPhase = "discover-users" | "activity-cache" | "graphql-sync" | "complete";
+
+export interface PreloadProgressEvent {
+  phase: PreloadPhase;
+  status: "running" | "done" | "error";
+  message: string;
+  /** Current number of items processed (graphql-sync phase only). */
+  progress?: number;
+  /** Total number of items to process (graphql-sync phase only). */
+  total?: number;
+}
 
 export interface SessionUser {
   plexId: string;
