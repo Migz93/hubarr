@@ -13,7 +13,6 @@ export function useLiveRefresh(
   const loadRef = useRef(load);
   const getIntervalMsRef = useRef(getIntervalMs);
   const enabledRef = useRef(enabled);
-  const visibleRef = useRef(typeof document === "undefined" ? true : document.visibilityState === "visible");
   const inFlightRef = useRef(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runRefreshRef = useRef<() => Promise<void>>(async () => {});
@@ -27,7 +26,7 @@ export function useLiveRefresh(
 
   const scheduleNextRefresh = useCallback(() => {
     clearScheduledRefresh();
-    if (!mountedRef.current || !enabledRef.current || !visibleRef.current) {
+    if (!mountedRef.current || !enabledRef.current) {
       return;
     }
 
@@ -78,11 +77,8 @@ export function useLiveRefresh(
     mountedRef.current = true;
 
     function handleVisibilityChange() {
-      visibleRef.current = document.visibilityState === "visible";
-      if (visibleRef.current) {
+      if (document.visibilityState === "visible") {
         void runRefreshRef.current();
-      } else {
-        clearScheduledRefresh();
       }
     }
 

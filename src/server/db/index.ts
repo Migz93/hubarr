@@ -338,6 +338,10 @@ export class HubarrDatabase {
     syncRepo.completeSyncRun(this.db, id, status, summary, error);
   }
 
+  updateSyncRunSummary(id: number, summary: string): void {
+    syncRepo.updateSyncRunSummary(this.db, id, summary);
+  }
+
   addSyncRunItem(runId: number, action: string, status: SyncRun["status"], details: unknown, userId?: number): void {
     syncRepo.addSyncRunItem(this.db, runId, action, status, details, userId);
   }

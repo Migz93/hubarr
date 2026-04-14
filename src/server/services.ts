@@ -125,6 +125,21 @@ export class HubarrServices {
     return new PlexIntegration(input, this.logger).validate();
   }
 
+  private updateRunProgressSummary(
+    runId: number,
+    kind: "full" | "publish",
+    user: UserRecord,
+    current: number,
+    total: number
+  ): void {
+    if (kind === "publish") {
+      this.db.updateSyncRunSummary(runId, `Collection sync: publishing collections for ${user.displayName} (${current}/${total}).`);
+      return;
+    }
+
+    this.db.updateSyncRunSummary(runId, `Full sync: syncing watchlist for ${user.displayName} (${current}/${total}).`);
+  }
+
   /**
    * Fetch the admin's own Plex account info and upsert the self user record.
    * Called automatically when Plex settings are saved. Non-throwing — logs
@@ -836,7 +851,8 @@ export class HubarrServices {
       });
     }
 
-    for (const friend of friends) {
+    for (const [index, friend] of friends.entries()) {
+      this.updateRunProgressSummary(runId, "full", friend, index + 1, friends.length);
       const rssDateMap = rssMaps
         ? (friend.isSelf ? rssMaps.self : (rssMaps.byAuthor.get(friend.plexUserId) ?? new Map()))
         : undefined;
@@ -957,7 +973,8 @@ export class HubarrServices {
 
     this.logger.info("Collection sync started", { userCount: friends.length });
 
-    for (const friend of friends) {
+    for (const [index, friend] of friends.entries()) {
+      this.updateRunProgressSummary(runId, "publish", friend, index + 1, friends.length);
       try {
         await this.publishUserCollections(friend, this.db.getWatchlistItems(friend.id), runId, plex);
         this.db.markUserSyncResult(friend.id, null);

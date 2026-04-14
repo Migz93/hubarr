@@ -204,22 +204,47 @@ function RunRow({ run }: { run: SyncRun }) {
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState<SyncRunDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
 
-  async function loadDetail() {
-    if (detail) return;
-    setDetailLoading(true);
+  const loadDetail = useCallback(async (background = false) => {
+    setDetailLoading((current) => current || !background);
     try {
       const result = await apiGet<SyncRunDetail>(`/api/history/${run.id}`);
       setDetail(result);
+      setDetailError(null);
+    } catch (caught) {
+      if (!background) {
+        setDetailError(caught instanceof Error ? caught.message : String(caught));
+      }
     } finally {
-      setDetailLoading(false);
+      if (!background) {
+        setDetailLoading(false);
+      }
     }
-  }
+  }, [run.id]);
 
   function handleExpand() {
     if (!expanded) void loadDetail();
     setExpanded((v) => !v);
   }
+
+  const detailStatus = detail?.status ?? run.status;
+  const getDetailIntervalMs = useCallback(
+    () => (expanded && detailStatus === "running" ? HISTORY_FAST_REFRESH_MS : null),
+    [detailStatus, expanded]
+  );
+
+  useLiveRefresh(
+    async () => {
+      await loadDetail(true);
+    },
+    {
+      enabled: expanded,
+      getIntervalMs: getDetailIntervalMs
+    }
+  );
+
+  const liveRun = detail ?? run;
 
   const statusConfig = {
     success: {
@@ -240,11 +265,11 @@ function RunRow({ run }: { run: SyncRun }) {
     }
   };
 
-  const config = statusConfig[run.status];
+  const config = statusConfig[liveRun.status];
 
   const durationMs =
-    run.completedAt
-      ? new Date(run.completedAt).getTime() - new Date(run.startedAt).getTime()
+    liveRun.completedAt
+      ? new Date(liveRun.completedAt).getTime() - new Date(liveRun.startedAt).getTime()
       : null;
 
   const durationText = durationMs !== null
@@ -266,13 +291,13 @@ function RunRow({ run }: { run: SyncRun }) {
               {KIND_LABELS[run.kind] ?? run.kind} Sync
             </span>
             <span className={`text-xs px-1.5 py-0.5 rounded-full border font-medium ${config.badge}`}>
-              {run.status}
+              {liveRun.status}
             </span>
           </div>
-          <div className="text-on-surface-variant text-xs mt-0.5 truncate">{stripKindPrefix(run.summary)}</div>
+          <div className="text-on-surface-variant text-xs mt-0.5 truncate">{stripKindPrefix(liveRun.summary)}</div>
         </div>
         <div className="flex-shrink-0 text-right mr-2">
-          <div className="text-on-surface-variant text-xs">{formatRelativeTime(run.startedAt)}</div>
+          <div className="text-on-surface-variant text-xs">{formatRelativeTime(liveRun.startedAt)}</div>
           {durationText && (
             <div className="text-on-surface-variant text-xs mt-0.5">{durationText}</div>
           )}
@@ -286,18 +311,18 @@ function RunRow({ run }: { run: SyncRun }) {
           <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs px-4 py-3">
             <div>
               <span className="text-on-surface-variant">Started</span>
-              <div className="text-on-surface mt-0.5">{formatDateTime(run.startedAt)}</div>
+              <div className="text-on-surface mt-0.5">{formatDateTime(liveRun.startedAt)}</div>
             </div>
-            {run.completedAt && (
+            {liveRun.completedAt && (
               <div>
                 <span className="text-on-surface-variant">Completed</span>
-                <div className="text-on-surface mt-0.5">{formatDateTime(run.completedAt)}</div>
+                <div className="text-on-surface mt-0.5">{formatDateTime(liveRun.completedAt)}</div>
               </div>
             )}
-            {run.error && (
+            {liveRun.error && (
               <div className="col-span-2">
                 <span className="text-error">Error</span>
-                <div className="text-error/80 mt-0.5 font-mono break-all">{run.error}</div>
+                <div className="text-error/80 mt-0.5 font-mono break-all">{liveRun.error}</div>
               </div>
             )}
           </div>
@@ -306,6 +331,16 @@ function RunRow({ run }: { run: SyncRun }) {
           <div className="px-4 pb-3">
             {detailLoading ? (
               <div className="text-xs text-on-surface-variant py-2">Loading details...</div>
+            ) : detailError ? (
+              <div className="py-2">
+                <div className="text-xs text-error">{detailError}</div>
+                <button
+                  onClick={() => void loadDetail()}
+                  className="mt-2 text-xs font-medium text-primary hover:text-primary-dim transition-colors"
+                >
+                  Retry loading details
+                </button>
+              </div>
             ) : detail ? (
               <RunItems items={detail.items} />
             ) : null}

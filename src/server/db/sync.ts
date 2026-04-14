@@ -69,6 +69,11 @@ export function completeSyncRun(
     .run(status, new Date().toISOString(), summary, error, id);
 }
 
+export function updateSyncRunSummary(db: Database.Database, id: number, summary: string): void {
+  db.prepare("UPDATE sync_runs SET summary = ? WHERE id = ? AND status = 'running'")
+    .run(summary, id);
+}
+
 export function addSyncRunItem(
   db: Database.Database,
   runId: number,
