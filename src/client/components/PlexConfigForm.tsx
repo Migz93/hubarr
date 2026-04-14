@@ -13,11 +13,13 @@ export default function PlexConfigForm({
   initialConfig,
   saveUrl,
   onSaved,
+  onBack,
   saveLabel = "Save Plex"
 }: {
   initialConfig: PlexSettingsView | null;
   saveUrl: string;
   onSaved?: (result: PlexConfigResponse) => void | Promise<void>;
+  onBack?: () => void;
   saveLabel?: string;
 }) {
   const [availableServers, setAvailableServers] = useState<PlexConnectionOption[]>([]);
@@ -91,7 +93,7 @@ export default function PlexConfigForm({
   return (
     <SectionCard
       title="Plex Settings"
-      description="Connect Hubarr to your Plex server. Once linked, Hubarr will build and maintain watchlist Collections and publish them as Hub rows."
+      description="Connect Hubarr to your Plex server to start building and publishing watchlist collections."
       wide
     >
       <Field label="Server" hint="Press the button to load available servers">
@@ -170,6 +172,7 @@ export default function PlexConfigForm({
         success={success}
         error={error}
         onSave={() => void save()}
+        onBack={onBack}
         label={saveLabel}
       />
 

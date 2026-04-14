@@ -27,14 +27,15 @@ export const defaultAppSettings: AppSettings = {
   collectionNamePattern: "{user}s Watchlist",
   collectionSortOrder: "date-desc",
   visibilityDefaults: {
-    recommended: true,
+    recommended: false,
     home: true,
-    shared: true
+    shared: false
   },
   fullSyncOnStartup: false,
   defaultMovieLibraryId: null,
   defaultShowLibraryId: null,
-  trustProxy: false
+  trustProxy: false,
+  onboardingComplete: false
 };
 
 /**
@@ -107,13 +108,24 @@ export function resolveSessionSecret(db: Database.Database, dataDir: string): st
 export function getBootstrapStatus(db: Database.Database, hasActiveSession: boolean): BootstrapStatus {
   const plexSettings = getSetting<PlexSettingsInput>(db, "plex");
   const appSettings = getAppSettings(db);
+  const setupComplete = Boolean(
+    plexSettings?.serverUrl &&
+      appSettings.defaultMovieLibraryId &&
+      appSettings.defaultShowLibraryId
+  );
+
+  // Backwards-compat: existing installs that were fully configured before the
+  // onboardingComplete flag was introduced won't have the field in stored
+  // settings. For these we derive onboardingComplete from setupComplete so
+  // they aren't forced through the wizard again.
+  const stored = getSetting<AppSettings>(db, "app");
+  const hasFlag = stored !== null && "onboardingComplete" in stored;
+  const onboardingComplete = hasFlag ? appSettings.onboardingComplete : setupComplete;
+
   return {
     hasOwner: Boolean(getSetting<PlexOwnerRecord>(db, "admin")),
-    setupComplete: Boolean(
-      plexSettings?.serverUrl &&
-        appSettings.defaultMovieLibraryId &&
-        appSettings.defaultShowLibraryId
-    ),
+    setupComplete,
+    onboardingComplete,
     hasActiveSession
   };
 }
@@ -124,14 +136,17 @@ export function getCurrentOnboardingStep(db: Database.Database): OnboardingStep 
     return "auth";
   }
 
+  // General comes before Plex in the onboarding order. General has no
+  // persistent completion marker, so if Plex isn't configured yet we resume
+  // at General (the earliest un-gated step before Plex).
   const plexSettings = getPlexSettings(db);
   if (!plexSettings?.serverUrl) {
-    return "plex";
+    return "general";
   }
 
   const appSettings = getAppSettings(db);
   if (!appSettings.defaultMovieLibraryId || !appSettings.defaultShowLibraryId) {
-    return "general";
+    return "collections";
   }
 
   return "collections";

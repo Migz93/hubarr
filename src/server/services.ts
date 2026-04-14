@@ -307,6 +307,20 @@ export class HubarrServices {
       this.logger.info("Onboarding preload: watchlist sync complete", { succeeded, failed: total - succeeded });
     }
 
+    // ------------------------------------------------------------------
+    // Phase 4: Publish collections so they are live in Plex immediately
+    // ------------------------------------------------------------------
+    emit("publish-collections", "running", "Publishing collections...");
+    try {
+      await this.runPublishPass();
+      emit("publish-collections", "done", "Collections published");
+      this.logger.info("Onboarding preload: collection publish complete");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn("Onboarding preload: collection publish failed — continuing", { message });
+      emit("publish-collections", "error", `Could not publish collections: ${message}`);
+    }
+
     emit("complete", "done", "Hubarr is ready");
     this.logger.info("Onboarding preload complete");
   }

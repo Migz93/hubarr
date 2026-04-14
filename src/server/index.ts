@@ -17,10 +17,23 @@ app.listen(config.port, () => {
 
 const appSettings = db.getAppSettings();
 
+// Guard that skips a scheduled task when onboarding is not yet complete.
+// This prevents background jobs from firing errors against an unconfigured
+// instance while the user is still working through the setup wizard.
+function requiresSetup(task: () => Promise<void>): () => Promise<void> {
+  return async () => {
+    if (!db.getBootstrapStatus(false).setupComplete) {
+      logger.debug("Skipping scheduled task — setup is not complete");
+      return;
+    }
+    await task();
+  };
+}
+
 scheduler.registerRecurringJob({
   id: "collection-publish",
   intervalMs: appSettings.collectionPublishIntervalMinutes * 60 * 1000,
-  task: async () => {
+  task: requiresSetup(async () => {
     try {
       await services.runPublishPass();
     } catch (error) {
@@ -28,13 +41,13 @@ scheduler.registerRecurringJob({
         error: error instanceof Error ? error.message : String(error)
       });
     }
-  }
+  })
 });
 
 scheduler.registerRecurringJob({
   id: "full-sync",
   intervalMs: appSettings.reconciliationIntervalMinutes * 60 * 1000,
-  task: async () => {
+  task: requiresSetup(async () => {
     try {
       await services.runFullSync();
     } catch (error) {
@@ -42,66 +55,73 @@ scheduler.registerRecurringJob({
         error: error instanceof Error ? error.message : String(error)
       });
     }
-  },
+  }),
 });
 
 scheduler.registerRecurringJob({
   id: "plex-recently-added-scan",
   intervalMs: appSettings.plexRecentlyAddedScanIntervalMinutes * 60 * 1000,
-  task: async () => {
+  task: requiresSetup(async () => {
     await services.runPlexRecentlyAddedScan(scheduler.getLastRunAt("plex-recently-added-scan"));
-  },
+  }),
 });
 
 scheduler.registerRecurringJob({
   id: "plex-full-library-scan",
   intervalMs: appSettings.plexFullLibraryScanIntervalMinutes * 60 * 1000,
-  task: async () => {
+  task: requiresSetup(async () => {
     await services.runPlexFullLibraryScan();
-  },
+  }),
 });
 
 scheduler.registerDailyJob({
   id: "plex-refresh-token",
   hour: 5,
-  task: async () => {
+  task: requiresSetup(async () => {
     await services.refreshPlexToken();
-  }
+  })
 });
 
 scheduler.registerDailyJob({
   id: "users-discover",
   hour: 5,
-  task: async () => {
+  task: requiresSetup(async () => {
     await services.runUsersDiscoverJob();
-  }
+  })
 });
 
 scheduler.registerDailyJob({
   id: "maintenance-tasks",
   hour: 5,
   minute: 30,
-  task: async () => {
+  task: requiresSetup(async () => {
     services.runMaintenanceTasks();
-  }
+  })
 });
 
-// Activity cache — run on startup (full fetch on first run, incremental thereafter)
-services.syncActivityCache().catch((error) => {
-  logger.warn("Activity cache sync failed at startup", {
-    error: error instanceof Error ? error.message : String(error)
+const setupComplete = db.getBootstrapStatus(false).setupComplete;
+
+// Activity cache — run on startup (full fetch on first run, incremental thereafter).
+// Skipped if setup is not complete to avoid errors against an unconfigured instance.
+if (setupComplete) {
+  services.syncActivityCache().catch((error) => {
+    logger.warn("Activity cache sync failed at startup", {
+      error: error instanceof Error ? error.message : String(error)
+    });
   });
-});
+} else {
+  logger.info("Skipping startup activity cache sync — setup is not complete");
+}
 
 scheduler.registerRecurringJob({
   id: "activity-cache-fetch",
   intervalMs: appSettings.activityCacheFetchIntervalMinutes * 60 * 1000,
-  task: async () => {
+  task: requiresSetup(async () => {
     await services.syncActivityCache();
-  }
+  })
 });
 
-if (appSettings.rssEnabled) {
+if (setupComplete && appSettings.rssEnabled) {
   services.initRss().catch((error) => {
     logger.warn("RSS initialization failed at startup", {
       error: error instanceof Error ? error.message : String(error)
@@ -113,7 +133,7 @@ scheduler.registerRecurringJob({
   id: "rss-sync",
   intervalMs: appSettings.rssPollIntervalSeconds * 1000,
   enabled: appSettings.rssEnabled,
-  task: async () => {
+  task: requiresSetup(async () => {
     try {
       await services.pollRss();
     } catch (error) {
@@ -121,11 +141,11 @@ scheduler.registerRecurringJob({
         error: error instanceof Error ? error.message : String(error)
       });
     }
-  }
+  })
 });
 
-// Startup sync sequence (if enabled)
-if (appSettings.fullSyncOnStartup) {
+// Startup sync sequence (if enabled and setup is complete)
+if (setupComplete && appSettings.fullSyncOnStartup) {
   void (async () => {
     logger.info("Startup sync sequence started", {
       steps: ["plex-full-library-scan", "full-sync", "collection-publish"]
@@ -163,4 +183,6 @@ if (appSettings.fullSyncOnStartup) {
 
     logger.info("Startup sync sequence finished");
   })();
+} else if (!setupComplete && appSettings.fullSyncOnStartup) {
+  logger.info("Skipping startup sync sequence — setup is not complete");
 }

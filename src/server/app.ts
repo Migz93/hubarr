@@ -421,6 +421,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     res.end();
   });
 
+  /** Mark onboarding as fully complete so the main app becomes accessible. */
+  app.post("/api/setup/complete", requireAuth, (_req, res) => {
+    db.updateAppSettings({ onboardingComplete: true });
+    res.json({ ok: true });
+  });
+
   // ---------------------------------------------------------------------------
   // Dashboard
   // ---------------------------------------------------------------------------

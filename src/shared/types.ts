@@ -4,12 +4,13 @@ export type MediaType = "movie" | "show";
 export interface BootstrapStatus {
   hasOwner: boolean;
   setupComplete: boolean;
+  onboardingComplete: boolean;
   hasActiveSession: boolean;
 }
 
-export type OnboardingStep = "auth" | "plex" | "general" | "collections" | "preload";
+export type OnboardingStep = "auth" | "plex" | "general" | "collections" | "users" | "preload";
 
-export type PreloadPhase = "discover-users" | "activity-cache" | "graphql-sync" | "complete";
+export type PreloadPhase = "discover-users" | "activity-cache" | "graphql-sync" | "publish-collections" | "complete";
 
 export interface PreloadProgressEvent {
   phase: PreloadPhase;
@@ -82,6 +83,7 @@ export interface AppSettings {
   defaultMovieLibraryId: string | null;
   defaultShowLibraryId: string | null;
   trustProxy: boolean;
+  onboardingComplete: boolean;
 }
 
 export interface UserRecord {

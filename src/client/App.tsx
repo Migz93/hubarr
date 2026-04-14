@@ -75,7 +75,7 @@ function MainApp() {
       return;
     }
 
-    if (!nextState.bootstrap.setupComplete) {
+    if (!nextState.bootstrap.onboardingComplete) {
       navigate("/onboarding");
     } else {
       navigate("/dashboard");
@@ -134,8 +134,8 @@ function MainApp() {
     );
   }
 
-  // Logged in but setup not complete — show onboarding
-  if (bootstrap && !bootstrap.setupComplete) {
+  // Logged in but onboarding not complete — show onboarding
+  if (bootstrap && !bootstrap.onboardingComplete) {
     return (
       <Routes>
         <Route

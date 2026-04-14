@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronRight, Loader2, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "../lib/api";
+import { getPlexImageSrc } from "../lib/plexImage";
 import PlexOAuth from "../lib/plexOAuth";
 import PlexConfigForm from "../components/PlexConfigForm";
 import CollectionsConfigForm from "../components/CollectionsConfigForm";
@@ -10,7 +11,8 @@ import type {
   PreloadPhase,
   PreloadProgressEvent,
   SetupStatusResponse,
-  SettingsResponse
+  SettingsResponse,
+  UserRecord
 } from "../../shared/types";
 
 interface OnboardingProps {
@@ -35,7 +37,6 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
       setSettings(currentSettings);
       setStep(status.currentStep);
     } catch {
-      // Fresh install before auth — stay on auth step
       setStep("auth");
     }
   }
@@ -64,27 +65,14 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
     }
   }
 
+  // Step order: auth(1) → general(2) → plex(3) → collections(4) → users(5) → preload(hidden)
   const stepState = useMemo(() => {
-    if (step === "auth") {
-      return { authDone: false, plexDone: false, generalDone: false, collectionsDone: false, preloadDone: false };
-    }
-    if (step === "plex") {
-      return { authDone: true, plexDone: false, generalDone: false, collectionsDone: false, preloadDone: false };
-    }
-    if (step === "general") {
-      return { authDone: true, plexDone: true, generalDone: false, collectionsDone: false, preloadDone: false };
-    }
-    if (step === "collections") {
-      return {
-        authDone: true,
-        plexDone: true,
-        generalDone: true,
-        collectionsDone: Boolean(setupStatus?.collectionsConfigured),
-        preloadDone: false
-      };
-    }
-    // preload
-    return { authDone: true, plexDone: true, generalDone: true, collectionsDone: true, preloadDone: false };
+    const authDone = step !== "auth";
+    const generalDone = authDone && step !== "general";
+    const plexDone = generalDone && step !== "plex";
+    const collectionsDone = plexDone && (step !== "collections" || Boolean(setupStatus?.collectionsConfigured));
+    const usersDone = collectionsDone && step !== "users";
+    return { authDone, generalDone, plexDone, collectionsDone, usersDone };
   }, [setupStatus?.collectionsConfigured, step]);
 
   return (
@@ -99,13 +87,13 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
         <div className="flex items-center justify-center gap-3 mb-6">
           <StepDot number={1} active={step === "auth"} done={stepState.authDone} label="Sign in" />
           <div className="w-6 h-px bg-outline-variant/40" />
-          <StepDot number={2} active={step === "plex"} done={stepState.plexDone} label="Configure Plex" />
+          <StepDot number={2} active={step === "general"} done={stepState.generalDone} label="General" />
           <div className="w-6 h-px bg-outline-variant/40" />
-          <StepDot number={3} active={step === "general"} done={stepState.generalDone ?? false} label="General" />
+          <StepDot number={3} active={step === "plex"} done={stepState.plexDone} label="Plex" />
           <div className="w-6 h-px bg-outline-variant/40" />
-          <StepDot number={4} active={step === "collections"} done={stepState.collectionsDone ?? false} label="Collections" />
+          <StepDot number={4} active={step === "collections"} done={stepState.collectionsDone} label="Collections" />
           <div className="w-6 h-px bg-outline-variant/40" />
-          <StepDot number={5} active={step === "preload"} done={stepState.preloadDone} label="Preloading" />
+          <StepDot number={5} active={step === "users"} done={stepState.usersDone} label="Users" />
         </div>
 
         {step === "auth" && (
@@ -134,21 +122,22 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
           </div>
         )}
 
-        {step === "plex" && (
-          <PlexConfigForm
-            initialConfig={setupStatus?.plex ?? null}
-            saveUrl="/api/setup/plex/save"
-            saveLabel="Continue to General"
+        {step === "general" && settings && (
+          <GeneralOnboardingStep
+            settings={settings}
             onSaved={async () => {
               await loadSetupState();
-              setStep("general");
+              setStep("plex");
             }}
           />
         )}
 
-        {step === "general" && settings && (
-          <GeneralOnboardingStep
-            settings={settings}
+        {step === "plex" && (
+          <PlexConfigForm
+            initialConfig={setupStatus?.plex ?? null}
+            saveUrl="/api/setup/plex/save"
+            saveLabel="Continue to Collections"
+            onBack={() => setStep("general")}
             onSaved={async () => {
               await loadSetupState();
               setStep("collections");
@@ -160,7 +149,17 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
           <CollectionsConfigForm
             initialValue={settings.collections}
             librariesUrl="/api/setup/plex/libraries"
-            saveLabel="Finish Setup"
+            saveLabel="Continue to Users"
+            onBack={() => setStep("plex")}
+            onSaved={async () => {
+              setStep("users");
+            }}
+          />
+        )}
+
+        {step === "users" && (
+          <UsersOnboardingStep
+            onBack={() => setStep("collections")}
             onSaved={async () => {
               setStep("preload");
             }}
@@ -172,6 +171,246 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
         )}
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Users step
+// ---------------------------------------------------------------------------
+
+// How many times to re-fetch users to pick up avatars that are still being
+// cached in the background after the Plex step completes.
+const AVATAR_POLL_MAX = 6;
+
+function UsersOnboardingStep({ onBack, onSaved }: { onBack: () => void; onSaved: () => Promise<void> }) {
+  const [users, setUsers] = useState<UserRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [avatarPollCount, setAvatarPollCount] = useState(0);
+  const initialSelectionDone = useRef(false);
+
+  // Initial load
+  useEffect(() => {
+    apiGet<UserRecord[]>("/api/users")
+      .then((list) => {
+        setUsers(list);
+        if (!initialSelectionDone.current) {
+          // Pre-select the admin and any users already enabled
+          setSelectedIds(new Set(list.filter((u) => u.isSelf || u.enabled).map((u) => u.id)));
+          initialSelectionDone.current = true;
+        }
+      })
+      .catch(() => {
+        /* empty state shown, user can proceed */
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  // Keep re-fetching avatars that are still being cached in the background.
+  // Stops once all users have avatars or after AVATAR_POLL_MAX attempts.
+  useEffect(() => {
+    if (users.length === 0 || avatarPollCount >= AVATAR_POLL_MAX) return;
+    const hasMissing = users.some((u) => u.avatarUrl === null);
+    if (!hasMissing) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        const list = await apiGet<UserRecord[]>("/api/users");
+        setUsers(list);
+      } catch {
+        /* ignore — we'll try again next cycle */
+      }
+      setAvatarPollCount((c) => c + 1);
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [users, avatarPollCount]);
+
+  function toggle(id: number) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    if (selectedIds.size === users.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(users.map((u) => u.id)));
+    }
+  }
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      // All users default to disabled — only a single call is needed to enable
+      // the selected ones. Unselected users are already disabled.
+      if (selectedIds.size > 0) {
+        await apiPost("/api/users/bulk", {
+          ids: [...selectedIds],
+          enabled: true
+        });
+      }
+      await onSaved();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+      setSaving(false);
+    }
+  }
+
+  const allSelected = users.length > 0 && selectedIds.size === users.length;
+  const noneSelected = selectedIds.size === 0;
+
+  return (
+    <div className="bg-surface-container rounded-2xl p-6 border border-outline-variant/20 max-w-2xl mx-auto">
+      <h2 className="font-headline font-semibold text-lg text-on-surface mb-1">
+        Choose Your Users
+      </h2>
+      <p className="text-on-surface-variant text-sm mb-6">
+        Select which Plex users to create watchlist collections for.<br />
+        Collections will be synced to Plex as part of setup.
+      </p>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-10 gap-2 text-on-surface-variant text-sm">
+          <Loader2 size={18} className="animate-spin" />
+          Loading users...
+        </div>
+      ) : users.length === 0 ? (
+        <div className="text-center py-10 text-on-surface-variant text-sm">
+          No users found yet. You can add them from the Users page after setup.
+        </div>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-3 mb-5 justify-center">
+            {users.map((user) => (
+              <UserSelectCard
+                key={user.id}
+                user={user}
+                selected={selectedIds.has(user.id)}
+                onToggle={() => toggle(user.id)}
+              />
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between pt-4 border-t border-outline-variant/20">
+            <button
+              onClick={toggleAll}
+              className="text-sm text-primary hover:text-primary-dim transition-colors"
+            >
+              {allSelected ? "Deselect all" : "Select all"}
+            </button>
+            <span className="text-xs text-on-surface-variant">
+              {selectedIds.size} of {users.length} selected
+            </span>
+          </div>
+        </>
+      )}
+
+      {error && (
+        <div className="mt-4 bg-error/10 border border-error/30 rounded-lg px-4 py-3 text-error text-sm">
+          {error}
+        </div>
+      )}
+
+      <div className="mt-5 flex items-center justify-between">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1 bg-surface-container-high hover:bg-surface-bright text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
+        >
+          <ChevronLeft size={15} />
+          Back
+        </button>
+        <button
+          disabled={saving}
+          onClick={() => void save()}
+          className="flex items-center gap-2 bg-primary hover:bg-primary-dim disabled:opacity-50 disabled:cursor-not-allowed text-on-primary font-semibold rounded-xl px-5 py-2.5 text-sm transition-colors"
+        >
+          {saving ? (
+            <>
+              <Loader2 size={15} className="animate-spin" />
+              Saving...
+            </>
+          ) : noneSelected ? (
+            "Skip"
+          ) : (
+            <>
+              Continue
+              <ChevronRight size={15} />
+            </>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function UserSelectCard({
+  user,
+  selected,
+  onToggle
+}: {
+  user: UserRecord;
+  selected: boolean;
+  onToggle: () => void;
+}) {
+  const avatarSrc = getPlexImageSrc(user.avatarUrl);
+
+  return (
+    <button
+      onClick={onToggle}
+      className={`flex flex-col items-center gap-2 p-3 rounded-xl w-24 transition-all ${
+        selected
+          ? "bg-primary/10 ring-1 ring-primary/40"
+          : "hover:bg-surface-container-high ring-1 ring-transparent"
+      }`}
+    >
+      <div className="relative w-14 h-14 shrink-0">
+        <div
+          className={`w-full h-full rounded-full overflow-hidden transition-opacity ${
+            selected ? "opacity-100" : "opacity-50"
+          }`}
+        >
+          {avatarSrc ? (
+            <img src={avatarSrc} alt={user.displayName} className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full bg-primary/20 flex items-center justify-center">
+              <span className="text-primary font-semibold text-xl">
+                {user.displayName[0]?.toUpperCase() ?? "?"}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {selected && (
+          <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-primary flex items-center justify-center">
+            <Check size={11} className="text-on-primary" />
+          </div>
+        )}
+      </div>
+
+      <div className="w-full text-center">
+        <p
+          className={`text-xs font-medium leading-tight truncate ${
+            selected ? "text-on-surface" : "text-on-surface-variant"
+          }`}
+        >
+          {user.displayName}
+        </p>
+        {user.isSelf && (
+          <p className="text-[10px] text-primary leading-tight mt-0.5">You</p>
+        )}
+      </div>
+    </button>
   );
 }
 
@@ -190,20 +429,21 @@ const INITIAL_PHASES: Record<PreloadPhase, PhaseState> = {
   "discover-users": { status: "idle", message: "" },
   "activity-cache": { status: "idle", message: "" },
   "graphql-sync": { status: "idle", message: "" },
+  "publish-collections": { status: "idle", message: "" },
   "complete": { status: "idle", message: "" }
 };
 
 const PHASE_LABELS: Record<Exclude<PreloadPhase, "complete">, string> = {
   "discover-users": "Fetch Plex users & avatars",
   "activity-cache": "Sync activity feed",
-  "graphql-sync": "Sync watchlists"
+  "graphql-sync": "Sync watchlists",
+  "publish-collections": "Publish collections"
 };
 
 function PreloadStep({ onComplete }: { onComplete: () => Promise<void> }) {
   const [phases, setPhases] = useState<Record<PreloadPhase, PhaseState>>(INITIAL_PHASES);
   const [done, setDone] = useState(false);
   const [fatalError, setFatalError] = useState<string | null>(null);
-  // Prevent double-entering the app if the EventSource fires multiple complete events
   const enteringRef = useRef(false);
 
   useEffect(() => {
@@ -220,11 +460,16 @@ function PreloadStep({ onComplete }: { onComplete: () => Promise<void> }) {
       if (event.phase === "complete") {
         es.close();
         setDone(true);
-        // Enter the app automatically after a short pause so the user can see
-        // the completed state before navigating away.
         if (!enteringRef.current) {
           enteringRef.current = true;
-          window.setTimeout(() => void onComplete(), 1500);
+          window.setTimeout(async () => {
+            try {
+              await apiPost("/api/setup/complete", {});
+            } catch {
+              // non-fatal — app will still work, onboarding won't repeat
+            }
+            await onComplete();
+          }, 1500);
         }
         return;
       }
@@ -248,7 +493,6 @@ function PreloadStep({ onComplete }: { onComplete: () => Promise<void> }) {
     return () => {
       es.close();
     };
-    // onComplete is stable (passed from App level), so the empty dep array is intentional
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -258,11 +502,12 @@ function PreloadStep({ onComplete }: { onComplete: () => Promise<void> }) {
         Getting Hubarr Ready
       </h2>
       <p className="text-on-surface-variant text-sm mb-6">
-        Loading your data in the background — this only happens once.
+        Running your first full sync to get everything ready.<br />
+        This only happens once — future syncs will be much faster.
       </p>
 
       <div className="space-y-3">
-        {(["discover-users", "activity-cache", "graphql-sync"] as const).map((phase) => (
+        {(["discover-users", "activity-cache", "graphql-sync", "publish-collections"] as const).map((phase) => (
           <PreloadPhaseRow
             key={phase}
             label={PHASE_LABELS[phase]}
@@ -297,14 +542,9 @@ function PreloadPhaseRow({ label, state }: { label: string; state: PhaseState })
 
   return (
     <div className="flex items-start gap-3">
-      {/* Status icon */}
       <div className="mt-0.5 w-5 h-5 flex items-center justify-center shrink-0">
-        {isIdle && (
-          <div className="w-4 h-4 rounded-full border-2 border-outline-variant/40" />
-        )}
-        {isRunning && (
-          <Loader2 size={16} className="animate-spin text-primary" />
-        )}
+        {isIdle && <div className="w-4 h-4 rounded-full border-2 border-outline-variant/40" />}
+        {isRunning && <Loader2 size={16} className="animate-spin text-primary" />}
         {isDone && (
           <div className="w-4 h-4 rounded-full bg-success flex items-center justify-center">
             <Check size={10} className="text-white" />
@@ -317,7 +557,6 @@ function PreloadPhaseRow({ label, state }: { label: string; state: PhaseState })
         )}
       </div>
 
-      {/* Label and message */}
       <div className="flex-1 min-w-0">
         <p className={`text-sm font-medium leading-tight ${isIdle ? "text-on-surface-variant" : "text-on-surface"}`}>
           {label}
@@ -325,15 +564,11 @@ function PreloadPhaseRow({ label, state }: { label: string; state: PhaseState })
         {state.message && (
           <p className={`text-xs mt-0.5 ${isError ? "text-error" : "text-on-surface-variant"}`}>
             {state.message}
-            {/* Inline progress counter for the graphql-sync phase */}
             {isRunning && state.total !== undefined && state.total > 0 && state.progress !== undefined && (
-              <span className="ml-1 text-on-surface-variant/60">
-                ({state.progress}/{state.total})
-              </span>
+              <span className="ml-1 text-on-surface-variant/60">({state.progress}/{state.total})</span>
             )}
           </p>
         )}
-        {/* Progress bar for graphql-sync */}
         {isRunning && state.total !== undefined && state.total > 0 && (
           <div className="mt-1.5 h-1 rounded-full bg-surface-container-high overflow-hidden">
             <div
@@ -375,10 +610,7 @@ function GeneralOnboardingStep({
     setError(null);
     try {
       await apiPatch("/api/settings", {
-        general: {
-          trackAllUsers,
-          fullSyncOnStartup
-        }
+        general: { trackAllUsers, fullSyncOnStartup }
       });
       setSuccess(true);
       await onSaved();
@@ -392,19 +624,19 @@ function GeneralOnboardingStep({
   return (
     <SectionCard
       title="General Settings"
-      description="Choose how Hubarr should behave after Plex is connected. You can change these again later in Settings."
+      description="Configure the global settings for your Hubarr instance. You can change these again later in Settings."
       wide
     >
       <div className="space-y-4">
         <ToggleField
           label="Track All Users"
-          hint="Keep background watchlist tracking running for disabled users too. Turning this off deletes cached watchlist data for disabled users."
+          hint="This allows you to view watchlist data for all your Plex users regardless of their enabled status. This will not publish collections."
           checked={trackAllUsers}
           onChange={setTrackAllUsers}
         />
         <ToggleField
           label="Startup Sync"
-          hint="When Hubarr starts, run a Plex full library scan, then a watchlist GraphQL sync, then a collection sync."
+          hint="When Hubarr starts, run a full scan of your libraries and watchlists, then publish collections."
           checked={fullSyncOnStartup}
           onChange={setFullSyncOnStartup}
         />
@@ -414,7 +646,7 @@ function GeneralOnboardingStep({
         success={success}
         error={error}
         onSave={() => void save()}
-        label="Continue to Collections"
+        label="Continue to Plex"
       />
     </SectionCard>
   );
