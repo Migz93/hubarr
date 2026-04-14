@@ -615,6 +615,7 @@ export class HubarrServices {
       "success",
       {
         userId: friend.id,
+        displayName: friend.displayName,
         isSelf: friend.isSelf,
         itemCount: mergedWithDates.length,
         matched: matchedCount,
@@ -801,7 +802,9 @@ export class HubarrServices {
           "success",
           {
             userId: friend.id,
+            displayName: friend.displayName,
             mediaType,
+            collectionName,
             collectionRatingKey,
             matchedItems: matchedRatingKeys.length
           },
@@ -866,7 +869,11 @@ export class HubarrServices {
           message
         });
         this.db.markUserSyncResult(friend.id, message);
-        this.db.addSyncRunItem(runId, "sync.user", "error", { userId: friend.id, message }, friend.id);
+        this.db.addSyncRunItem(runId, "sync.user", "error", {
+          userId: friend.id,
+          displayName: friend.displayName,
+          message
+        }, friend.id);
         failures.push(`${friend.displayName}: ${message}`);
       }
     }
@@ -890,9 +897,19 @@ export class HubarrServices {
 
     // Publish collections immediately so the updated watchlist is live in Plex
     // without waiting for the next scheduled collection-publish job.
-    await this.runPublishPass().catch((err) => {
+    await this.runPublishPass().then(() => {
+      this.db.addSyncRunItem(runId, "collection.publish.followup", "success", {
+        sourceRunKind: "full",
+        message: "Triggered collection publish after full sync."
+      });
+    }).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
       this.logger.warn("Collection publish after full sync failed", {
-        message: err instanceof Error ? err.message : String(err)
+        message
+      });
+      this.db.addSyncRunItem(runId, "collection.publish.followup", "error", {
+        sourceRunKind: "full",
+        message
       });
     });
 
@@ -986,7 +1003,11 @@ export class HubarrServices {
           message
         });
         this.db.markUserSyncResult(friend.id, message);
-        this.db.addSyncRunItem(runId, "collection.publish", "error", { userId: friend.id, message }, friend.id);
+        this.db.addSyncRunItem(runId, "collection.publish", "error", {
+          userId: friend.id,
+          displayName: friend.displayName,
+          message
+        }, friend.id);
         failures.push(`${friend.displayName}: ${message}`);
       }
     }
@@ -1234,6 +1255,13 @@ export class HubarrServices {
       if (this.selfRssPrimed && this.selfRssUrl) {
         const result = await plex.fetchRssFeedItems(this.selfRssUrl);
         if (!result.ok) {
+          this.db.addSyncRunItem(runId, "rss.feed.check.self", "error", {
+            feed: "self",
+            checked: true,
+            found: 0,
+            authError: result.authError,
+            message: result.message
+          });
           if (result.authError) {
             this.logger.warn("Self RSS auth error — check Plex Pass subscription and token RSS access", {
               message: result.message
@@ -1243,17 +1271,35 @@ export class HubarrServices {
           }
         } else {
           const newItems = this.selfRssCache.diff(result.items);
+          this.db.addSyncRunItem(runId, "rss.feed.check.self", "success", {
+            feed: "self",
+            checked: true,
+            found: newItems.length
+          });
           if (newItems.length > 0) {
             this.logger.info("Self RSS feed detected new items", { count: newItems.length });
             selfProcessed = await this.processSelfRssNewItems(newItems, runId, plex, settings);
           }
         }
+      } else {
+        this.db.addSyncRunItem(runId, "rss.feed.check.self", "success", {
+          feed: "self",
+          checked: false,
+          found: 0
+        });
       }
 
       // Poll friends feed
       if (this.usersRssPrimed && this.usersRssUrl) {
         const result = await plex.fetchRssFeedItems(this.usersRssUrl);
         if (!result.ok) {
+          this.db.addSyncRunItem(runId, "rss.feed.check.friends", "error", {
+            feed: "friends",
+            checked: true,
+            found: 0,
+            authError: result.authError,
+            message: result.message
+          });
           if (result.authError) {
             this.logger.warn("Friends RSS auth error — check Plex Pass subscription and token RSS access", {
               message: result.message
@@ -1263,6 +1309,11 @@ export class HubarrServices {
           }
         } else {
           const newItems = this.usersRssCache.diff(result.items);
+          this.db.addSyncRunItem(runId, "rss.feed.check.friends", "success", {
+            feed: "friends",
+            checked: true,
+            found: newItems.length
+          });
           if (newItems.length > 0) {
             this.logger.info("Friends RSS feed detected new items", { count: newItems.length });
             friendsProcessed = await this.processRssNewItems(
@@ -1273,6 +1324,12 @@ export class HubarrServices {
             );
           }
         }
+      } else {
+        this.db.addSyncRunItem(runId, "rss.feed.check.friends", "success", {
+          feed: "friends",
+          checked: false,
+          found: 0
+        });
       }
 
       const total = selfProcessed + friendsProcessed;
@@ -1435,6 +1492,7 @@ export class HubarrServices {
       });
 
       this.db.addSyncRunItem(runId, "watchlist.rss.self", "success", {
+        displayName: selfUser.displayName,
         title: item.title,
         type: item.type,
         matchedRatingKey
@@ -1576,6 +1634,7 @@ export class HubarrServices {
 
       this.db.addSyncRunItem(runId, "watchlist.rss", "success", {
         userId: friend.id,
+        displayName: friend.displayName,
         title: item.title,
         type: item.type,
         matchedRatingKey

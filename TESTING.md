@@ -164,5 +164,8 @@ jobs on the server.
 
 | Test | What it checks |
 |---|---|
+| Running history rows show `Just now` and live elapsed text | Opens `/history` with a stubbed running sync and verifies the row shows capitalized relative time plus a live `Running for ...` duration |
 | History list keeps polling while the tab is hidden when a run is active | Opens `/history` with a stubbed running sync, switches to another tab, and verifies the hidden History page still polls `/api/history` |
 | Expanded history details keep polling while the tab is hidden when a run is active | Expands a stubbed running History row, switches to another tab, and verifies the hidden page keeps polling `/api/history/:runId` for updated details |
+| Expanded errors stay collapsed by default and grouped steps render readable labels | Opens a stubbed failed History run, verifies the errors section stays collapsed initially, and checks that repeated low-level steps render as grouped human-readable labels |
+| RSS runs show feed checks and descriptive item labels | Opens a stubbed RSS History run and verifies feed-check steps and found-item labels render instead of a generic empty-details state |

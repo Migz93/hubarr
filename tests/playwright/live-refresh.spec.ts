@@ -68,8 +68,8 @@ test.describe("Live refresh", () => {
     const completedRun = await waitForRunCompletion(request, "publish", runningRun.startedAt);
     await expect(firstRunRow).not.toHaveText(firstRowTextBefore, { timeout: 30_000 });
     await expect(firstRunRow).toContainText("Collection Sync", { timeout: 30_000 });
-    await expect(firstRunRow).toContainText(completedRun.status, { timeout: 30_000 });
-    await expect(firstRunRow).toContainText(stripHistorySummary(completedRun.summary), { timeout: 30_000 });
+    await expect(firstRunRow).toContainText(capitalizeStatus(completedRun.status), { timeout: 30_000 });
+    await expect(firstRunRow).toContainText(capitalizeSummary(stripHistorySummary(completedRun.summary)), { timeout: 30_000 });
   });
 
   test("Jobs shows a scheduler-managed job running and then returning to Run Now after polling catches completion", async ({ page, request }) => {
@@ -189,4 +189,12 @@ function compactDashboardSummary(run: SyncRun): string {
 
 function stripHistorySummary(summary: string): string {
   return summary.replace(/^(RSS sync|Full sync|Manual sync|Collection publish|Collection sync)[:\s]*/i, "").trim();
+}
+
+function capitalizeStatus(status: SyncRun["status"]): string {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function capitalizeSummary(summary: string): string {
+  return summary.charAt(0).toUpperCase() + summary.slice(1);
 }

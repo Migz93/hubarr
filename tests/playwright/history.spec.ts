@@ -25,9 +25,9 @@ test.describe("History filters", () => {
   test("Status filter buttons are all visible", async ({ page }) => {
     // exact: true prevents matching history run-row buttons whose names include these words
     await expect(page.getByRole("button", { name: "All status", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "success", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "error", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "running", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^success$/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^error$/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^running$/i })).toBeVisible();
   });
 
   test("Page size select is visible", async ({ page }) => {
@@ -40,7 +40,7 @@ test.describe("History filters", () => {
   });
 
   test("Success status filter updates URL", async ({ page }) => {
-    await page.getByRole("button", { name: "success", exact: true }).click();
+    await page.getByRole("button", { name: /^success$/i }).click();
     await expect(page).toHaveURL(/[?&]status=success/);
   });
 });

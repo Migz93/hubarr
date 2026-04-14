@@ -22,6 +22,11 @@ function stripKindPrefix(summary: string): string {
   return summary.replace(/^(RSS sync|Full sync|Manual sync|Collection publish|Collection sync)[:\s]*/i, "").trim();
 }
 
+function capitalizeSentence(text: string): string {
+  if (!text) return text;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 const ACTION_LABELS: Record<string, string> = {
   "watchlist.fetch": "Watchlist fetch",
   "watchlist.rss": "RSS item",
@@ -29,8 +34,11 @@ const ACTION_LABELS: Record<string, string> = {
   "watchlist.match.failed": "Match failed",
   "watchlist.date_unresolved": "Date unresolved",
   "collection.publish": "Collection publish",
+  "collection.publish.followup": "Collection publish triggered",
   "isolation.filters": "Isolation filters",
-  "sync.user": "User sync"
+  "sync.user": "User sync",
+  "rss.feed.check.self": "Self RSS feed check",
+  "rss.feed.check.friends": "Friends RSS feed check"
 };
 
 const VALID_KINDS: KindFilter[] = ["all", "full", "rss", "user", "publish"];
@@ -130,7 +138,7 @@ export default function History() {
                   : "bg-surface-container text-on-surface-variant hover:text-on-surface"
               }`}
             >
-              {s === "all" ? "All status" : s}
+              {s === "all" ? "All status" : titleCaseStatus(s)}
             </button>
           ))}
         </div>
@@ -200,6 +208,275 @@ export default function History() {
   );
 }
 
+interface HistoryStep {
+  id: string;
+  status: "success" | "error";
+  label: string;
+  meta?: string;
+}
+
+interface WatchlistFetchDetails {
+  userId?: number;
+  displayName?: string;
+  isSelf?: boolean;
+  itemCount?: number;
+  matched?: number;
+  unmatched?: number;
+}
+
+interface CollectionPublishDetails {
+  userId?: number;
+  displayName?: string;
+  mediaType?: string;
+  collectionName?: string;
+  collectionRatingKey?: string;
+  matchedItems?: number;
+  message?: string;
+}
+
+interface FeedCheckDetails {
+  feed?: "self" | "friends";
+  checked?: boolean;
+  found?: number;
+  authError?: boolean;
+  message?: string;
+}
+
+interface RssItemDetails {
+  userId?: number;
+  displayName?: string;
+  title?: string;
+  type?: string;
+  matchedRatingKey?: string | null;
+}
+
+interface SyncUserErrorDetails {
+  userId?: number;
+  displayName?: string;
+  message?: string;
+}
+
+function titleCaseStatus(status: SyncRun["status"]): string {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function formatRunDuration(run: SyncRun): string | null {
+  const endTime = run.completedAt ? new Date(run.completedAt).getTime() : Date.now();
+  const durationMs = Math.max(0, endTime - new Date(run.startedAt).getTime());
+  const durationSeconds = Math.floor(durationMs / 1000);
+
+  if (run.status === "running") {
+    if (durationSeconds < 60) return `Running for ${durationSeconds}s`;
+    if (durationSeconds < 3600) return `Running for ${Math.floor(durationSeconds / 60)}m`;
+    return `Running for ${Math.floor(durationSeconds / 3600)}h`;
+  }
+
+  if (durationMs < 1000) return `${durationMs}ms`;
+  return `${(durationMs / 1000).toFixed(1)}s`;
+}
+
+function formatMediaTypeLabel(mediaType?: string): string {
+  if (mediaType === "movie") return "Movies";
+  if (mediaType === "show") return "Shows";
+  return "Items";
+}
+
+function formatStepLabel(item: SyncRunItem): string {
+  if (item.action === "sync.user" && item.status === "error") {
+    const details = item.details as SyncUserErrorDetails | null;
+    return details?.displayName
+      ? `User sync failed for ${details.displayName}`
+      : "User sync failed";
+  }
+
+  if (item.action === "rss.feed.check.self" || item.action === "rss.feed.check.friends") {
+    const details = item.details as FeedCheckDetails | null;
+    const subject = details?.feed === "friends" ? "Friends RSS feed" : "Self RSS feed";
+    if (item.status === "error") {
+      return details?.authError ? `${subject} check failed: authentication error` : `${subject} check failed`;
+    }
+    if (details?.checked === false) return `${subject} not checked`;
+    return `${subject} checked`;
+  }
+
+  if (item.action === "collection.publish.followup") {
+    const details = item.details as { message?: string } | null;
+    return details?.message ?? "Triggered collection publish after full sync";
+  }
+
+  return ACTION_LABELS[item.action] ?? item.action;
+}
+
+function formatStepMeta(item: SyncRunItem): string | undefined {
+  if (item.action === "sync.user" && item.status === "error") {
+    const details = item.details as SyncUserErrorDetails | null;
+    return details?.message;
+  }
+
+  if (item.action === "collection.publish") {
+    const details = item.details as CollectionPublishDetails | null;
+    return details?.message;
+  }
+
+  if (item.action === "rss.feed.check.self" || item.action === "rss.feed.check.friends") {
+    const details = item.details as FeedCheckDetails | null;
+    if (item.status === "error") return details?.message;
+    if (details?.checked === false) return "Feed was not initialized for this run.";
+    return `${details?.found ?? 0} new item${details?.found === 1 ? "" : "s"} found`;
+  }
+
+  if (item.details && typeof item.details === "object") {
+    const details = item.details as Record<string, unknown>;
+    if (typeof details["message"] === "string") return details["message"];
+  }
+
+  return undefined;
+}
+
+function groupSuccessfulSteps(run: SyncRun, items: SyncRunItem[]): HistoryStep[] {
+  const steps: HistoryStep[] = [];
+
+  const watchlistFetches = items.filter((item) => item.action === "watchlist.fetch" && item.status === "success");
+  if (watchlistFetches.length > 0) {
+    for (const item of watchlistFetches) {
+      const details = item.details as WatchlistFetchDetails | null;
+      const name = details?.displayName ?? "Unknown user";
+      const count = details?.itemCount ?? 0;
+      const matched = details?.matched ?? 0;
+      const unmatched = details?.unmatched ?? 0;
+      steps.push({
+        id: `${item.id}-watchlist-fetch`,
+        status: "success",
+        label: `Watchlist fetch for ${name}`,
+        meta: `${count} items (${matched} matched, ${unmatched} unmatched)`
+      });
+    }
+  }
+
+  if (run.kind === "publish") {
+    const publishItems = items.filter((item) => item.action === "collection.publish" && item.status === "success");
+    const grouped = new Map<string, HistoryStep>();
+    for (const item of publishItems) {
+      const details = item.details as CollectionPublishDetails | null;
+      const name = details?.displayName ?? "Unknown user";
+      const mediaType = formatMediaTypeLabel(details?.mediaType);
+      const key = `${name}-${mediaType}`;
+      grouped.set(key, {
+        id: `${item.id}-${key}`,
+        status: "success",
+        label: `Published ${mediaType} collection for ${name}`,
+        meta: typeof details?.matchedItems === "number" ? `${details.matchedItems} matched items` : undefined
+      });
+    }
+    steps.push(...grouped.values());
+  } else if (run.kind === "rss") {
+    const feedChecks = items.filter(
+      (item) =>
+        item.status === "success" &&
+        (item.action === "rss.feed.check.self" || item.action === "rss.feed.check.friends")
+    );
+    for (const item of feedChecks) {
+      steps.push({
+        id: `${item.id}-feed-check`,
+        status: "success",
+        label: formatStepLabel(item),
+        meta: formatStepMeta(item)
+      });
+    }
+
+    const rssItems = items.filter(
+      (item) => item.status === "success" && (item.action === "watchlist.rss" || item.action === "watchlist.rss.self")
+    );
+    for (const item of rssItems) {
+      const details = item.details as RssItemDetails | null;
+      const name = details?.displayName ?? (item.action === "watchlist.rss.self" ? "Self" : "Unknown user");
+      const title = details?.title ?? "Unknown item";
+      const type = details?.type ? ` (${details.type})` : "";
+      steps.push({
+        id: `${item.id}-rss-item`,
+        status: "success",
+        label: `Found RSS item for ${name}: ${title}${type}`,
+        meta: details?.matchedRatingKey ? "Matched in Plex library" : "Not matched in Plex library"
+      });
+    }
+  } else {
+    const genericSuccesses = items.filter(
+      (item) =>
+        item.status === "success" &&
+        item.action !== "watchlist.fetch" &&
+        item.action !== "watchlist.rss" &&
+        item.action !== "watchlist.rss.self"
+    );
+    for (const item of genericSuccesses) {
+      steps.push({
+        id: `${item.id}-generic-success`,
+        status: "success",
+        label: formatStepLabel(item),
+        meta: formatStepMeta(item)
+      });
+    }
+  }
+
+  const extraGenericSuccesses = items.filter((item) => {
+    if (item.status !== "success") return false;
+    if (run.kind === "publish") return item.action !== "collection.publish";
+    if (run.kind === "rss") {
+      return item.action !== "rss.feed.check.self" &&
+        item.action !== "rss.feed.check.friends" &&
+        item.action !== "watchlist.rss" &&
+        item.action !== "watchlist.rss.self";
+    }
+    return item.action === "collection.publish.followup" || item.action === "isolation.filters";
+  });
+
+  for (const item of extraGenericSuccesses) {
+    if (steps.some((step) => step.id.startsWith(`${item.id}-`))) continue;
+    steps.push({
+      id: `${item.id}-extra-success`,
+      status: "success",
+      label: formatStepLabel(item),
+      meta: formatStepMeta(item)
+    });
+  }
+
+  return steps;
+}
+
+function collectErrorSteps(run: SyncRun, items: SyncRunItem[]): HistoryStep[] {
+  const steps: HistoryStep[] = [];
+
+  if (run.error) {
+    steps.push({
+      id: `${run.id}-run-error`,
+      status: "error",
+      label: "Run error",
+      meta: run.error
+    });
+  }
+
+  const errorItems = items.filter(
+    (item) =>
+      item.status === "error" &&
+      item.action !== "watchlist.match.failed" &&
+      item.action !== "watchlist.date_unresolved"
+  );
+
+  for (const item of errorItems) {
+    const meta = formatStepMeta(item);
+    if (item.action === "collection.publish" && run.error && meta && run.error === meta) {
+      continue;
+    }
+    steps.push({
+      id: `${item.id}-error`,
+      status: "error",
+      label: formatStepLabel(item),
+      meta
+    });
+  }
+
+  return steps;
+}
+
 function RunRow({ run }: { run: SyncRun }) {
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState<SyncRunDetail | null>(null);
@@ -266,17 +543,7 @@ function RunRow({ run }: { run: SyncRun }) {
   };
 
   const config = statusConfig[liveRun.status];
-
-  const durationMs =
-    liveRun.completedAt
-      ? new Date(liveRun.completedAt).getTime() - new Date(liveRun.startedAt).getTime()
-      : null;
-
-  const durationText = durationMs !== null
-    ? durationMs < 1000
-      ? `${durationMs}ms`
-      : `${(durationMs / 1000).toFixed(1)}s`
-    : null;
+  const durationText = formatRunDuration(liveRun);
 
   return (
     <div className="bg-surface-container rounded-xl border border-outline-variant/20 overflow-hidden">
@@ -291,10 +558,12 @@ function RunRow({ run }: { run: SyncRun }) {
               {KIND_LABELS[run.kind] ?? run.kind} Sync
             </span>
             <span className={`text-xs px-1.5 py-0.5 rounded-full border font-medium ${config.badge}`}>
-              {liveRun.status}
+              {titleCaseStatus(liveRun.status)}
             </span>
           </div>
-          <div className="text-on-surface-variant text-xs mt-0.5 truncate">{stripKindPrefix(liveRun.summary)}</div>
+          <div className="text-on-surface-variant text-xs mt-0.5 truncate">
+            {capitalizeSentence(stripKindPrefix(liveRun.summary))}
+          </div>
         </div>
         <div className="flex-shrink-0 text-right mr-2">
           <div className="text-on-surface-variant text-xs">{formatRelativeTime(liveRun.startedAt)}</div>
@@ -319,12 +588,6 @@ function RunRow({ run }: { run: SyncRun }) {
                 <div className="text-on-surface mt-0.5">{formatDateTime(liveRun.completedAt)}</div>
               </div>
             )}
-            {liveRun.error && (
-              <div className="col-span-2">
-                <span className="text-error">Error</span>
-                <div className="text-error/80 mt-0.5 font-mono break-all">{liveRun.error}</div>
-              </div>
-            )}
           </div>
 
           {/* Run items */}
@@ -342,7 +605,7 @@ function RunRow({ run }: { run: SyncRun }) {
                 </button>
               </div>
             ) : detail ? (
-              <RunItems items={detail.items} />
+              <RunItems run={liveRun} items={detail.items} />
             ) : null}
           </div>
         </div>
@@ -351,19 +614,18 @@ function RunRow({ run }: { run: SyncRun }) {
   );
 }
 
-function RunItems({ items }: { items: SyncRunItem[] }) {
+function RunItems({ run, items }: { run: SyncRun; items: SyncRunItem[] }) {
   if (items.length === 0) {
+    if (run.kind === "rss" && run.status !== "error") {
+      return <div className="text-xs text-on-surface-variant py-2">RSS feed checks completed with no new items.</div>;
+    }
     return <div className="text-xs text-on-surface-variant py-2">No step details recorded.</div>;
   }
 
   const failures = items.filter((i) => i.action === "watchlist.match.failed");
   const unresolved = items.filter((i) => i.action === "watchlist.date_unresolved");
-  const errors = items.filter(
-    (i) => i.status === "error" && i.action !== "watchlist.match.failed" && i.action !== "watchlist.date_unresolved"
-  );
-  const other = items.filter(
-    (i) => i.status === "success" && i.action !== "watchlist.match.failed" && i.action !== "watchlist.date_unresolved"
-  );
+  const errors = collectErrorSteps(run, items);
+  const other = groupSuccessfulSteps(run, items);
 
   return (
     <div className="space-y-3">
@@ -394,18 +656,18 @@ function RunItems({ items }: { items: SyncRunItem[] }) {
       {/* Errors */}
       {errors.length > 0 && (
         <ItemSectionCollapsible
-          title="errors"
+          title="Errors"
           count={errors.length}
           tone="error"
           items={errors}
-          renderItem={(item) => <RunItemRow key={item.id} item={item} />}
+          renderItem={(item) => <HistoryStepRow key={item.id} item={item} />}
         />
       )}
 
       {/* Match failures */}
       {failures.length > 0 && (
         <ItemSectionCollapsible
-          title="unmatched items"
+          title="Unmatched items"
           count={failures.length}
           tone="warning"
           items={failures}
@@ -416,7 +678,7 @@ function RunItems({ items }: { items: SyncRunItem[] }) {
       {/* Watchlisted at date unresolved */}
       {unresolved.length > 0 && (
         <ItemSectionCollapsible
-          title="watchlisted date unresolved"
+          title="Watchlisted date unresolved"
           count={unresolved.length}
           tone="warning"
           items={unresolved}
@@ -430,16 +692,16 @@ function RunItems({ items }: { items: SyncRunItem[] }) {
   );
 }
 
-function RunItemRow({ item }: { item: SyncRunItem }) {
+function HistoryStepRow({ item }: { item: HistoryStep }) {
   return (
     <div className="bg-error/5 border border-error/20 rounded-lg px-3 py-2 text-xs">
       <div className="flex items-center gap-2">
-        <span className="text-error font-medium">{ACTION_LABELS[item.action] ?? item.action}</span>
+        <span className="text-error font-medium">{item.label}</span>
       </div>
-      {item.details !== undefined && item.details !== null && (
-        <pre className="mt-1 text-error/70 font-mono whitespace-pre-wrap break-all max-h-24 overflow-auto">
-          {JSON.stringify(item.details, null, 2)}
-        </pre>
+      {item.meta && (
+        <div className="mt-1 text-error/80 whitespace-pre-wrap break-words">
+          {item.meta}
+        </div>
       )}
     </div>
   );
@@ -546,7 +808,7 @@ function DateUnresolvedRow({ item }: { item: SyncRunItem }) {
   );
 }
 
-function StepsCollapsible({ items }: { items: SyncRunItem[] }) {
+function StepsCollapsible({ items }: { items: HistoryStep[] }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -563,9 +825,9 @@ function StepsCollapsible({ items }: { items: SyncRunItem[] }) {
           {items.map((item) => (
             <div key={item.id} className="flex items-center gap-2 text-xs px-2 py-1 rounded-lg bg-surface-container/50">
               <CheckCircle size={12} className="text-success flex-shrink-0" />
-              <span className="text-on-surface-variant">{ACTION_LABELS[item.action] ?? item.action}</span>
-              {item.details !== null && typeof item.details === "object" && "itemCount" in (item.details as object) && (
-                <span className="text-on-surface-variant/60 ml-auto">{String((item.details as Record<string, unknown>)["itemCount"])} items</span>
+              <span className="text-on-surface-variant">{item.label}</span>
+              {item.meta && (
+                <span className="text-on-surface-variant/60 ml-auto text-right">{item.meta}</span>
               )}
             </div>
           ))}
@@ -575,7 +837,7 @@ function StepsCollapsible({ items }: { items: SyncRunItem[] }) {
   );
 }
 
-function ItemSectionCollapsible({
+function ItemSectionCollapsible<T>({
   title,
   count,
   tone,
@@ -585,8 +847,8 @@ function ItemSectionCollapsible({
   title: string;
   count: number;
   tone: "warning" | "error";
-  items: SyncRunItem[];
-  renderItem: (item: SyncRunItem) => ReactNode;
+  items: T[];
+  renderItem: (item: T) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const toneClass = tone === "error"

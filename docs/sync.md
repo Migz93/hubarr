@@ -220,7 +220,10 @@ History stores higher-level sync runs such as:
 - `publish`
 
 It also stores per-run detail rows for actions such as watchlist fetches, match
-failures, unresolved `addedAt` dates, and collection updates.
+failures, unresolved `addedAt` dates, collection updates, and RSS feed checks.
+The History page groups those raw rows into more readable operational steps so
+the UI reflects what a job actually did rather than dumping every low-level
+event verbatim.
 
 ### Jobs
 
