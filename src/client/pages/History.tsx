@@ -261,8 +261,7 @@ function titleCaseStatus(status: SyncRun["status"]): string {
 }
 
 function formatRunDuration(run: SyncRun, now = Date.now()): string | null {
-  const endTime = run.completedAt ? new Date(run.completedAt).getTime() : Date.now();
-  const effectiveEndTime = run.completedAt ? endTime : now;
+  const effectiveEndTime = run.completedAt ? new Date(run.completedAt).getTime() : now;
   const durationMs = Math.max(0, effectiveEndTime - new Date(run.startedAt).getTime());
   const durationSeconds = Math.floor(durationMs / 1000);
 
