@@ -240,18 +240,20 @@ export class HubarrServices {
    */
   async runOnboardingPreload(onProgress: (event: PreloadProgressEvent) => void): Promise<void> {
     if (this.onboardingPreloadSession !== null) {
-      for (const event of this.onboardingPreloadSession.events) {
-        onProgress(event);
-      }
-      if (this.onboardingPreloadSession.completed) {
-        return;
-      }
-
-      this.onboardingPreloadSession.listeners.add(onProgress);
+      const session = this.onboardingPreloadSession;
+      session.listeners.add(onProgress);
       try {
-        await this.onboardingPreloadSession.promise;
+        for (const event of session.events) {
+          this.deliverPreloadEvent(session, onProgress, event);
+        }
+        if (session.completed) {
+          session.listeners.delete(onProgress);
+          return;
+        }
+
+        await session.promise;
       } finally {
-        this.onboardingPreloadSession?.listeners.delete(onProgress);
+        session.listeners.delete(onProgress);
       }
       return;
     }
@@ -272,8 +274,8 @@ export class HubarrServices {
     ) => {
       const event: PreloadProgressEvent = { phase, status, message, ...extra };
       session.events.push(event);
-      for (const listener of session.listeners) {
-        listener(event);
+      for (const listener of [...session.listeners]) {
+        this.deliverPreloadEvent(session, listener, event);
       }
     };
 
@@ -370,6 +372,27 @@ export class HubarrServices {
       await session.promise;
     } finally {
       session.listeners.delete(onProgress);
+    }
+  }
+
+  /**
+   * Protect the shared preload workflow from listener-specific failures such
+   * as disconnected SSE responses throwing while we replay or broadcast.
+   */
+  private deliverPreloadEvent(
+    session: NonNullable<HubarrServices["onboardingPreloadSession"]>,
+    listener: (event: PreloadProgressEvent) => void,
+    event: PreloadProgressEvent
+  ): void {
+    try {
+      listener(event);
+    } catch (error) {
+      session.listeners.delete(listener);
+      this.logger.debug("Dropped onboarding preload listener after delivery failure", {
+        phase: event.phase,
+        status: event.status,
+        message: error instanceof Error ? error.message : String(error)
+      });
     }
   }
 
