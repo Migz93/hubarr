@@ -10,7 +10,7 @@ export interface BootstrapStatus {
 
 export type OnboardingStep = "auth" | "plex" | "general" | "collections" | "users" | "preload";
 
-export type PreloadPhase = "discover-users" | "activity-cache" | "graphql-sync" | "publish-collections" | "complete";
+export type PreloadPhase = "activity-cache" | "graphql-sync" | "publish-collections" | "complete";
 
 export interface PreloadProgressEvent {
   phase: PreloadPhase;

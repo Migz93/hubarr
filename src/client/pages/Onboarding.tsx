@@ -152,6 +152,7 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
             saveLabel="Continue to Users"
             onBack={() => setStep("plex")}
             onSaved={async () => {
+              await loadSetupState();
               setStep("users");
             }}
           />
@@ -332,6 +333,7 @@ function UsersOnboardingStep({ onBack, onSaved }: { onBack: () => void; onSaved:
                 key={user.id}
                 user={user}
                 selected={selectedIds.has(user.id)}
+                disabled={saving}
                 onToggle={() => toggle(user.id)}
               />
             ))}
@@ -339,8 +341,9 @@ function UsersOnboardingStep({ onBack, onSaved }: { onBack: () => void; onSaved:
 
           <div className="flex items-center justify-between pt-4 border-t border-outline-variant/20">
             <button
+              disabled={saving}
               onClick={toggleAll}
-              className="text-sm text-primary hover:text-primary-dim transition-colors"
+              className="text-sm text-primary hover:text-primary-dim disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {allSelected ? "Deselect all" : "Select all"}
             </button>
@@ -359,8 +362,9 @@ function UsersOnboardingStep({ onBack, onSaved }: { onBack: () => void; onSaved:
 
       <div className="mt-5 flex items-center justify-between">
         <button
+          disabled={saving}
           onClick={onBack}
-          className="flex items-center gap-1 bg-surface-container-high hover:bg-surface-bright text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
+          className="flex items-center gap-1 bg-surface-container-high hover:bg-surface-bright disabled:opacity-50 disabled:cursor-not-allowed text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
         >
           <ChevronLeft size={15} />
           Back
@@ -392,18 +396,25 @@ function UsersOnboardingStep({ onBack, onSaved }: { onBack: () => void; onSaved:
 function UserSelectCard({
   user,
   selected,
+  disabled = false,
   onToggle
 }: {
   user: UserRecord;
   selected: boolean;
+  disabled?: boolean;
   onToggle: () => void;
 }) {
   const avatarSrc = getPlexImageSrc(user.avatarUrl);
 
   return (
     <button
-      onClick={onToggle}
-      className={`flex flex-col items-center gap-2 p-3 rounded-xl w-24 transition-all ${
+      disabled={disabled}
+      onClick={() => {
+        if (!disabled) {
+          onToggle();
+        }
+      }}
+      className={`flex flex-col items-center gap-2 p-3 rounded-xl w-24 transition-all disabled:opacity-60 disabled:cursor-not-allowed ${
         selected
           ? "bg-primary/10 ring-1 ring-primary/40"
           : "hover:bg-surface-container-high ring-1 ring-transparent"
@@ -463,21 +474,18 @@ interface PhaseState {
 type VisiblePreloadPhase = Exclude<PreloadPhase, "complete">;
 
 const VISIBLE_PRELOAD_PHASES: VisiblePreloadPhase[] = [
-  "discover-users",
   "activity-cache",
   "graphql-sync",
   "publish-collections"
 ];
 
 const INITIAL_PHASES: Record<VisiblePreloadPhase, PhaseState> = {
-  "discover-users": { status: "idle", message: "" },
   "activity-cache": { status: "idle", message: "" },
   "graphql-sync": { status: "idle", message: "" },
   "publish-collections": { status: "idle", message: "" }
 };
 
 const PHASE_LABELS: Record<VisiblePreloadPhase, string> = {
-  "discover-users": "Fetch Plex users & avatars",
   "activity-cache": "Sync activity feed",
   "graphql-sync": "Sync watchlists",
   "publish-collections": "Publish collections"
@@ -634,7 +642,10 @@ function PreloadPhaseRow({ label, state }: { label: string; state: PhaseState })
   const isRunning = state.status === "running";
   const isDone = state.status === "done";
   const isError = state.status === "error";
-  const showProgress = isRunning && state.total !== undefined && state.total > 0;
+  const showProgress = isRunning && state.progress !== undefined && state.total !== undefined && state.total > 0;
+  const progressValue: number = showProgress ? (state.progress ?? 0) : 0;
+  const progressTotal: number = showProgress ? (state.total ?? 0) : 0;
+  const progressPercent = showProgress ? Math.round((progressValue / progressTotal) * 100) : 0;
 
   return (
     <div className="flex items-start gap-3">
@@ -660,16 +671,14 @@ function PreloadPhaseRow({ label, state }: { label: string; state: PhaseState })
         {state.message && (
           <p className={`text-xs mt-0.5 ${isError ? "text-error" : "text-on-surface-variant"}`}>
             {state.message}
-            {showProgress && state.progress !== undefined && (
-              <span className="ml-1 text-on-surface-variant/60">({state.progress}/{state.total})</span>
-            )}
+            {showProgress && <span className="ml-1 text-on-surface-variant/60">({progressValue}/{progressTotal})</span>}
           </p>
         )}
         {showProgress && (
           <div className="mt-1.5 h-1 rounded-full bg-surface-container-high overflow-hidden">
             <div
               className="h-full bg-primary rounded-full transition-all duration-300"
-              style={{ width: `${Math.round(((state.progress ?? 0) / state.total) * 100)}%` }}
+              style={{ width: `${progressPercent}%` }}
             />
           </div>
         )}
@@ -764,7 +773,7 @@ function StepDot({
   label: string;
 }) {
   return (
-    <div className="flex flex-col items-center gap-1">
+    <div className="w-16 sm:w-20 flex flex-col items-center gap-1">
       <div
         className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors ${
           done
@@ -776,7 +785,7 @@ function StepDot({
       >
         {done ? <Check size={14} /> : number}
       </div>
-      <span className={`text-xs ${active ? "text-on-surface" : "text-on-surface-variant"}`}>
+      <span className={`text-xs text-center ${active ? "text-on-surface" : "text-on-surface-variant"}`}>
         {label}
       </span>
     </div>

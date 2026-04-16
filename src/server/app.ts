@@ -402,10 +402,11 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   /**
    * Final onboarding step: streams preload progress via Server-Sent Events.
    * The client connects once the users step is confirmed and listens until a
-   * "complete" phase event signals that all four preload phases have finished.
+   * "complete" phase event signals that all remaining preload phases have
+   * finished. Reconnecting during preload resumes the same in-flight session.
    *
    * Phases emitted:
-   * discover-users → activity-cache → graphql-sync → publish-collections → complete
+   * activity-cache → graphql-sync → publish-collections → complete
    */
   app.get("/api/setup/preload", requireAuth, async (_req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
@@ -431,6 +432,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   /** Mark onboarding as fully complete so the main app becomes accessible. */
   app.post("/api/setup/complete", requireAuth, (_req, res) => {
     db.updateAppSettings({ usersStepComplete: true, onboardingComplete: true });
+    services.clearOnboardingPreloadSession();
     res.json({ ok: true });
   });
 
