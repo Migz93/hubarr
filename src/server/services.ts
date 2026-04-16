@@ -243,7 +243,7 @@ export class HubarrServices {
       const session = this.onboardingPreloadSession;
       session.listeners.add(onProgress);
       try {
-        for (const event of session.events) {
+        for (const event of [...session.events]) {
           this.deliverPreloadEvent(session, onProgress, event);
         }
         if (session.completed) {

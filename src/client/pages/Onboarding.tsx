@@ -541,6 +541,10 @@ function PreloadStep({ onComplete }: { onComplete: () => Promise<void> }) {
         if (closed) {
           return;
         }
+        if (event.status === "error") {
+          setFatalError(event.message || "Preload failed unexpectedly. Retry to continue.");
+          return;
+        }
         setDone(true);
         setFatalError(null);
         setRetryCompletionOnly(false);

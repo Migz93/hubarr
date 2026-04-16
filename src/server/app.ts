@@ -408,14 +408,20 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
    * Phases emitted:
    * activity-cache → graphql-sync → publish-collections → complete
    */
-  app.get("/api/setup/preload", requireAuth, async (_req, res) => {
+  app.get("/api/setup/preload", requireAuth, async (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
+    let clientDisconnected = false;
+    req.on("close", () => {
+      clientDisconnected = true;
+    });
+
     try {
       await services.runOnboardingPreload((event) => {
+        if (clientDisconnected) return;
         res.write(`data: ${JSON.stringify(event)}\n\n`);
       });
     } catch (err) {
@@ -423,7 +429,9 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       // internally, so this only fires on truly unexpected failures.
       const message = err instanceof Error ? err.message : String(err);
       logger.error("Onboarding preload aborted with unexpected error", { message });
-      res.write(`data: ${JSON.stringify({ phase: "complete", status: "error", message })}\n\n`);
+      if (!clientDisconnected) {
+        res.write(`data: ${JSON.stringify({ phase: "complete", status: "error", message })}\n\n`);
+      }
     }
 
     res.end();
