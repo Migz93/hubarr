@@ -393,6 +393,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     }
   });
 
+  /** Persist completion of the user-selection step before preload begins. */
   app.post("/api/setup/users/complete", requireAuth, (_req, res) => {
     db.updateAppSettings({ usersStepComplete: true });
     res.json({ ok: true });

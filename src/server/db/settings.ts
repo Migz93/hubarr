@@ -106,6 +106,10 @@ export function resolveSessionSecret(db: Database.Database, dataDir: string): st
 // Bootstrap / Auth
 // -------------------------------------------------------------------------
 
+/**
+ * Reports whether the instance has enough persisted configuration to run and
+ * whether the onboarding wizard has been formally completed.
+ */
 export function getBootstrapStatus(db: Database.Database, hasActiveSession: boolean): BootstrapStatus {
   const plexSettings = getSetting<PlexSettingsInput>(db, "plex");
   const appSettings = getAppSettings(db);
@@ -131,6 +135,10 @@ export function getBootstrapStatus(db: Database.Database, hasActiveSession: bool
   };
 }
 
+/**
+ * Resumes onboarding from the earliest step that still lacks a persisted
+ * completion marker.
+ */
 export function getCurrentOnboardingStep(db: Database.Database): OnboardingStep {
   const owner = getPlexOwner(db);
   if (!owner) {

@@ -182,6 +182,10 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
 // cached in the background after the Plex step completes.
 const AVATAR_POLL_MAX = 6;
 
+/**
+ * Lets the admin choose which Plex users should have watchlist collections
+ * enabled before the one-time preload runs.
+ */
 function UsersOnboardingStep({ onBack, onSaved }: { onBack: () => void; onSaved: () => Promise<void> }) {
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -190,17 +194,38 @@ function UsersOnboardingStep({ onBack, onSaved }: { onBack: () => void; onSaved:
   const [error, setError] = useState<string | null>(null);
   const [avatarPollCount, setAvatarPollCount] = useState(0);
   const initialSelectionDone = useRef(false);
+  const knownUserIds = useRef<Set<number>>(new Set());
+
+  // Merge newly fetched users into local state without undoing manual
+  // selection changes for users the admin has already seen on the page.
+  function applyFetchedUsers(list: UserRecord[]) {
+    const nextKnownIds = new Set(list.map((user) => user.id));
+    const autoSelectedIds = list.filter((user) => user.isSelf || user.enabled).map((user) => user.id);
+
+    setUsers(list);
+    setSelectedIds((prev) => {
+      if (!initialSelectionDone.current) {
+        initialSelectionDone.current = true;
+        knownUserIds.current = nextKnownIds;
+        return new Set(autoSelectedIds);
+      }
+
+      const next = new Set(prev);
+      for (const id of autoSelectedIds) {
+        if (!knownUserIds.current.has(id)) {
+          next.add(id);
+        }
+      }
+      knownUserIds.current = nextKnownIds;
+      return next;
+    });
+  }
 
   // Initial load
   useEffect(() => {
     apiGet<UserRecord[]>("/api/users")
       .then((list) => {
-        setUsers(list);
-        if (!initialSelectionDone.current) {
-          // Pre-select the admin and any users already enabled
-          setSelectedIds(new Set(list.filter((u) => u.isSelf || u.enabled).map((u) => u.id)));
-          initialSelectionDone.current = true;
-        }
+        applyFetchedUsers(list);
       })
       .catch(() => {
         /* empty state shown, user can proceed */
@@ -218,7 +243,7 @@ function UsersOnboardingStep({ onBack, onSaved }: { onBack: () => void; onSaved:
     const timer = setTimeout(async () => {
       try {
         const list = await apiGet<UserRecord[]>("/api/users");
-        setUsers(list);
+        applyFetchedUsers(list);
       } catch {
         /* ignore — we'll try again next cycle */
       }
@@ -458,15 +483,38 @@ const PHASE_LABELS: Record<VisiblePreloadPhase, string> = {
   "publish-collections": "Publish collections"
 };
 
+/**
+ * Streams the one-time preload progress, then marks onboarding complete before
+ * handing control back to the main app shell.
+ */
 function PreloadStep({ onComplete }: { onComplete: () => Promise<void> }) {
   const [phases, setPhases] = useState<Record<VisiblePreloadPhase, PhaseState>>(INITIAL_PHASES);
   const [done, setDone] = useState(false);
   const [fatalError, setFatalError] = useState<string | null>(null);
   const [retryToken, setRetryToken] = useState(0);
+  const [retryCompletionOnly, setRetryCompletionOnly] = useState(false);
   const enteringRef = useRef(false);
   const onCompleteRef = useRef(onComplete);
 
   onCompleteRef.current = onComplete;
+
+  async function finishOnboarding() {
+    setFatalError(null);
+    try {
+      await apiPost("/api/setup/complete", {});
+      setRetryCompletionOnly(false);
+      await onCompleteRef.current();
+    } catch (caught) {
+      setDone(false);
+      setRetryCompletionOnly(true);
+      enteringRef.current = false;
+      setFatalError(
+        caught instanceof Error
+          ? caught.message
+          : "Could not finish setup. Retry to enter Hubarr."
+      );
+    }
+  }
 
   useEffect(() => {
     let closed = false;
@@ -487,15 +535,11 @@ function PreloadStep({ onComplete }: { onComplete: () => Promise<void> }) {
         }
         setDone(true);
         setFatalError(null);
+        setRetryCompletionOnly(false);
         if (!enteringRef.current) {
           enteringRef.current = true;
           window.setTimeout(async () => {
-            try {
-              await apiPost("/api/setup/complete", {});
-            } catch {
-              // non-fatal — app will still work, onboarding won't repeat
-            }
-            await onCompleteRef.current();
+            await finishOnboarding();
           }, 1500);
         }
         return;
@@ -527,9 +571,16 @@ function PreloadStep({ onComplete }: { onComplete: () => Promise<void> }) {
   }, [retryToken]);
 
   function retry() {
+    if (retryCompletionOnly) {
+      enteringRef.current = true;
+      void finishOnboarding();
+      return;
+    }
+
     enteringRef.current = false;
     setDone(false);
     setFatalError(null);
+    setRetryCompletionOnly(false);
     setPhases(INITIAL_PHASES);
     setRetryToken((current) => current + 1);
   }

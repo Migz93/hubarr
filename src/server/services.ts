@@ -280,6 +280,7 @@ export class HubarrServices {
 
       const runId = this.db.createSyncRun("full", "Onboarding preload watchlist sync.");
       let succeeded = 0;
+      const failures: string[] = [];
 
       for (let i = 0; i < trackedUsers.length; i++) {
         const user = trackedUsers[i];
@@ -289,6 +290,7 @@ export class HubarrServices {
           succeeded++;
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
+          failures.push(`${user.displayName}: ${message}`);
           this.logger.warn("Onboarding preload: user sync failed — continuing", {
             userId: user.id,
             displayName: user.displayName,
@@ -303,7 +305,12 @@ export class HubarrServices {
       }
 
       const runStatus = succeeded === total ? "success" : "error";
-      this.db.completeSyncRun(runId, runStatus, `Onboarding preload: ${succeeded}/${total} users synced.`, null);
+      this.db.completeSyncRun(
+        runId,
+        runStatus,
+        `Onboarding preload: ${succeeded}/${total} users synced.`,
+        failures.length > 0 ? failures.join(" | ") : null
+      );
       emit("graphql-sync", "done", `Synced watchlists for ${succeeded} of ${total} user${total !== 1 ? "s" : ""}`, { progress: total, total });
       this.logger.info("Onboarding preload: watchlist sync complete", { succeeded, failed: total - succeeded });
     }

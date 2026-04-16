@@ -17,13 +17,23 @@ app.listen(config.port, () => {
 
 const appSettings = db.getAppSettings();
 
-// Guard that skips a scheduled task when onboarding is not yet complete.
-// This prevents background jobs from firing errors against an unconfigured
-// instance while the user is still working through the setup wizard.
+/**
+ * Returns true only when the onboarding flow is finished and the persisted
+ * runtime configuration is still complete enough for background jobs to run.
+ */
+function isSetupReady(): boolean {
+  const bootstrap = db.getBootstrapStatus(false);
+  return bootstrap.onboardingComplete && bootstrap.setupComplete;
+}
+
+/**
+ * Wraps background work so recurring and startup jobs stay idle until the
+ * onboarding flow is finished and the live configuration is usable.
+ */
 function requiresSetup(task: () => Promise<void>): () => Promise<void> {
   return async () => {
-    if (!db.getBootstrapStatus(false).onboardingComplete) {
-      logger.debug("Skipping scheduled task — onboarding is not complete");
+    if (!isSetupReady()) {
+      logger.debug("Skipping scheduled task — setup is not complete");
       return;
     }
     await task();
@@ -99,18 +109,18 @@ scheduler.registerDailyJob({
   })
 });
 
-const onboardingComplete = db.getBootstrapStatus(false).onboardingComplete;
+const setupReady = isSetupReady();
 
 // Activity cache — run on startup (full fetch on first run, incremental thereafter).
-// Skipped until onboarding is fully complete to avoid racing the setup wizard.
-if (onboardingComplete) {
+// Skipped until onboarding is finished and the live configuration is usable.
+if (setupReady) {
   services.syncActivityCache().catch((error) => {
     logger.warn("Activity cache sync failed at startup", {
       error: error instanceof Error ? error.message : String(error)
     });
   });
 } else {
-  logger.info("Skipping startup activity cache sync — onboarding is not complete");
+  logger.info("Skipping startup activity cache sync — setup is not complete");
 }
 
 scheduler.registerRecurringJob({
@@ -121,7 +131,7 @@ scheduler.registerRecurringJob({
   })
 });
 
-if (onboardingComplete && appSettings.rssEnabled) {
+if (setupReady && appSettings.rssEnabled) {
   services.initRss().catch((error) => {
     logger.warn("RSS initialization failed at startup", {
       error: error instanceof Error ? error.message : String(error)
@@ -144,8 +154,8 @@ scheduler.registerRecurringJob({
   })
 });
 
-// Startup sync sequence (if enabled and onboarding is complete)
-if (onboardingComplete && appSettings.fullSyncOnStartup) {
+// Startup sync sequence (if enabled and the instance is fully ready)
+if (setupReady && appSettings.fullSyncOnStartup) {
   void (async () => {
     logger.info("Startup sync sequence started", {
       steps: ["plex-full-library-scan", "full-sync", "collection-publish"]
@@ -183,6 +193,6 @@ if (onboardingComplete && appSettings.fullSyncOnStartup) {
 
     logger.info("Startup sync sequence finished");
   })();
-} else if (!onboardingComplete && appSettings.fullSyncOnStartup) {
-  logger.info("Skipping startup sync sequence — onboarding is not complete");
+} else if (!setupReady && appSettings.fullSyncOnStartup) {
+  logger.info("Skipping startup sync sequence — setup is not complete");
 }
