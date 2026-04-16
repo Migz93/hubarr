@@ -252,14 +252,24 @@ function UsersOnboardingStep({ onBack, onSaved }: { onBack: () => void; onSaved:
     setSaving(true);
     setError(null);
     try {
-      // All users default to disabled — only a single call is needed to enable
-      // the selected ones. Unselected users are already disabled.
-      if (selectedIds.size > 0) {
+      const selectedUserIds = users.filter((user) => selectedIds.has(user.id)).map((user) => user.id);
+      const deselectedUserIds = users.filter((user) => !selectedIds.has(user.id)).map((user) => user.id);
+
+      if (selectedUserIds.length > 0) {
         await apiPost("/api/users/bulk", {
-          ids: [...selectedIds],
+          ids: selectedUserIds,
           enabled: true
         });
       }
+
+      if (deselectedUserIds.length > 0) {
+        await apiPost("/api/users/bulk", {
+          ids: deselectedUserIds,
+          enabled: false
+        });
+      }
+
+      await apiPost("/api/setup/users/complete", {});
       await onSaved();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -425,15 +435,23 @@ interface PhaseState {
   total?: number;
 }
 
-const INITIAL_PHASES: Record<PreloadPhase, PhaseState> = {
+type VisiblePreloadPhase = Exclude<PreloadPhase, "complete">;
+
+const VISIBLE_PRELOAD_PHASES: VisiblePreloadPhase[] = [
+  "discover-users",
+  "activity-cache",
+  "graphql-sync",
+  "publish-collections"
+];
+
+const INITIAL_PHASES: Record<VisiblePreloadPhase, PhaseState> = {
   "discover-users": { status: "idle", message: "" },
   "activity-cache": { status: "idle", message: "" },
   "graphql-sync": { status: "idle", message: "" },
-  "publish-collections": { status: "idle", message: "" },
-  "complete": { status: "idle", message: "" }
+  "publish-collections": { status: "idle", message: "" }
 };
 
-const PHASE_LABELS: Record<Exclude<PreloadPhase, "complete">, string> = {
+const PHASE_LABELS: Record<VisiblePreloadPhase, string> = {
   "discover-users": "Fetch Plex users & avatars",
   "activity-cache": "Sync activity feed",
   "graphql-sync": "Sync watchlists",
@@ -441,12 +459,17 @@ const PHASE_LABELS: Record<Exclude<PreloadPhase, "complete">, string> = {
 };
 
 function PreloadStep({ onComplete }: { onComplete: () => Promise<void> }) {
-  const [phases, setPhases] = useState<Record<PreloadPhase, PhaseState>>(INITIAL_PHASES);
+  const [phases, setPhases] = useState<Record<VisiblePreloadPhase, PhaseState>>(INITIAL_PHASES);
   const [done, setDone] = useState(false);
   const [fatalError, setFatalError] = useState<string | null>(null);
+  const [retryToken, setRetryToken] = useState(0);
   const enteringRef = useRef(false);
+  const onCompleteRef = useRef(onComplete);
+
+  onCompleteRef.current = onComplete;
 
   useEffect(() => {
+    let closed = false;
     const es = new EventSource("/api/setup/preload");
 
     es.onmessage = (e: MessageEvent<string>) => {
@@ -459,7 +482,11 @@ function PreloadStep({ onComplete }: { onComplete: () => Promise<void> }) {
 
       if (event.phase === "complete") {
         es.close();
+        if (closed) {
+          return;
+        }
         setDone(true);
+        setFatalError(null);
         if (!enteringRef.current) {
           enteringRef.current = true;
           window.setTimeout(async () => {
@@ -468,7 +495,7 @@ function PreloadStep({ onComplete }: { onComplete: () => Promise<void> }) {
             } catch {
               // non-fatal — app will still work, onboarding won't repeat
             }
-            await onComplete();
+            await onCompleteRef.current();
           }, 1500);
         }
         return;
@@ -487,14 +514,25 @@ function PreloadStep({ onComplete }: { onComplete: () => Promise<void> }) {
 
     es.onerror = () => {
       es.close();
-      setFatalError("Connection to server lost. Please refresh and try again.");
+      if (closed) {
+        return;
+      }
+      setFatalError("Connection to server lost. Retry to continue the preload.");
     };
 
     return () => {
+      closed = true;
       es.close();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [retryToken]);
+
+  function retry() {
+    enteringRef.current = false;
+    setDone(false);
+    setFatalError(null);
+    setPhases(INITIAL_PHASES);
+    setRetryToken((current) => current + 1);
+  }
 
   return (
     <div className="bg-surface-container rounded-2xl p-6 border border-outline-variant/20 max-w-xl mx-auto">
@@ -507,7 +545,7 @@ function PreloadStep({ onComplete }: { onComplete: () => Promise<void> }) {
       </p>
 
       <div className="space-y-3">
-        {(["discover-users", "activity-cache", "graphql-sync", "publish-collections"] as const).map((phase) => (
+        {VISIBLE_PRELOAD_PHASES.map((phase) => (
           <PreloadPhaseRow
             key={phase}
             label={PHASE_LABELS[phase]}
@@ -527,7 +565,13 @@ function PreloadStep({ onComplete }: { onComplete: () => Promise<void> }) {
 
       {fatalError && (
         <div className="mt-4 bg-error/10 border border-error/30 rounded-lg px-4 py-3 text-error text-sm">
-          {fatalError}
+          <p>{fatalError}</p>
+          <button
+            onClick={retry}
+            className="mt-3 inline-flex items-center gap-2 bg-error text-white font-semibold rounded-lg px-3 py-2 text-sm transition-colors hover:opacity-90"
+          >
+            Retry preload
+          </button>
         </div>
       )}
     </div>

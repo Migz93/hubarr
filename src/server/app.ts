@@ -393,12 +393,18 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     }
   });
 
+  app.post("/api/setup/users/complete", requireAuth, (_req, res) => {
+    db.updateAppSettings({ usersStepComplete: true });
+    res.json({ ok: true });
+  });
+
   /**
-   * Step 5 (final onboarding step): streams preload progress via Server-Sent
-   * Events.  The client connects once collections are saved and listens until
-   * a "complete" phase event signals that all three phases have finished.
+   * Final onboarding step: streams preload progress via Server-Sent Events.
+   * The client connects once the users step is confirmed and listens until a
+   * "complete" phase event signals that all four preload phases have finished.
    *
-   * Phases emitted: discover-users → activity-cache → graphql-sync → complete
+   * Phases emitted:
+   * discover-users → activity-cache → graphql-sync → publish-collections → complete
    */
   app.get("/api/setup/preload", requireAuth, async (_req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
@@ -423,7 +429,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   /** Mark onboarding as fully complete so the main app becomes accessible. */
   app.post("/api/setup/complete", requireAuth, (_req, res) => {
-    db.updateAppSettings({ onboardingComplete: true });
+    db.updateAppSettings({ usersStepComplete: true, onboardingComplete: true });
     res.json({ ok: true });
   });
 

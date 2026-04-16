@@ -22,8 +22,8 @@ const appSettings = db.getAppSettings();
 // instance while the user is still working through the setup wizard.
 function requiresSetup(task: () => Promise<void>): () => Promise<void> {
   return async () => {
-    if (!db.getBootstrapStatus(false).setupComplete) {
-      logger.debug("Skipping scheduled task — setup is not complete");
+    if (!db.getBootstrapStatus(false).onboardingComplete) {
+      logger.debug("Skipping scheduled task — onboarding is not complete");
       return;
     }
     await task();
@@ -99,18 +99,18 @@ scheduler.registerDailyJob({
   })
 });
 
-const setupComplete = db.getBootstrapStatus(false).setupComplete;
+const onboardingComplete = db.getBootstrapStatus(false).onboardingComplete;
 
 // Activity cache — run on startup (full fetch on first run, incremental thereafter).
-// Skipped if setup is not complete to avoid errors against an unconfigured instance.
-if (setupComplete) {
+// Skipped until onboarding is fully complete to avoid racing the setup wizard.
+if (onboardingComplete) {
   services.syncActivityCache().catch((error) => {
     logger.warn("Activity cache sync failed at startup", {
       error: error instanceof Error ? error.message : String(error)
     });
   });
 } else {
-  logger.info("Skipping startup activity cache sync — setup is not complete");
+  logger.info("Skipping startup activity cache sync — onboarding is not complete");
 }
 
 scheduler.registerRecurringJob({
@@ -121,7 +121,7 @@ scheduler.registerRecurringJob({
   })
 });
 
-if (setupComplete && appSettings.rssEnabled) {
+if (onboardingComplete && appSettings.rssEnabled) {
   services.initRss().catch((error) => {
     logger.warn("RSS initialization failed at startup", {
       error: error instanceof Error ? error.message : String(error)
@@ -144,8 +144,8 @@ scheduler.registerRecurringJob({
   })
 });
 
-// Startup sync sequence (if enabled and setup is complete)
-if (setupComplete && appSettings.fullSyncOnStartup) {
+// Startup sync sequence (if enabled and onboarding is complete)
+if (onboardingComplete && appSettings.fullSyncOnStartup) {
   void (async () => {
     logger.info("Startup sync sequence started", {
       steps: ["plex-full-library-scan", "full-sync", "collection-publish"]
@@ -183,6 +183,6 @@ if (setupComplete && appSettings.fullSyncOnStartup) {
 
     logger.info("Startup sync sequence finished");
   })();
-} else if (!setupComplete && appSettings.fullSyncOnStartup) {
-  logger.info("Skipping startup sync sequence — setup is not complete");
+} else if (!onboardingComplete && appSettings.fullSyncOnStartup) {
+  logger.info("Skipping startup sync sequence — onboarding is not complete");
 }

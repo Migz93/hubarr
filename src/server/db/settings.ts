@@ -35,6 +35,7 @@ export const defaultAppSettings: AppSettings = {
   defaultMovieLibraryId: null,
   defaultShowLibraryId: null,
   trustProxy: false,
+  usersStepComplete: false,
   onboardingComplete: false
 };
 
@@ -149,7 +150,11 @@ export function getCurrentOnboardingStep(db: Database.Database): OnboardingStep 
     return "collections";
   }
 
-  return "collections";
+  if (!appSettings.usersStepComplete) {
+    return "users";
+  }
+
+  return "preload";
 }
 
 export function getPlexOwner(db: Database.Database): PlexOwnerRecord | null {

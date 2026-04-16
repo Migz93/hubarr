@@ -83,6 +83,7 @@ export interface AppSettings {
   defaultMovieLibraryId: string | null;
   defaultShowLibraryId: string | null;
   trustProxy: boolean;
+  usersStepComplete: boolean;
   onboardingComplete: boolean;
 }
 

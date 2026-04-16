@@ -219,13 +219,14 @@ export class HubarrServices {
   }
 
   /**
-   * Runs the three-phase onboarding preload sequence and streams progress
+   * Runs the four-phase onboarding preload sequence and streams progress
    * events back to the caller via the provided callback.
    *
    * Phases:
    *  1. discover-users  — fetch Plex friends + managed users, cache avatars
    *  2. activity-cache  — initial watchlist activity feed sync
    *  3. graphql-sync    — watchlist GraphQL sync for all tracked users
+   *  4. publish-collections — create/update Plex collections for enabled users
    *
    * Individual phase failures are reported but do not abort the remaining
    * phases — the sequence always runs to completion.
