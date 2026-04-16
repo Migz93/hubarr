@@ -37,6 +37,7 @@ export class HubarrDatabase {
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     runMigrations(this.db);
+    syncRepo.reconcileStaleRuns(this.db);
     settingsRepo.seedDefaultSettings(this.db);
     this.sessionSecret = settingsRepo.resolveSessionSecret(this.db, config.dataDir);
   }

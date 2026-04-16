@@ -37,6 +37,16 @@ export function saveJobRunState(
 // Sync Runs
 // -------------------------------------------------------------------------
 
+export function reconcileStaleRuns(db: Database.Database): void {
+  db.prepare(`
+    UPDATE sync_runs
+    SET status = 'error',
+        completed_at = ?,
+        error = 'Aborted: process restarted while job was running'
+    WHERE status = 'running'
+  `).run(new Date().toISOString());
+}
+
 export function pruneSyncRuns(db: Database.Database, maxEvents: number): void {
   const retention = Math.max(1, Math.floor(maxEvents));
   db.prepare(`
