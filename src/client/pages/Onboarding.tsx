@@ -634,6 +634,7 @@ function PreloadPhaseRow({ label, state }: { label: string; state: PhaseState })
   const isRunning = state.status === "running";
   const isDone = state.status === "done";
   const isError = state.status === "error";
+  const showProgress = isRunning && state.total !== undefined && state.total > 0;
 
   return (
     <div className="flex items-start gap-3">
@@ -659,12 +660,12 @@ function PreloadPhaseRow({ label, state }: { label: string; state: PhaseState })
         {state.message && (
           <p className={`text-xs mt-0.5 ${isError ? "text-error" : "text-on-surface-variant"}`}>
             {state.message}
-            {isRunning && state.total !== undefined && state.total > 0 && state.progress !== undefined && (
+            {showProgress && state.progress !== undefined && (
               <span className="ml-1 text-on-surface-variant/60">({state.progress}/{state.total})</span>
             )}
           </p>
         )}
-        {isRunning && state.total !== undefined && state.total > 0 && (
+        {showProgress && (
           <div className="mt-1.5 h-1 rounded-full bg-surface-container-high overflow-hidden">
             <div
               className="h-full bg-primary rounded-full transition-all duration-300"
