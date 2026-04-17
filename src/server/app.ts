@@ -439,6 +439,10 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   /** Mark onboarding as fully complete so the main app becomes accessible. */
   app.post("/api/setup/complete", requireAuth, (_req, res) => {
+    if (!services.isPreloadComplete()) {
+      res.status(400).json({ error: "Preload has not completed successfully." });
+      return;
+    }
     db.updateAppSettings({ usersStepComplete: true, onboardingComplete: true });
     services.clearOnboardingPreloadSession();
     res.json({ ok: true });

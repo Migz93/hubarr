@@ -241,9 +241,10 @@ export class HubarrServices {
   async runOnboardingPreload(onProgress: (event: PreloadProgressEvent) => void): Promise<void> {
     if (this.onboardingPreloadSession !== null) {
       const session = this.onboardingPreloadSession;
+      const snapshot = Array.from(session.events);
       session.listeners.add(onProgress);
       try {
-        for (const event of [...session.events]) {
+        for (const event of snapshot) {
           this.deliverPreloadEvent(session, onProgress, event);
         }
         if (session.completed) {
@@ -394,6 +395,10 @@ export class HubarrServices {
         message: error instanceof Error ? error.message : String(error)
       });
     }
+  }
+
+  isPreloadComplete(): boolean {
+    return this.onboardingPreloadSession?.completed === true;
   }
 
   clearOnboardingPreloadSession(): void {
