@@ -280,6 +280,14 @@ export class HubarrServices {
       }
     };
 
+    const withTimeout = <T>(promise: Promise<T>, ms: number, label: string): Promise<T> =>
+      Promise.race([
+        promise,
+        new Promise<T>((_, reject) =>
+          setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms)
+        )
+      ]);
+
     session.promise = (async () => {
       this.logger.info("Onboarding preload started");
 
@@ -288,7 +296,7 @@ export class HubarrServices {
       // ------------------------------------------------------------------
       emit("activity-cache", "running", "Syncing activity feed...");
       try {
-        await this.syncActivityCache();
+        await withTimeout(this.syncActivityCache(), 120_000, "Activity cache sync");
         emit("activity-cache", "done", "Activity feed synced");
         this.logger.info("Onboarding preload: activity cache sync complete");
       } catch (err) {
@@ -316,7 +324,7 @@ export class HubarrServices {
           const user = trackedUsers[i];
           emit("graphql-sync", "running", `Syncing ${user.displayName}...`, { progress: i, total });
           try {
-            await this.syncUser(user, runId);
+            await withTimeout(this.syncUser(user, runId), 60_000, `User sync for ${user.displayName}`);
             succeeded++;
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -350,7 +358,7 @@ export class HubarrServices {
       // ------------------------------------------------------------------
       emit("publish-collections", "running", "Publishing collections...");
       try {
-        await this.runPublishPass();
+        await withTimeout(this.runPublishPass(), 120_000, "Publish collections");
         emit("publish-collections", "done", "Collections published");
         this.logger.info("Onboarding preload: collection publish complete");
       } catch (err) {
