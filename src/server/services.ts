@@ -1216,7 +1216,7 @@ export class HubarrServices {
 
     this.logger.info("Collection sync started", { userCount: friends.length });
 
-    const publishLimit = pLimit(5);
+    const publishLimit = pLimit(3);
     let publishCompleted = 0;
 
     await Promise.all(friends.map((friend) =>

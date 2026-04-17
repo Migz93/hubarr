@@ -36,11 +36,11 @@ class AdaptiveItemLimiter {
     this.maxLimit = limit;
   }
 
-  run<T>(fn: () => Promise<T>, logger?: Logger): Promise<T> {
+  run<T>(fn: () => Promise<T>, logger?: Logger, maxRetries = 5): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       this.pending.push(() => {
         this.active++;
-        this.executeWithRetry(fn, logger)
+        this.executeWithRetry(fn, logger, maxRetries)
           .then((result) => {
             this.active--;
             this.onSuccess(logger);
@@ -75,14 +75,20 @@ class AdaptiveItemLimiter {
     }
   }
 
-  private async executeWithRetry<T>(fn: () => Promise<T>, logger?: Logger): Promise<T> {
+  private async executeWithRetry<T>(fn: () => Promise<T>, logger?: Logger, maxRetries = 5): Promise<T> {
+    let attempts = 0;
     for (;;) {
       const wait = this.cooldownUntil - Date.now();
       if (wait > 0) await new Promise<void>(r => setTimeout(r, wait));
       try {
-        return await fn();
+        const result = await fn();
+        return result;
       } catch (err) {
         if (this.is429(err)) {
+          attempts++;
+          if (attempts > maxRetries) {
+            throw new Error(`Rate limit exceeded after ${maxRetries} retries`);
+          }
           this.onRateLimit(logger);
         } else {
           throw err;
@@ -515,7 +521,9 @@ export class PlexIntegration {
         });
 
         if (!response.ok) {
-          continue;
+          let body = "";
+          try { body = await response.text(); } catch { /* ignore */ }
+          throw new Error(`Discover metadata request failed with HTTP ${response.status}: ${body}`);
         }
 
         const json = (await response.json()) as {
@@ -552,8 +560,11 @@ export class PlexIntegration {
             guids
           };
         }
-      } catch {
-        // Best-effort discover metadata lookup only.
+      } catch (err) {
+        if (err instanceof Error && (err.message.includes("429") || err.message.toLowerCase().includes("rate limit"))) {
+          throw err; // propagate rate-limit errors so adaptiveItemLimiter can handle backoff
+        }
+        // Non-rate-limit errors: try next endpoint
       }
     }
 
