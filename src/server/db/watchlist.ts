@@ -143,6 +143,17 @@ export function getWatchlistGrouped(
     friend_avatar_url: string | null;
   };
 
+  // Build the WHERE clause dynamically. mediaType is pushed to SQL so only
+  // the relevant half of the dataset is loaded — movies and shows are
+  // type-scoped in the GUID merge so filtering here is safe. ORDER BY is
+  // omitted because TypeScript re-sorts after the merge anyway.
+  const whereParts: string[] = [allowSelectedDisabledOnly ? "f.id = ?" : "f.enabled = 1"];
+  const whereParams: (string | number)[] = allowSelectedDisabledOnly && userId ? [userId] : [];
+  if (mediaType) {
+    whereParts.push("w.type = ?");
+    whereParams.push(mediaType);
+  }
+
   const rawRows = db
     .prepare(`
       SELECT w.plex_item_id, w.title, w.type, w.year,
@@ -155,10 +166,9 @@ export function getWatchlistGrouped(
       JOIN users f ON f.id = w.user_id
       LEFT JOIN image_cache ip ON ip.cache_key = 'poster:' || w.plex_item_id
       LEFT JOIN image_cache ia ON ia.cache_key = 'avatar:' || f.plex_user_id
-      WHERE ${allowSelectedDisabledOnly ? "f.id = ?" : "f.enabled = 1"}
-      ORDER BY w.added_at DESC
+      WHERE ${whereParts.join(" AND ")}
     `)
-    .all(...(allowSelectedDisabledOnly && userId ? [userId] : [])) as RawRow[];
+    .all(...whereParams) as RawRow[];
 
   const enabledUsers = db
     .prepare(`
@@ -256,9 +266,9 @@ export function getWatchlistGrouped(
     userCounts.set(row.user_id, (userCounts.get(row.user_id) ?? 0) + 1);
   }
 
-  const allUsersCount = allItems.filter((item) =>
-    mediaType ? item.type === mediaType : true
-  ).length;
+  // mediaType is already filtered in SQL so allItems only contains the
+  // requested type; no second pass needed.
+  const allUsersCount = allItems.length;
 
   const mediaFacetItems = allItems.filter((item) =>
     userId ? item.users.some((user) => user.userId === userId) : true
