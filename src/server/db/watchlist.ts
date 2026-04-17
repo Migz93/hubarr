@@ -1,9 +1,283 @@
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
 import type { WatchlistGroupedItem, WatchlistItem, WatchlistPageResponse, WatchlistSortBy } from "../../shared/types.js";
-import { buildGuidMergePlan, mergeRawPayloadGuids } from "./guid-dedupe.js";
+import { mergeRawPayloadGuids } from "./guid-dedupe.js";
 import { getDiscoverKeyForPlexItemId, upsertMediaItemIdentifiers } from "./identifiers.js";
 import { getAppSettings } from "./settings.js";
+
+type ItemSummaryRow = {
+  plexItemId: string;
+  title: string;
+  type: "movie" | "show";
+  year: number | null;
+  addedAt: string;
+  matchedRatingKey: string | null;
+  userId: number;
+  rawPayload: string;
+  discoverKey: string | null;
+};
+
+type BaseWatchlistItemGroup = {
+  plexItemId: string;
+  title: string;
+  year: number | null;
+  type: "movie" | "show";
+  addedAt: string;
+  matchedRatingKey: string | null;
+  plexAvailable: boolean;
+  memberItemIds: Set<string>;
+  userAddedAt: Map<number, string>;
+};
+
+class ItemDisjointSet {
+  private readonly parent = new Map<string, string>();
+
+  add(itemId: string): void {
+    if (!this.parent.has(itemId)) {
+      this.parent.set(itemId, itemId);
+    }
+  }
+
+  find(itemId: string): string {
+    const parent = this.parent.get(itemId);
+    if (!parent || parent === itemId) return itemId;
+    const root = this.find(parent);
+    this.parent.set(itemId, root);
+    return root;
+  }
+
+  union(left: string, right: string): void {
+    const leftRoot = this.find(left);
+    const rightRoot = this.find(right);
+    if (leftRoot !== rightRoot) {
+      this.parent.set(rightRoot, leftRoot);
+    }
+  }
+}
+
+function compareRepresentativeCandidate(
+  left: Pick<BaseWatchlistItemGroup, "matchedRatingKey" | "addedAt" | "userAddedAt" | "plexItemId">,
+  right: Pick<BaseWatchlistItemGroup, "matchedRatingKey" | "addedAt" | "userAddedAt" | "plexItemId">
+): number {
+  if (Boolean(left.matchedRatingKey) !== Boolean(right.matchedRatingKey)) {
+    return left.matchedRatingKey ? 1 : -1;
+  }
+
+  if (left.addedAt !== right.addedAt) {
+    return left.addedAt > right.addedAt ? 1 : -1;
+  }
+
+  if (left.userAddedAt.size !== right.userAddedAt.size) {
+    return left.userAddedAt.size > right.userAddedAt.size ? 1 : -1;
+  }
+
+  return right.plexItemId.localeCompare(left.plexItemId);
+}
+
+function compareGroupedItems(
+  left: BaseWatchlistItemGroup,
+  right: BaseWatchlistItemGroup,
+  sortBy: WatchlistSortBy
+): number {
+  switch (sortBy) {
+    case "added-asc": {
+      const addedCmp = new Date(left.addedAt).getTime() - new Date(right.addedAt).getTime();
+      if (addedCmp !== 0) return addedCmp;
+      break;
+    }
+    case "title-asc": {
+      const titleCmp = left.title.localeCompare(right.title, undefined, { sensitivity: "base" });
+      if (titleCmp !== 0) return titleCmp;
+      break;
+    }
+    case "title-desc": {
+      const titleCmp = right.title.localeCompare(left.title, undefined, { sensitivity: "base" });
+      if (titleCmp !== 0) return titleCmp;
+      break;
+    }
+    case "year-desc": {
+      const yearCmp = (right.year ?? 0) - (left.year ?? 0);
+      if (yearCmp !== 0) return yearCmp;
+      break;
+    }
+    case "year-asc": {
+      const yearCmp = (left.year ?? 0) - (right.year ?? 0);
+      if (yearCmp !== 0) return yearCmp;
+      break;
+    }
+    default: {
+      const addedCmp = new Date(right.addedAt).getTime() - new Date(left.addedAt).getTime();
+      if (addedCmp !== 0) return addedCmp;
+      break;
+    }
+  }
+
+  const titleCmp = left.title.localeCompare(right.title, undefined, { sensitivity: "base" });
+  if (titleCmp !== 0) return titleCmp;
+
+  const yearCmp = (right.year ?? 0) - (left.year ?? 0);
+  if (yearCmp !== 0) return yearCmp;
+
+  return left.plexItemId.localeCompare(right.plexItemId);
+}
+
+function buildWhereClause(options: {
+  allowSelectedDisabledOnly: boolean;
+  userId?: number;
+  mediaType?: "movie" | "show";
+}): { sql: string; params: (string | number)[] } {
+  const whereParts: string[] = [options.allowSelectedDisabledOnly ? "f.id = ?" : "f.enabled = 1"];
+  const params: (string | number)[] = options.allowSelectedDisabledOnly && options.userId ? [options.userId] : [];
+
+  if (options.mediaType) {
+    whereParts.push("w.type = ?");
+    params.push(options.mediaType);
+  }
+
+  return {
+    sql: whereParts.join(" AND "),
+    params
+  };
+}
+
+function loadWatchlistItemSummaries(
+  db: Database.Database,
+  whereClause: string,
+  whereParams: (string | number)[]
+): ItemSummaryRow[] {
+  return db.prepare(`
+    SELECT
+      w.plex_item_id AS plexItemId,
+      w.title AS title,
+      w.type AS type,
+      w.year AS year,
+      w.added_at AS addedAt,
+      w.matched_rating_key AS matchedRatingKey,
+      w.user_id AS userId,
+      w.raw_payload AS rawPayload,
+      w.discover_key AS discoverKey
+    FROM watchlist_cache w
+    JOIN users f ON f.id = w.user_id
+    WHERE ${whereClause}
+    ORDER BY
+      w.added_at DESC,
+      w.year DESC,
+      w.title COLLATE NOCASE ASC,
+      w.plex_item_id ASC,
+      w.user_id ASC
+  `).all(...whereParams) as ItemSummaryRow[];
+}
+
+function buildMergedWatchlistGroups(
+  rows: ItemSummaryRow[]
+): BaseWatchlistItemGroup[] {
+  const itemsById = new Map<string, BaseWatchlistItemGroup>();
+  const dsu = new ItemDisjointSet();
+  const itemGuids = new Map<string, Set<string>>();
+
+  for (const row of rows) {
+    dsu.add(row.plexItemId);
+
+    const existing = itemsById.get(row.plexItemId);
+    if (existing) {
+      const currentAddedAt = existing.userAddedAt.get(row.userId);
+      if (!currentAddedAt || row.addedAt > currentAddedAt) {
+        existing.userAddedAt.set(row.userId, row.addedAt);
+      }
+      if (row.addedAt > existing.addedAt) {
+        existing.addedAt = row.addedAt;
+      }
+      if (row.matchedRatingKey && !existing.matchedRatingKey) {
+        existing.matchedRatingKey = row.matchedRatingKey;
+      }
+      existing.plexAvailable = existing.plexAvailable || Boolean(row.matchedRatingKey);
+      continue;
+    }
+
+    mergeRawPayloadGuids(itemGuids, row.plexItemId, row.rawPayload);
+    if (row.discoverKey?.trim()) {
+      const identifiers = itemGuids.get(row.plexItemId) ?? new Set<string>();
+      identifiers.add(row.discoverKey.trim().toLowerCase());
+      itemGuids.set(row.plexItemId, identifiers);
+    }
+
+    itemsById.set(row.plexItemId, {
+      plexItemId: row.plexItemId,
+      title: row.title,
+      year: row.year,
+      type: row.type,
+      addedAt: row.addedAt,
+      matchedRatingKey: row.matchedRatingKey,
+      plexAvailable: Boolean(row.matchedRatingKey),
+      memberItemIds: new Set([row.plexItemId]),
+      userAddedAt: new Map([[row.userId, row.addedAt]])
+    });
+  }
+
+  const firstItemByIdentifier = new Map<string, string>();
+  for (const [itemId, identifiers] of itemGuids) {
+    if (!itemsById.has(itemId)) continue;
+    for (const identifier of identifiers) {
+      const existing = firstItemByIdentifier.get(identifier);
+      if (existing) {
+        const existingItem = itemsById.get(existing);
+        const currentItem = itemsById.get(itemId);
+        if (existingItem && currentItem && existingItem.type === currentItem.type) {
+          dsu.union(existing, itemId);
+        }
+      } else {
+        firstItemByIdentifier.set(identifier, itemId);
+      }
+    }
+  }
+
+  const groupsByRoot = new Map<string, BaseWatchlistItemGroup>();
+  for (const item of itemsById.values()) {
+    const root = dsu.find(item.plexItemId);
+    const existing = groupsByRoot.get(root);
+    if (!existing) {
+      groupsByRoot.set(root, {
+        plexItemId: item.plexItemId,
+        title: item.title,
+        year: item.year,
+        type: item.type,
+        addedAt: item.addedAt,
+        matchedRatingKey: item.matchedRatingKey,
+        plexAvailable: item.plexAvailable,
+        memberItemIds: new Set(item.memberItemIds),
+        userAddedAt: new Map(item.userAddedAt)
+      });
+      continue;
+    }
+
+    if (compareRepresentativeCandidate(item, existing) > 0) {
+      existing.plexItemId = item.plexItemId;
+      existing.title = item.title;
+      existing.year = item.year;
+      existing.type = item.type;
+    }
+
+    if (item.addedAt > existing.addedAt) {
+      existing.addedAt = item.addedAt;
+    }
+    if (item.matchedRatingKey && !existing.matchedRatingKey) {
+      existing.matchedRatingKey = item.matchedRatingKey;
+    }
+    existing.plexAvailable = existing.plexAvailable || item.plexAvailable;
+
+    for (const memberItemId of item.memberItemIds) {
+      existing.memberItemIds.add(memberItemId);
+    }
+    for (const [userId, addedAt] of item.userAddedAt) {
+      const currentAddedAt = existing.userAddedAt.get(userId);
+      if (!currentAddedAt || addedAt > currentAddedAt) {
+        existing.userAddedAt.set(userId, addedAt);
+      }
+    }
+  }
+
+  return Array.from(groupsByRoot.values());
+}
 
 export function getWatchlistDiscoverKey(db: Database.Database, plexItemId: string): string | null {
   const explicitDiscoverKey = getDiscoverKeyForPlexItemId(db, plexItemId);
@@ -128,47 +402,14 @@ export function getWatchlistGrouped(
     !selectedUser.enabled &&
     getAppSettings(db).trackAllUsers
   );
+  const { sql: whereClause, params: whereParams } = buildWhereClause({
+    allowSelectedDisabledOnly,
+    userId,
+    mediaType
+  });
 
-  type RawRow = {
-    plex_item_id: string;
-    title: string;
-    type: string;
-    year: number | null;
-    thumb: string | null;
-    added_at: string;
-    matched_rating_key: string | null;
-    raw_payload: string;
-    user_id: number;
-    friend_display_name: string;
-    friend_avatar_url: string | null;
-  };
-
-  // Build the WHERE clause dynamically. mediaType is pushed to SQL so only
-  // the relevant half of the dataset is loaded — movies and shows are
-  // type-scoped in the GUID merge so filtering here is safe. ORDER BY is
-  // omitted because TypeScript re-sorts after the merge anyway.
-  const whereParts: string[] = [allowSelectedDisabledOnly ? "f.id = ?" : "f.enabled = 1"];
-  const whereParams: (string | number)[] = allowSelectedDisabledOnly && userId ? [userId] : [];
-  if (mediaType) {
-    whereParts.push("w.type = ?");
-    whereParams.push(mediaType);
-  }
-
-  const rawRows = db
-    .prepare(`
-      SELECT w.plex_item_id, w.title, w.type, w.year,
-             ip.local_web_path AS thumb,
-             w.added_at, w.matched_rating_key, w.raw_payload,
-             f.id AS user_id,
-             COALESCE(f.display_name_override, f.username) AS friend_display_name,
-             ia.local_web_path AS friend_avatar_url
-      FROM watchlist_cache w
-      JOIN users f ON f.id = w.user_id
-      LEFT JOIN image_cache ip ON ip.cache_key = 'poster:' || w.plex_item_id
-      LEFT JOIN image_cache ia ON ia.cache_key = 'avatar:' || f.plex_user_id
-      WHERE ${whereParts.join(" AND ")}
-    `)
-    .all(...whereParams) as RawRow[];
+  const itemRows = loadWatchlistItemSummaries(db, whereClause, whereParams);
+  const allItems = buildMergedWatchlistGroups(itemRows);
 
   const enabledUsers = db
     .prepare(`
@@ -181,97 +422,17 @@ export function getWatchlistGrouped(
     `)
     .all() as Array<{ userId: number; displayName: string; avatarUrl: string | null }>;
 
-  const grouped = new Map<string, WatchlistGroupedItem>();
-  // Track GUIDs per item so we can merge items that share GUIDs but have
-  // different plex_item_id values (e.g. old discover ratingKey vs new plex:// GUID).
-  const itemGuids = new Map<string, Set<string>>();
-  const itemTypes = new Map<string, "movie" | "show">();
-
-  for (const row of rawRows) {
-    itemTypes.set(row.plex_item_id, row.type as "movie" | "show");
-    mergeRawPayloadGuids(itemGuids, row.plex_item_id, row.raw_payload);
-
-    const existing = grouped.get(row.plex_item_id);
-    const userEntry = {
-      userId: row.user_id,
-      displayName: row.friend_display_name,
-      avatarUrl: row.friend_avatar_url,
-      addedAt: row.added_at
-    };
-    if (existing) {
-      existing.users.push(userEntry);
-      existing.userCount++;
-      if (row.added_at > existing.addedAt) existing.addedAt = row.added_at;
-      if (row.matched_rating_key && !existing.matchedRatingKey) {
-        existing.matchedRatingKey = row.matched_rating_key;
-      }
-      existing.plexAvailable = existing.plexAvailable || Boolean(row.matched_rating_key);
-    } else {
-      grouped.set(row.plex_item_id, {
-        plexItemId: row.plex_item_id,
-        title: row.title,
-        year: row.year,
-        type: row.type as "movie" | "show",
-        posterUrl: row.thumb,
-        addedAt: row.added_at,
-        userCount: 1,
-        users: [userEntry],
-        plexAvailable: Boolean(row.matched_rating_key),
-        matchedRatingKey: row.matched_rating_key
-      });
-    }
-  }
-
-  // Second pass: merge entries whose GUIDs overlap but have different plex_item_id.
-  // This handles legacy data where the same media was cached under different ID formats
-  // (e.g. discover ratingKey for self vs plex:// GUID for friend).
-  const mergeInto = buildGuidMergePlan(itemGuids, itemTypes);
-
-  for (const [sourceId, targetId] of mergeInto) {
-    const source = grouped.get(sourceId);
-    const target = grouped.get(targetId);
-    if (!source || !target) continue;
-    for (const user of source.users) {
-      if (!target.users.some((u) => u.userId === user.userId)) {
-        target.users.push(user);
-        target.userCount++;
-      }
-    }
-    if (source.addedAt > target.addedAt) target.addedAt = source.addedAt;
-    if (source.matchedRatingKey && !target.matchedRatingKey) {
-      target.matchedRatingKey = source.matchedRatingKey;
-    }
-    target.plexAvailable = target.plexAvailable || source.plexAvailable;
-    grouped.delete(sourceId);
-  }
-
-  const sortFn = (a: WatchlistGroupedItem, b: WatchlistGroupedItem): number => {
-    switch (sortBy) {
-      case "added-asc":  return new Date(a.addedAt).getTime() - new Date(b.addedAt).getTime();
-      case "title-asc":  return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
-      case "title-desc": return b.title.localeCompare(a.title, undefined, { sensitivity: "base" });
-      case "year-desc":  return (b.year ?? 0) - (a.year ?? 0);
-      case "year-asc":   return (a.year ?? 0) - (b.year ?? 0);
-      default:           return new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime(); // added-desc
-    }
-  };
-
-  const allItems = Array.from(grouped.values()).sort(sortFn);
-
-  const userFacetRows = rawRows.filter((row) =>
-    mediaType ? row.type === mediaType : true
-  );
   const userCounts = new Map<number, number>();
-  for (const row of userFacetRows) {
-    userCounts.set(row.user_id, (userCounts.get(row.user_id) ?? 0) + 1);
+  for (const item of allItems) {
+    for (const userEntryId of item.userAddedAt.keys()) {
+      userCounts.set(userEntryId, (userCounts.get(userEntryId) ?? 0) + 1);
+    }
   }
 
-  // mediaType is already filtered in SQL so allItems only contains the
-  // requested type; no second pass needed.
   const allUsersCount = allItems.length;
 
   const mediaFacetItems = allItems.filter((item) =>
-    userId ? item.users.some((user) => user.userId === userId) : true
+    userId ? item.userAddedAt.has(userId) : true
   );
   const mediaCounts = {
     all: mediaFacetItems.length,
@@ -280,10 +441,7 @@ export function getWatchlistGrouped(
   };
 
   const filteredItems = allItems.filter((item) => {
-    if (userId && !item.users.some((user) => user.userId === userId)) {
-      return false;
-    }
-    if (mediaType && item.type !== mediaType) {
+    if (userId && !item.userAddedAt.has(userId)) {
       return false;
     }
     if (availability === "available" && !item.plexAvailable) {
@@ -293,10 +451,74 @@ export function getWatchlistGrouped(
       return false;
     }
     return true;
+  }).sort((left, right) => compareGroupedItems(left, right, sortBy));
+
+  const pagedGroups = filteredItems.slice(offset, offset + pageSize);
+
+  const pageMemberItemIds = Array.from(new Set(pagedGroups.flatMap((item) => Array.from(item.memberItemIds))));
+  const posterByItemId = new Map<string, string | null>();
+  if (pageMemberItemIds.length > 0) {
+    const posterRows = db.prepare(`
+      SELECT substr(cache_key, 8) AS plexItemId, local_web_path AS posterUrl
+      FROM image_cache
+      WHERE cache_key IN (${pageMemberItemIds.map(() => "?").join(", ")})
+    `).all(...pageMemberItemIds.map((itemId) => `poster:${itemId}`)) as Array<{ plexItemId: string; posterUrl: string | null }>;
+
+    for (const row of posterRows) {
+      posterByItemId.set(row.plexItemId, row.posterUrl);
+    }
+  }
+
+  const userLookup = new Map<number, { displayName: string; avatarUrl: string | null }>();
+  for (const user of enabledUsers) {
+    userLookup.set(user.userId, {
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl
+    });
+  }
+  if (selectedUser) {
+    userLookup.set(selectedUser.userId, {
+      displayName: selectedUser.displayName,
+      avatarUrl: selectedUser.avatarUrl
+    });
+  }
+
+  const items: WatchlistGroupedItem[] = pagedGroups.map((item) => {
+    const users = Array.from(item.userAddedAt.entries())
+      .sort((left, right) => {
+        const addedCmp = right[1].localeCompare(left[1]);
+        return addedCmp !== 0 ? addedCmp : left[0] - right[0];
+      })
+      .map(([itemUserId, addedAt]) => ({
+        userId: itemUserId,
+        displayName: userLookup.get(itemUserId)?.displayName ?? `User ${itemUserId}`,
+        avatarUrl: userLookup.get(itemUserId)?.avatarUrl ?? null,
+        addedAt
+      }));
+
+    const posterUrl =
+      posterByItemId.get(item.plexItemId)
+      ?? Array.from(item.memberItemIds)
+        .map((memberItemId) => posterByItemId.get(memberItemId) ?? null)
+        .find((candidate): candidate is string => Boolean(candidate))
+      ?? null;
+
+    return {
+      plexItemId: item.plexItemId,
+      title: item.title,
+      year: item.year,
+      type: item.type,
+      posterUrl,
+      addedAt: item.addedAt,
+      userCount: item.userAddedAt.size,
+      users,
+      plexAvailable: item.plexAvailable,
+      matchedRatingKey: item.matchedRatingKey
+    };
   });
 
   return {
-    items: filteredItems.slice(offset, offset + pageSize),
+    items,
     total: filteredItems.length,
     page,
     pageSize,

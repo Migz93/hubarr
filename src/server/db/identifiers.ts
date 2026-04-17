@@ -142,10 +142,111 @@ export function batchUpsertMediaItemIdentifiers(
   db: Database.Database,
   items: Array<Pick<WatchlistItem, "plexItemId" | "type" | "guids" | "discoverKey">>
 ): void {
-  db.transaction(() => {
-    for (const item of items) {
-      upsertMediaItemIdentifiers(db, item);
+  const mediaSeeds = new Map<string, { mediaType: WatchlistItem["type"]; identifiers: Set<string> }>();
+
+  for (const item of items) {
+    const canonicalPlexItemId = normalizeIdentifierValue(item.plexItemId);
+    if (!canonicalPlexItemId) continue;
+
+    const existing = mediaSeeds.get(canonicalPlexItemId);
+    const seed = existing ?? {
+      mediaType: item.type,
+      identifiers: new Set<string>()
+    };
+
+    seed.mediaType = item.type;
+    seed.identifiers.add(canonicalPlexItemId);
+
+    if (item.discoverKey) {
+      const normalizedDiscoverKey = normalizeIdentifierValue(item.discoverKey);
+      if (normalizedDiscoverKey) {
+        seed.identifiers.add(normalizedDiscoverKey);
+      }
     }
+
+    for (const guid of item.guids ?? []) {
+      if (typeof guid !== "string") continue;
+      const normalizedGuid = normalizeIdentifierValue(guid);
+      if (normalizedGuid) {
+        seed.identifiers.add(normalizedGuid);
+      }
+    }
+
+    mediaSeeds.set(canonicalPlexItemId, seed);
+  }
+
+  if (mediaSeeds.size === 0) return;
+
+  db.transaction(() => {
+    db.exec(`
+      CREATE TEMP TABLE IF NOT EXISTS temp_media_item_seed (
+        canonical_plex_item_id TEXT PRIMARY KEY,
+        media_type TEXT NOT NULL
+      );
+      CREATE TEMP TABLE IF NOT EXISTS temp_media_identifier_seed (
+        canonical_plex_item_id TEXT NOT NULL,
+        identifier_type TEXT NOT NULL,
+        identifier_value TEXT NOT NULL,
+        PRIMARY KEY (identifier_type, identifier_value)
+      );
+      DELETE FROM temp_media_item_seed;
+      DELETE FROM temp_media_identifier_seed;
+    `);
+
+    const insertMediaSeed = db.prepare(`
+      INSERT INTO temp_media_item_seed (canonical_plex_item_id, media_type)
+      VALUES (?, ?)
+      ON CONFLICT(canonical_plex_item_id) DO UPDATE SET
+        media_type = excluded.media_type
+    `);
+    const insertIdentifierSeed = db.prepare(`
+      INSERT INTO temp_media_identifier_seed (canonical_plex_item_id, identifier_type, identifier_value)
+      VALUES (?, ?, ?)
+      ON CONFLICT(identifier_type, identifier_value) DO UPDATE SET
+        canonical_plex_item_id = excluded.canonical_plex_item_id
+    `);
+
+    for (const [canonicalPlexItemId, seed] of mediaSeeds) {
+      insertMediaSeed.run(canonicalPlexItemId, seed.mediaType);
+      for (const identifier of seed.identifiers) {
+        insertIdentifierSeed.run(
+          canonicalPlexItemId,
+          inferMediaIdentifierType(identifier),
+          identifier
+        );
+      }
+    }
+
+    db.prepare(`
+      INSERT OR IGNORE INTO media_items (canonical_plex_item_id, media_type)
+      SELECT canonical_plex_item_id, media_type
+      FROM temp_media_item_seed
+    `).run();
+
+    db.prepare(`
+      UPDATE media_items
+      SET media_type = (
+        SELECT seed.media_type
+        FROM temp_media_item_seed seed
+        WHERE seed.canonical_plex_item_id = media_items.canonical_plex_item_id
+      )
+      WHERE canonical_plex_item_id IN (
+        SELECT canonical_plex_item_id
+        FROM temp_media_item_seed
+      )
+    `).run();
+
+    db.prepare(`
+      INSERT OR REPLACE INTO media_item_identifiers (media_item_id, identifier_type, identifier_value)
+      SELECT mi.id, seed.identifier_type, seed.identifier_value
+      FROM temp_media_identifier_seed seed
+      JOIN media_items mi ON mi.canonical_plex_item_id = seed.canonical_plex_item_id
+    `).run();
+
+    db.exec(`
+      DELETE FROM temp_media_item_seed;
+      DELETE FROM temp_media_identifier_seed;
+    `);
   })();
 }
 

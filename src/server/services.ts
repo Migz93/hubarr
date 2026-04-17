@@ -324,8 +324,9 @@ export class HubarrServices {
         const onboardingLimit = pLimit(5);
         await Promise.all(trackedUsers.map((user) =>
           onboardingLimit(async () => {
+            const syncPromise = this.syncUser(user, runId);
             try {
-              await withTimeout(this.syncUser(user, runId), 60_000, `User sync for ${user.displayName}`);
+              await withTimeout(syncPromise, 60_000, `User sync for ${user.displayName}`);
               succeeded++;
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err);
@@ -341,6 +342,10 @@ export class HubarrServices {
                 message
               }, user.id);
             } finally {
+              // withTimeout() only rejects the wrapper promise. Always wait for
+              // the underlying sync to settle before advancing onboarding so a
+              // timed-out user sync cannot keep mutating state in Phase 3.
+              await syncPromise.catch(() => {});
               onboardingCompleted++;
               emit("graphql-sync", "running", `Syncing watchlists (${onboardingCompleted}/${total})...`, { progress: onboardingCompleted, total });
             }

@@ -10,6 +10,10 @@ export interface ResolvedWatchlistItem extends WatchlistItem {
   searchCandidates?: SearchCandidate[];
 }
 
+// Use one shared limiter so concurrent full-sync users do not each get their
+// own 10-request budget for discover enrichment and library matching.
+const resolveWatchlistItemLimit = pLimit(10);
+
 // ---------------------------------------------------------------------------
 // Filter string helpers for per-user Plex content isolation
 // ---------------------------------------------------------------------------
@@ -799,11 +803,10 @@ export class PlexIntegration {
   }
 
   async resolveWatchlistItems(items: WatchlistItem[], mediaType: MediaType, libraryId: string): Promise<ResolvedWatchlistItem[]> {
-    const limit = pLimit(10);
     const filteredItems = items.filter((entry) => entry.type === mediaType);
 
     const results = await Promise.all(filteredItems.map((item) =>
-      limit(async (): Promise<ResolvedWatchlistItem> => {
+      resolveWatchlistItemLimit(async (): Promise<ResolvedWatchlistItem> => {
         this.logger.debug("Watchlist item raw data", { item });
 
         // Enrich first so we have tmdb/tvdb/imdb GUIDs from discover.provider.plex.tv
