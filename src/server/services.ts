@@ -822,7 +822,7 @@ export class HubarrServices {
               });
             }
           } catch (err) {
-            this.logger.warn({ plexItemId: item.plexItemId, thumb: item.thumb, err }, "Failed to cache poster image; skipping");
+            this.logger.warn("Failed to cache poster image; skipping", { plexItemId: item.plexItemId, thumb: item.thumb, err });
           }
         })
       ));
