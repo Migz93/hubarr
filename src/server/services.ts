@@ -280,13 +280,13 @@ export class HubarrServices {
       }
     };
 
-    const withTimeout = <T>(promise: Promise<T>, ms: number, label: string): Promise<T> =>
-      Promise.race([
-        promise,
-        new Promise<T>((_, reject) =>
-          setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms)
-        )
-      ]);
+    const withTimeout = <T>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
+      let timerId: ReturnType<typeof setTimeout>;
+      const timer = new Promise<T>((_, reject) => {
+        timerId = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
+      });
+      return Promise.race([promise, timer]).finally(() => clearTimeout(timerId));
+    };
 
     session.promise = (async () => {
       this.logger.info("Onboarding preload started");
