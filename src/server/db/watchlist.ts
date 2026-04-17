@@ -57,7 +57,6 @@ export function replaceWatchlistItems(db: Database.Database, userId: number, ite
     del.run(userId);
     for (const item of items) {
       insert.run({ userId, ...item, rawPayload: JSON.stringify(item), discoverKey: item.discoverKey ?? null });
-      upsertMediaItemIdentifiers(db, item);
     }
   })();
 }
