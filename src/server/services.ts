@@ -14,6 +14,8 @@ import { Logger } from "./logger.js";
 import { PlexIntegration, WATCHLIST_DATE_UNKNOWN_SENTINEL, type PlexLibraryItemMatch, type ResolvedWatchlistItem } from "./integrations/plex.js";
 import { RssCache, type RssFeedItem } from "./rss-cache.js";
 
+const PLEX_SYNC_CONCURRENCY = 3;
+
 /**
  * Compare two watchlist items by release date for Plex collection ordering.
  *
@@ -321,7 +323,7 @@ export class HubarrServices {
         let onboardingCompleted = 0;
         const failures: string[] = [];
 
-        const onboardingLimit = pLimit(3);
+        const onboardingLimit = pLimit(PLEX_SYNC_CONCURRENCY);
         await Promise.all(trackedUsers.map((user) =>
           onboardingLimit(async () => {
             const syncPromise = this.syncUser(user, runId);
@@ -1073,7 +1075,7 @@ export class HubarrServices {
       });
     }
 
-    const limit = pLimit(3);
+    const limit = pLimit(PLEX_SYNC_CONCURRENCY);
     let completed = 0;
 
     await Promise.all(friends.map((friend) =>
@@ -1216,7 +1218,7 @@ export class HubarrServices {
 
     this.logger.info("Collection sync started", { userCount: friends.length });
 
-    const publishLimit = pLimit(3);
+    const publishLimit = pLimit(PLEX_SYNC_CONCURRENCY);
     let publishCompleted = 0;
 
     await Promise.all(friends.map((friend) =>

@@ -510,6 +510,8 @@ export class PlexIntegration {
       `library/metadata/${item.plexItemId}`
     ].filter((endpoint): endpoint is string => Boolean(endpoint))));
 
+    let lastErr: Error | null = null;
+
     for (const endpoint of endpoints) {
       try {
         const response = await fetch(this.buildDiscoverMetadataUrl(endpoint), {
@@ -564,8 +566,19 @@ export class PlexIntegration {
         if (err instanceof Error && (err.message.includes("429") || err.message.toLowerCase().includes("rate limit"))) {
           throw err; // propagate rate-limit errors so adaptiveItemLimiter can handle backoff
         }
-        // Non-rate-limit errors: try next endpoint
+        // Non-rate-limit errors: store and try next endpoint
+        if (err instanceof Error) {
+          lastErr = err;
+        }
       }
+    }
+
+    if (lastErr) {
+      this.logger.warn("Discover metadata lookup failed for all endpoints", {
+        plexItemId: item.plexItemId,
+        message: lastErr.message,
+        stack: lastErr.stack
+      });
     }
 
     return null;
