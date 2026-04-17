@@ -1,6 +1,8 @@
 import type {
   AppSettings,
   CollectionSortOrder,
+  PreloadPhase,
+  PreloadProgressEvent,
   UserRecord,
   PlexSettingsInput,
   WatchlistItem
@@ -106,6 +108,12 @@ export class HubarrServices {
   private usersRssUrl: string | null = null;
   private usersRssPrimed = false;
   private readonly usersRssCache = new RssCache();
+  private onboardingPreloadSession: {
+    events: PreloadProgressEvent[];
+    listeners: Set<(event: PreloadProgressEvent) => void>;
+    promise: Promise<void>;
+    completed: boolean;
+  } | null = null;
 
   constructor(
     private readonly db: HubarrDatabase,
@@ -214,6 +222,195 @@ export class HubarrServices {
       });
       throw error;
     }
+  }
+
+  /**
+   * Runs the three-phase onboarding preload sequence and streams progress
+   * events back to the caller via the provided callback.
+   *
+   * Phases:
+   *  1. activity-cache  — initial watchlist activity feed sync
+   *  2. graphql-sync    — watchlist GraphQL sync for all tracked users
+   *  3. publish-collections — create/update Plex collections for enabled users
+   *
+   * Individual phase failures are reported but do not abort the remaining
+   * phases — the sequence always runs to completion. If the client refreshes
+   * mid-run, reconnecting callers subscribe to the same in-flight preload
+   * session instead of starting over.
+   */
+  async runOnboardingPreload(onProgress: (event: PreloadProgressEvent) => void): Promise<void> {
+    if (this.onboardingPreloadSession !== null) {
+      const session = this.onboardingPreloadSession;
+      const snapshot = Array.from(session.events);
+      session.listeners.add(onProgress);
+      try {
+        for (const event of snapshot) {
+          this.deliverPreloadEvent(session, onProgress, event);
+        }
+        if (session.completed) {
+          session.listeners.delete(onProgress);
+          return;
+        }
+
+        await session.promise;
+      } finally {
+        session.listeners.delete(onProgress);
+      }
+      return;
+    }
+
+    const session = {
+      events: [] as PreloadProgressEvent[],
+      listeners: new Set<(event: PreloadProgressEvent) => void>([onProgress]),
+      promise: Promise.resolve(),
+      completed: false
+    };
+    this.onboardingPreloadSession = session;
+
+    const emit = (
+      phase: PreloadPhase,
+      status: PreloadProgressEvent["status"],
+      message: string,
+      extra?: Pick<PreloadProgressEvent, "progress" | "total">
+    ) => {
+      const event: PreloadProgressEvent = { phase, status, message, ...extra };
+      session.events.push(event);
+      for (const listener of [...session.listeners]) {
+        this.deliverPreloadEvent(session, listener, event);
+      }
+    };
+
+    const withTimeout = <T>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
+      let timerId: ReturnType<typeof setTimeout>;
+      const timer = new Promise<T>((_, reject) => {
+        timerId = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
+      });
+      return Promise.race([promise, timer]).finally(() => clearTimeout(timerId));
+    };
+
+    session.promise = (async () => {
+      this.logger.info("Onboarding preload started");
+
+      // ------------------------------------------------------------------
+      // Phase 1: Activity cache sync
+      // ------------------------------------------------------------------
+      emit("activity-cache", "running", "Syncing activity feed...");
+      try {
+        await withTimeout(this.syncActivityCache(), 120_000, "Activity cache sync");
+        emit("activity-cache", "done", "Activity feed synced");
+        this.logger.info("Onboarding preload: activity cache sync complete");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.warn("Onboarding preload: activity cache sync failed — continuing", { message });
+        emit("activity-cache", "error", `Could not sync activity feed: ${message}`);
+      }
+
+      // ------------------------------------------------------------------
+      // Phase 2: GraphQL watchlist sync for tracked users
+      // ------------------------------------------------------------------
+      const { trackedUsers } = this.getUserScopes();
+      if (trackedUsers.length === 0) {
+        emit("graphql-sync", "done", "No users to sync yet", { progress: 0, total: 0 });
+        this.logger.info("Onboarding preload: no tracked users, skipping watchlist sync");
+      } else {
+        const total = trackedUsers.length;
+        emit("graphql-sync", "running", `Syncing watchlists for ${total} user${total !== 1 ? "s" : ""}...`, { progress: 0, total });
+
+        const runId = this.db.createSyncRun("full", "Onboarding preload watchlist sync.");
+        let succeeded = 0;
+        const failures: string[] = [];
+
+        for (let i = 0; i < trackedUsers.length; i++) {
+          const user = trackedUsers[i];
+          emit("graphql-sync", "running", `Syncing ${user.displayName}...`, { progress: i, total });
+          try {
+            await withTimeout(this.syncUser(user, runId), 60_000, `User sync for ${user.displayName}`);
+            succeeded++;
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            failures.push(`${user.displayName}: ${message}`);
+            this.logger.warn("Onboarding preload: user sync failed — continuing", {
+              userId: user.id,
+              displayName: user.displayName,
+              message
+            });
+            this.db.addSyncRunItem(runId, "sync.user", "error", {
+              userId: user.id,
+              displayName: user.displayName,
+              message
+            }, user.id);
+          }
+        }
+
+        const runStatus = succeeded === total ? "success" : "error";
+        this.db.completeSyncRun(
+          runId,
+          runStatus,
+          `Onboarding preload: ${succeeded}/${total} users synced.`,
+          failures.length > 0 ? failures.join(" | ") : null
+        );
+        emit("graphql-sync", "done", `Synced watchlists for ${succeeded} of ${total} user${total !== 1 ? "s" : ""}`, { progress: total, total });
+        this.logger.info("Onboarding preload: watchlist sync complete", { succeeded, failed: total - succeeded });
+      }
+
+      // ------------------------------------------------------------------
+      // Phase 3: Publish collections so they are live in Plex immediately
+      // ------------------------------------------------------------------
+      emit("publish-collections", "running", "Publishing collections...");
+      try {
+        await withTimeout(this.runPublishPass(), 120_000, "Publish collections");
+        emit("publish-collections", "done", "Collections published");
+        this.logger.info("Onboarding preload: collection publish complete");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.warn("Onboarding preload: collection publish failed — continuing", { message });
+        emit("publish-collections", "error", `Could not publish collections: ${message}`);
+      }
+
+      emit("complete", "done", "Hubarr is ready");
+      session.completed = true;
+      this.logger.info("Onboarding preload complete");
+    })().catch((error) => {
+      if (this.onboardingPreloadSession === session) {
+        this.onboardingPreloadSession = null;
+      }
+      throw error;
+    });
+
+    try {
+      await session.promise;
+    } finally {
+      session.listeners.delete(onProgress);
+    }
+  }
+
+  /**
+   * Protect the shared preload workflow from listener-specific failures such
+   * as disconnected SSE responses throwing while we replay or broadcast.
+   */
+  private deliverPreloadEvent(
+    session: NonNullable<HubarrServices["onboardingPreloadSession"]>,
+    listener: (event: PreloadProgressEvent) => void,
+    event: PreloadProgressEvent
+  ): void {
+    try {
+      listener(event);
+    } catch (error) {
+      session.listeners.delete(listener);
+      this.logger.debug("Dropped onboarding preload listener after delivery failure", {
+        phase: event.phase,
+        status: event.status,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  isPreloadComplete(): boolean {
+    return this.onboardingPreloadSession?.completed === true;
+  }
+
+  clearOnboardingPreloadSession(): void {
+    this.onboardingPreloadSession = null;
   }
 
   runMaintenanceTasks() {

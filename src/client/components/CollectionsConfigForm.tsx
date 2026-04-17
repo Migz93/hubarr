@@ -15,11 +15,13 @@ export default function CollectionsConfigForm({
   initialValue,
   librariesUrl,
   onSaved,
+  onBack,
   saveLabel = "Save Collections"
 }: {
   initialValue: CollectionsFormValue;
   librariesUrl: string;
   onSaved?: (value: CollectionsFormValue) => void | Promise<void>;
+  onBack?: () => void;
   saveLabel?: string;
 }) {
   const [form, setForm] = useState<CollectionsFormValue>(initialValue);
@@ -82,7 +84,7 @@ export default function CollectionsConfigForm({
     <div className="space-y-6">
       <SectionCard
         title="Collections"
-        description="Choose the default libraries, visibility, and naming pattern Hubarr will use when creating collections."
+        description="Choose the default collection settings for your Hubarr instance."
         wide
       >
         <Field
@@ -191,6 +193,7 @@ export default function CollectionsConfigForm({
           success={success}
           error={error}
           onSave={() => void save()}
+          onBack={onBack}
           label={saveLabel}
         />
       </SectionCard>

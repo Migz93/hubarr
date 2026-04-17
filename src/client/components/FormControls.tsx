@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 export function SectionCard({
   title,
@@ -141,23 +142,49 @@ export function SaveBar({
   success,
   error,
   onSave,
+  onBack,
   label = "Save"
 }: {
   saving: boolean;
   success: boolean;
   error: string | null;
   onSave: () => void;
+  onBack?: () => void;
   label?: string;
 }) {
+  const saveButton = (
+    <button
+      disabled={saving}
+      onClick={onSave}
+      className="flex items-center gap-2 bg-primary hover:bg-primary-dim disabled:opacity-50 text-on-primary text-sm font-semibold rounded-xl px-4 py-2 transition-colors"
+    >
+      {saving ? "Saving..." : label}
+      {!saving && <ChevronRight size={15} />}
+    </button>
+  );
+
+  if (onBack) {
+    return (
+      <div className="flex items-center justify-between pt-2">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1 bg-surface-container-high hover:bg-surface-bright text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
+        >
+          <ChevronLeft size={15} />
+          Back
+        </button>
+        <div className="flex items-center gap-3">
+          {success && <span className="text-success text-sm">Saved</span>}
+          {error && <span className="text-error text-sm">{error}</span>}
+          {saveButton}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center gap-3 pt-2">
-      <button
-        disabled={saving}
-        onClick={onSave}
-        className="bg-primary hover:bg-primary-dim disabled:opacity-50 text-on-primary text-sm font-semibold rounded-xl px-4 py-2 transition-colors"
-      >
-        {saving ? "Saving..." : label}
-      </button>
+      {saveButton}
       {success && <span className="text-success text-sm">Saved</span>}
       {error && <span className="text-error text-sm">{error}</span>}
     </div>

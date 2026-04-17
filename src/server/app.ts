@@ -393,6 +393,61 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     }
   });
 
+  /** Persist completion of the user-selection step before preload begins. */
+  app.post("/api/setup/users/complete", requireAuth, (_req, res) => {
+    db.updateAppSettings({ usersStepComplete: true });
+    res.json({ ok: true });
+  });
+
+  /**
+   * Final onboarding step: streams preload progress via Server-Sent Events.
+   * The client connects once the users step is confirmed and listens until a
+   * "complete" phase event signals that all remaining preload phases have
+   * finished. Reconnecting during preload resumes the same in-flight session.
+   *
+   * Phases emitted:
+   * activity-cache → graphql-sync → publish-collections → complete
+   */
+  app.get("/api/setup/preload", requireAuth, async (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    let clientDisconnected = false;
+    req.on("close", () => {
+      clientDisconnected = true;
+    });
+
+    try {
+      await services.runOnboardingPreload((event) => {
+        if (clientDisconnected) return;
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      });
+    } catch (err) {
+      // Top-level guard — runOnboardingPreload handles per-phase errors
+      // internally, so this only fires on truly unexpected failures.
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error("Onboarding preload aborted with unexpected error", { message });
+      if (!clientDisconnected) {
+        res.write(`data: ${JSON.stringify({ phase: "complete", status: "error", message })}\n\n`);
+      }
+    }
+
+    res.end();
+  });
+
+  /** Mark onboarding as fully complete so the main app becomes accessible. */
+  app.post("/api/setup/complete", requireAuth, (_req, res) => {
+    if (!services.isPreloadComplete()) {
+      res.status(400).json({ error: "Preload has not completed successfully." });
+      return;
+    }
+    db.updateAppSettings({ usersStepComplete: true, onboardingComplete: true });
+    services.clearOnboardingPreloadSession();
+    res.json({ ok: true });
+  });
+
   // ---------------------------------------------------------------------------
   // Dashboard
   // ---------------------------------------------------------------------------

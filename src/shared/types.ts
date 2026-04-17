@@ -4,10 +4,23 @@ export type MediaType = "movie" | "show";
 export interface BootstrapStatus {
   hasOwner: boolean;
   setupComplete: boolean;
+  onboardingComplete: boolean;
   hasActiveSession: boolean;
 }
 
-export type OnboardingStep = "auth" | "plex" | "general" | "collections";
+export type OnboardingStep = "auth" | "plex" | "general" | "collections" | "users" | "preload";
+
+export type PreloadPhase = "activity-cache" | "graphql-sync" | "publish-collections" | "complete";
+
+export interface PreloadProgressEvent {
+  phase: PreloadPhase;
+  status: "running" | "done" | "error";
+  message: string;
+  /** Current number of items processed (graphql-sync phase only). */
+  progress?: number;
+  /** Total number of items to process (graphql-sync phase only). */
+  total?: number;
+}
 
 export interface SessionUser {
   plexId: string;
@@ -70,6 +83,8 @@ export interface AppSettings {
   defaultMovieLibraryId: string | null;
   defaultShowLibraryId: string | null;
   trustProxy: boolean;
+  usersStepComplete: boolean;
+  onboardingComplete: boolean;
 }
 
 export interface UserRecord {

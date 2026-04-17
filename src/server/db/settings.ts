@@ -27,14 +27,16 @@ export const defaultAppSettings: AppSettings = {
   collectionNamePattern: "{user}s Watchlist",
   collectionSortOrder: "date-desc",
   visibilityDefaults: {
-    recommended: true,
+    recommended: false,
     home: true,
-    shared: true
+    shared: false
   },
   fullSyncOnStartup: false,
   defaultMovieLibraryId: null,
   defaultShowLibraryId: null,
-  trustProxy: false
+  trustProxy: false,
+  usersStepComplete: false,
+  onboardingComplete: false
 };
 
 /**
@@ -104,37 +106,63 @@ export function resolveSessionSecret(db: Database.Database, dataDir: string): st
 // Bootstrap / Auth
 // -------------------------------------------------------------------------
 
+/**
+ * Reports whether the instance has enough persisted configuration to run and
+ * whether the onboarding wizard has been formally completed.
+ */
 export function getBootstrapStatus(db: Database.Database, hasActiveSession: boolean): BootstrapStatus {
   const plexSettings = getSetting<PlexSettingsInput>(db, "plex");
   const appSettings = getAppSettings(db);
+  const setupComplete = Boolean(
+    plexSettings?.serverUrl &&
+      appSettings.defaultMovieLibraryId &&
+      appSettings.defaultShowLibraryId
+  );
+
+  // Backwards-compat: existing installs that were fully configured before the
+  // onboardingComplete flag was introduced won't have the field in stored
+  // settings. For these we derive onboardingComplete from setupComplete so
+  // they aren't forced through the wizard again.
+  const stored = getSetting<AppSettings>(db, "app");
+  const hasFlag = stored !== null && "onboardingComplete" in stored;
+  const onboardingComplete = hasFlag ? appSettings.onboardingComplete : setupComplete;
+
   return {
     hasOwner: Boolean(getSetting<PlexOwnerRecord>(db, "admin")),
-    setupComplete: Boolean(
-      plexSettings?.serverUrl &&
-        appSettings.defaultMovieLibraryId &&
-        appSettings.defaultShowLibraryId
-    ),
+    setupComplete,
+    onboardingComplete,
     hasActiveSession
   };
 }
 
+/**
+ * Resumes onboarding from the earliest step that still lacks a persisted
+ * completion marker.
+ */
 export function getCurrentOnboardingStep(db: Database.Database): OnboardingStep {
   const owner = getPlexOwner(db);
   if (!owner) {
     return "auth";
   }
 
+  // General comes before Plex in the onboarding order. General has no
+  // persistent completion marker, so if Plex isn't configured yet we resume
+  // at General (the earliest un-gated step before Plex).
   const plexSettings = getPlexSettings(db);
   if (!plexSettings?.serverUrl) {
-    return "plex";
+    return "general";
   }
 
   const appSettings = getAppSettings(db);
   if (!appSettings.defaultMovieLibraryId || !appSettings.defaultShowLibraryId) {
-    return "general";
+    return "collections";
   }
 
-  return "collections";
+  if (!appSettings.usersStepComplete) {
+    return "users";
+  }
+
+  return "preload";
 }
 
 export function getPlexOwner(db: Database.Database): PlexOwnerRecord | null {

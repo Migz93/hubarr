@@ -228,13 +228,13 @@ function GeneralTab({
         />
         <ToggleField
           label="Track All Users"
-          hint="Keep background watchlist tracking running for disabled users too. Turning this off deletes cached watchlist data for disabled users."
+          hint="This allows you to view watchlist data for all your Plex users regardless of their enabled status. This will not publish collections."
           checked={form.trackAllUsers}
           onChange={(value) => setForm((current) => ({ ...current, trackAllUsers: value }))}
         />
         <ToggleField
           label="Startup Sync"
-          hint="When Hubarr starts, run a Plex full library scan, then a watchlist GraphQL sync, then a collection sync."
+          hint="When Hubarr starts, run a full scan of your libraries and watchlists, then publish collections."
           checked={form.fullSyncOnStartup}
           onChange={(value) => setForm((current) => ({ ...current, fullSyncOnStartup: value }))}
         />
