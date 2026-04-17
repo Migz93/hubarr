@@ -258,6 +258,10 @@ export class HubarrDatabase {
     return identifiersRepo.getActivityCacheDateForUserItem(this.db, userId, plexItemId);
   }
 
+  getActivityCacheDatesForUser(userId: number): Map<string, string> {
+    return identifiersRepo.getActivityCacheDatesForUser(this.db, userId);
+  }
+
   clearActivityCache(): number {
     return watchlistRepo.clearActivityCache(this.db);
   }

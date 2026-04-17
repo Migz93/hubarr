@@ -131,3 +131,56 @@ export function getActivityCacheDateForUserItem(
 
   return row?.watchlistedAt ?? null;
 }
+
+/**
+ * Bulk variant of getActivityCacheDateForUserItem. Returns a map of
+ * normalized identifier value → best watchlisted_at for every media item
+ * that has an activity cache entry for the given user. A single query
+ * replaces the per-item loop that would otherwise run once per watchlist item.
+ */
+export function getActivityCacheDatesForUser(
+  db: Database.Database,
+  userId: number
+): Map<string, string> {
+  const rows = db.prepare(`
+    WITH user_aliases AS (
+      SELECT lower(identifier_value) AS plex_user_id
+      FROM user_identifier_aliases
+      WHERE user_id = ?
+    ),
+    user_cache AS (
+      SELECT lower(plex_item_id) AS plex_item_id, watchlisted_at
+      FROM watchlist_activity_cache
+      WHERE lower(plex_user_id) IN (SELECT plex_user_id FROM user_aliases)
+    ),
+    media_via_identifier AS (
+      SELECT mii.media_item_id, uce.watchlisted_at
+      FROM user_cache uce
+      JOIN media_item_identifiers mii ON mii.identifier_value = uce.plex_item_id
+    ),
+    media_via_canonical AS (
+      SELECT mi.id AS media_item_id, uce.watchlisted_at
+      FROM user_cache uce
+      JOIN media_items mi ON mi.canonical_plex_item_id = uce.plex_item_id
+    ),
+    all_matched_media AS (
+      SELECT media_item_id, watchlisted_at FROM media_via_identifier
+      UNION ALL
+      SELECT media_item_id, watchlisted_at FROM media_via_canonical
+    ),
+    all_lookup_keys AS (
+      SELECT mii.identifier_value AS lookup_key, amm.watchlisted_at
+      FROM all_matched_media amm
+      JOIN media_item_identifiers mii ON mii.media_item_id = amm.media_item_id
+      UNION ALL
+      SELECT mi.canonical_plex_item_id AS lookup_key, amm.watchlisted_at
+      FROM all_matched_media amm
+      JOIN media_items mi ON mi.id = amm.media_item_id
+    )
+    SELECT lookup_key, MAX(watchlisted_at) AS watchlistedAt
+    FROM all_lookup_keys
+    GROUP BY lookup_key
+  `).all(userId) as Array<{ lookup_key: string; watchlistedAt: string }>;
+
+  return new Map(rows.map((r) => [r.lookup_key, r.watchlistedAt]));
+}

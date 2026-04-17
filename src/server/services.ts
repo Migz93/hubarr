@@ -747,12 +747,13 @@ export class HubarrServices {
     }
 
     // Step 1: Resolve addedAt from the activity cache for items still carrying
-    // the sentinel. Identifier aliasing is resolved via the DB's explicit user
-    // and media identifier tables, so the lookup can match across self-user ID
-    // aliases and media ID forms without duplicating fallback logic here.
+    // the sentinel. One bulk query fetches all cached dates for this user at
+    // once; the resulting map is keyed by normalized identifier value so any
+    // plexItemId that matches a stored identifier or canonical key will hit.
+    const activityCacheDates = this.db.getActivityCacheDatesForUser(friend.id);
     const afterActivityCache = merged.map((item) => {
       if (item.addedAt !== WATCHLIST_DATE_UNKNOWN_SENTINEL) return item;
-      const cached = this.db.getActivityCacheDateForUserItem(friend.id, item.plexItemId);
+      const cached = activityCacheDates.get(item.plexItemId.trim().toLowerCase());
       if (cached) {
         this.logger.debug("Resolved addedAt from activity cache", { title: item.title, watchlistedAt: cached });
         return { ...item, addedAt: cached };
