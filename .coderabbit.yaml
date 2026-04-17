@@ -14,6 +14,7 @@ reviews:
   auto_apply_labels: false
   suggested_reviewers: false
   poem: false
+  in_progress_fortune: false
   sequence_diagrams: false
   abort_on_close: true
 
@@ -34,60 +35,60 @@ reviews:
     - path: "tests/playwright/**"
       instructions: "These are Playwright E2E tests hitting a live instance. Flag flaky selectors or missing waits, not missing mocks."
 
-pre_merge_checks:
-  title:
-    mode: "warning"
-    requirements: "PR title must start with a conventional commit type: feat:, fix:, chore:, docs:, refactor:, ci:"
-  description:
-    mode: "warning"
+  pre_merge_checks:
+    title:
+      mode: "warning"
+      requirements: "PR title must start with a conventional commit type: feat:, fix:, chore:, docs:, refactor:, ci:"
+    description:
+      mode: "warning"
 
-finishing_touches:
-  docstrings:
-    enabled: false
-  unit_tests:
-    enabled: true
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: true
 
-tools:
-  eslint:
-    enabled: true
-  markdownlint:
-    enabled: true
-  actionlint:
-    enabled: true
-  hadolint:
-    enabled: true
-  gitleaks:
-    enabled: true
-  shellcheck:
-    enabled: true
-  biome:
-    enabled: false
-  ruff:
-    enabled: false
-  phpstan:
-    enabled: false
-  phpcs:
-    enabled: false
-  phpmd:
-    enabled: false
-  golangci-lint:
-    enabled: false
-  rubocop:
-    enabled: false
-  swiftlint:
-    enabled: false
-  detekt:
-    enabled: false
-  pmd:
-    enabled: false
-  flake8:
-    enabled: false
-  buf:
-    enabled: false
-  checkov:
-    enabled: false
-  tflint:
-    enabled: false
+  tools:
+    eslint:
+      enabled: true
+    markdownlint:
+      enabled: true
+    actionlint:
+      enabled: true
+    hadolint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    shellcheck:
+      enabled: true
+    biome:
+      enabled: false
+    ruff:
+      enabled: false
+    phpstan:
+      enabled: false
+    phpcs:
+      enabled: false
+    phpmd:
+      enabled: false
+    golangci-lint:
+      enabled: false
+    rubocop:
+      enabled: false
+    swiftlint:
+      enabled: false
+    detekt:
+      enabled: false
+    pmd:
+      enabled: false
+    flake8:
+      enabled: false
+    buf:
+      enabled: false
+    checkov:
+      enabled: false
+    tflint:
+      enabled: false
 
 knowledge_base:
   opt_out: false
