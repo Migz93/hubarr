@@ -221,6 +221,10 @@ export class HubarrDatabase {
     identifiersRepo.upsertMediaItemIdentifiers(this.db, item);
   }
 
+  batchUpsertMediaItemIdentifiers(items: Array<Pick<WatchlistItem, "plexItemId" | "type" | "guids" | "discoverKey">>): void {
+    identifiersRepo.batchUpsertMediaItemIdentifiers(this.db, items);
+  }
+
   replaceWatchlistItems(userId: number, items: WatchlistItem[]): void {
     watchlistRepo.replaceWatchlistItems(this.db, userId, items);
   }

@@ -133,6 +133,23 @@ export function getActivityCacheDateForUserItem(
 }
 
 /**
+ * Wraps multiple upsertMediaItemIdentifiers calls in a single transaction.
+ * Batching the writes this way avoids an auto-commit round-trip per item,
+ * which matters when pre-registering a full watchlist before the activity
+ * cache lookup.
+ */
+export function batchUpsertMediaItemIdentifiers(
+  db: Database.Database,
+  items: Array<Pick<WatchlistItem, "plexItemId" | "type" | "guids" | "discoverKey">>
+): void {
+  db.transaction(() => {
+    for (const item of items) {
+      upsertMediaItemIdentifiers(db, item);
+    }
+  })();
+}
+
+/**
  * Bulk variant of getActivityCacheDateForUserItem. Returns a map of
  * normalized identifier value → best watchlisted_at for every media item
  * that has an activity cache entry for the given user. A single query

@@ -603,6 +603,9 @@ export class HubarrServices {
       }
     }
 
+    const userMap = new Map(trackedUsers.map((u) => [u.id, u]));
+    const watchlistByUser = new Map(trackedUsers.map((u) => [u.id, this.db.getWatchlistItems(u.id)]));
+
     let matchedCount = 0;
     let affectedUsers = 0;
 
@@ -622,12 +625,12 @@ export class HubarrServices {
       }
 
       for (const friendId of library.userIds) {
-        const friend = trackedUsers.find((entry) => entry.id === friendId);
+        const friend = userMap.get(friendId);
         if (!friend) {
           continue;
         }
 
-        const watchlistItems = this.db.getWatchlistItems(friendId);
+        const watchlistItems = watchlistByUser.get(friendId) ?? [];
         let friendChanged = false;
 
         for (const item of watchlistItems) {
@@ -742,9 +745,8 @@ export class HubarrServices {
     // Pre-register merged item identifiers before the activity-cache lookup so
     // newly fetched items can resolve dates through the alias catalog on this
     // same sync pass, before replaceWatchlistItems persists the watchlist.
-    for (const item of merged) {
-      this.db.upsertMediaItemIdentifiers(item);
-    }
+    // All writes go in one transaction to avoid per-item auto-commit overhead.
+    this.db.batchUpsertMediaItemIdentifiers(merged);
 
     // Step 1: Resolve addedAt from the activity cache for items still carrying
     // the sentinel. One bulk query fetches all cached dates for this user at
