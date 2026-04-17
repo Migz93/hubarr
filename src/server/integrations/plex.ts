@@ -1,5 +1,6 @@
 ﻿import crypto from "node:crypto";
 import { parseStringPromise } from "xml2js";
+import pLimit from "p-limit";
 import type { RssFeedItem } from "../rss-cache.js";
 import type { Logger } from "../logger.js";
 import { PLEX_USER_AGENT } from "../version.js";
@@ -798,68 +799,71 @@ export class PlexIntegration {
   }
 
   async resolveWatchlistItems(items: WatchlistItem[], mediaType: MediaType, libraryId: string): Promise<ResolvedWatchlistItem[]> {
-    const resolved: ResolvedWatchlistItem[] = [];
+    const limit = pLimit(10);
+    const filteredItems = items.filter((entry) => entry.type === mediaType);
 
-    for (const item of items.filter((entry) => entry.type === mediaType)) {
-      this.logger.debug("Watchlist item raw data", { item });
+    const results = await Promise.all(filteredItems.map((item) =>
+      limit(async (): Promise<ResolvedWatchlistItem> => {
+        this.logger.debug("Watchlist item raw data", { item });
 
-      // Enrich first so we have tmdb/tvdb/imdb GUIDs from discover.provider.plex.tv
-      // before attempting the library match.
-      const enriched = await this.enrichWatchlistMetadata(item);
-      const enrichedGuids = enriched.guids;
+        // Enrich first so we have tmdb/tvdb/imdb GUIDs from discover.provider.plex.tv
+        // before attempting the library match.
+        const enriched = await this.enrichWatchlistMetadata(item);
+        const enrichedGuids = enriched.guids;
 
-      this.logger.debug("Watchlist item enriched GUIDs", {
-        title: item.title,
-        originalGuids: item.guids ?? [],
-        enrichedGuids
-      });
-
-      const match = await this.searchLibraryItem(
-        item.title,
-        mediaType,
-        libraryId,
-        enriched.year || undefined,
-        enrichedGuids
-      );
-      const matchedRatingKey = match.ratingKey || null;
-
-      if (matchedRatingKey) {
-        this.logger.debug("Watchlist item resolved to library", {
+        this.logger.debug("Watchlist item enriched GUIDs", {
           title: item.title,
-          type: mediaType,
-          ratingKey: matchedRatingKey
+          originalGuids: item.guids ?? [],
+          enrichedGuids
         });
-        resolved.push({
-          ...item,
-          thumb: enriched.thumb,
-          year: enriched.year,
-          releaseDate: enriched.releaseDate,
-          guids: enrichedGuids,
-          matchedRatingKey
-        });
-      } else {
-        this.logger.warn("Watchlist item not matched in library", {
-          title: item.title,
-          type: mediaType,
-          year: enriched.year ?? null,
-          guids: enrichedGuids,
+
+        const match = await this.searchLibraryItem(
+          item.title,
+          mediaType,
           libraryId,
-          candidateCount: match.candidates.length,
-          candidates: match.candidates
-        });
-        resolved.push({
-          ...item,
-          thumb: enriched.thumb,
-          year: enriched.year,
-          releaseDate: enriched.releaseDate,
-          guids: enrichedGuids,
-          matchedRatingKey: null,
-          searchCandidates: match.candidates
-        });
-      }
-    }
+          enriched.year || undefined,
+          enrichedGuids
+        );
+        const matchedRatingKey = match.ratingKey || null;
 
-    return resolved;
+        if (matchedRatingKey) {
+          this.logger.debug("Watchlist item resolved to library", {
+            title: item.title,
+            type: mediaType,
+            ratingKey: matchedRatingKey
+          });
+          return {
+            ...item,
+            thumb: enriched.thumb,
+            year: enriched.year,
+            releaseDate: enriched.releaseDate,
+            guids: enrichedGuids,
+            matchedRatingKey
+          };
+        } else {
+          this.logger.warn("Watchlist item not matched in library", {
+            title: item.title,
+            type: mediaType,
+            year: enriched.year ?? null,
+            guids: enrichedGuids,
+            libraryId,
+            candidateCount: match.candidates.length,
+            candidates: match.candidates
+          });
+          return {
+            ...item,
+            thumb: enriched.thumb,
+            year: enriched.year,
+            releaseDate: enriched.releaseDate,
+            guids: enrichedGuids,
+            matchedRatingKey: null,
+            searchCandidates: match.candidates
+          };
+        }
+      })
+    ));
+
+    return results;
   }
 
   async searchLibraryItem(

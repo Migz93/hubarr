@@ -796,22 +796,25 @@ export class HubarrServices {
 
     const plexSettings = this.db.getPlexSettings();
     if (plexSettings) {
-      for (const item of mergedWithDates) {
-        if (!item.thumb) continue;
-        if (item.thumb.startsWith("/")) {
-          await this.imageCache.ensurePosterCached(item.plexItemId, {
-            type: "plex-path",
-            value: item.thumb,
-            serverUrl: plexSettings.serverUrl,
-            token: plexSettings.token
-          });
-        } else if (item.thumb.startsWith("https://")) {
-          await this.imageCache.ensurePosterCached(item.plexItemId, {
-            type: "public-url",
-            value: item.thumb
-          });
-        }
-      }
+      const imageLimit = pLimit(5);
+      await Promise.all(mergedWithDates.map((item) =>
+        imageLimit(async () => {
+          if (!item.thumb) return;
+          if (item.thumb.startsWith("/")) {
+            await this.imageCache.ensurePosterCached(item.plexItemId, {
+              type: "plex-path",
+              value: item.thumb,
+              serverUrl: plexSettings.serverUrl,
+              token: plexSettings.token
+            });
+          } else if (item.thumb.startsWith("https://")) {
+            await this.imageCache.ensurePosterCached(item.plexItemId, {
+              type: "public-url",
+              value: item.thumb
+            });
+          }
+        })
+      ));
     }
 
     this.db.addSyncRunItem(
