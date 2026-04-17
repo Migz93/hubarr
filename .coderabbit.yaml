@@ -17,6 +17,7 @@ reviews:
   in_progress_fortune: false
   sequence_diagrams: false
   abort_on_close: true
+  commit_status: true
 
   auto_review:
     enabled: true
