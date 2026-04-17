@@ -27,16 +27,20 @@ import * as settingsRepo from "./settings.js";
 import * as syncRepo from "./sync.js";
 import * as usersRepo from "./users.js";
 import * as watchlistRepo from "./watchlist.js";
+import type { Logger } from "../logger.js";
 
 export class HubarrDatabase {
   private readonly db: Database.Database;
   private readonly sessionSecret: string;
 
-  constructor(config: RuntimeConfig) {
+  constructor(config: RuntimeConfig, logger?: Logger) {
     this.db = new Database(path.join(config.dataDir, "hubarr.db"));
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     runMigrations(this.db);
+    // reconcileStaleRuns must run after migrations and before any job scheduling/registration
+    // to prevent stale rows left in a `running` state during startup.
+    syncRepo.reconcileStaleRuns(this.db, logger);
     settingsRepo.seedDefaultSettings(this.db);
     this.sessionSecret = settingsRepo.resolveSessionSecret(this.db, config.dataDir);
   }

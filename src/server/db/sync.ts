@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import type { DashboardResponse, RecentlyAddedItem, SyncRun } from "../../shared/types.js";
+import type { Logger } from "../logger.js";
 import { buildGuidMergePlan, mergeRawPayloadGuids } from "./guid-dedupe.js";
 import { calculateHistoryRetentionEvents, getAppSettings } from "./settings.js";
 
@@ -36,6 +37,23 @@ export function saveJobRunState(
 // -------------------------------------------------------------------------
 // Sync Runs
 // -------------------------------------------------------------------------
+
+export function reconcileStaleRuns(db: Database.Database, logger?: Logger): void {
+  const completedAtIso = new Date().toISOString();
+  const result = db.prepare(`
+    UPDATE sync_runs
+    SET status = 'error',
+        completed_at = ?,
+        error = 'Aborted: process restarted while job was running'
+    WHERE status = 'running'
+  `).run(completedAtIso);
+  const meta = { reconciledRuns: result.changes, completedAt: completedAtIso };
+  if (result.changes > 0) {
+    logger?.warn("Reconciled stale sync runs", meta);
+  } else {
+    logger?.debug("No stale sync runs to reconcile", meta);
+  }
+}
 
 export function pruneSyncRuns(db: Database.Database, maxEvents: number): void {
   const retention = Math.max(1, Math.floor(maxEvents));

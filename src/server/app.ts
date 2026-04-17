@@ -48,7 +48,7 @@ function signedValue(secret: string, value: string) {
 
 export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   const logger = new Logger(config.dataDir);
-  const db = new HubarrDatabase(config);
+  const db = new HubarrDatabase(config, logger);
   const sessionSecret = db.getSessionSecret();
   const imageCache = new ImageCacheService(config.dataDir, db, logger);
   const services = new HubarrServices(db, logger, imageCache);
