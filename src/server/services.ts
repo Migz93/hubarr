@@ -321,7 +321,7 @@ export class HubarrServices {
         let onboardingCompleted = 0;
         const failures: string[] = [];
 
-        const onboardingLimit = pLimit(5);
+        const onboardingLimit = pLimit(3);
         await Promise.all(trackedUsers.map((user) =>
           onboardingLimit(async () => {
             const syncPromise = this.syncUser(user, runId);
@@ -1073,7 +1073,7 @@ export class HubarrServices {
       });
     }
 
-    const limit = pLimit(5);
+    const limit = pLimit(3);
     let completed = 0;
 
     await Promise.all(friends.map((friend) =>

@@ -1,6 +1,5 @@
 ﻿import crypto from "node:crypto";
 import { parseStringPromise } from "xml2js";
-import pLimit from "p-limit";
 import type { RssFeedItem } from "../rss-cache.js";
 import type { Logger } from "../logger.js";
 import { PLEX_USER_AGENT } from "../version.js";
@@ -10,9 +9,121 @@ export interface ResolvedWatchlistItem extends WatchlistItem {
   searchCandidates?: SearchCandidate[];
 }
 
-// Use one shared limiter so concurrent full-sync users do not each get their
-// own 10-request budget for discover enrichment and library matching.
-const resolveWatchlistItemLimit = pLimit(10);
+// ---------------------------------------------------------------------------
+// Adaptive per-item enrichment limiter
+// ---------------------------------------------------------------------------
+// Shared across concurrent user syncs so all users draw from the same pool.
+// Starts at MAX_ENRICHMENT_CONCURRENCY. On a 429 the limit drops by 30% and
+// all in-flight items wait out an exponential-backoff cooldown before retrying.
+// After RECOVERY_THRESHOLD consecutive successes the limit climbs back by 1
+// until it reaches the original max.
+
+const MAX_ENRICHMENT_CONCURRENCY = 3;
+const RECOVERY_THRESHOLD = 5;
+
+class AdaptiveItemLimiter {
+  private currentLimit: number;
+  private readonly maxLimit: number;
+  private active = 0;
+  private consecutiveSuccesses = 0;
+  private consecutiveRateLimits = 0;
+  private readonly pending: Array<() => void> = [];
+  private cooldownUntil = 0;
+  private schedulePending = false;
+
+  constructor(limit: number) {
+    this.currentLimit = limit;
+    this.maxLimit = limit;
+  }
+
+  run<T>(fn: () => Promise<T>, logger?: Logger): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.pending.push(() => {
+        this.active++;
+        this.executeWithRetry(fn, logger)
+          .then((result) => {
+            this.active--;
+            this.onSuccess(logger);
+            this.schedule();
+            resolve(result);
+          })
+          .catch((err) => {
+            this.active--;
+            this.schedule();
+            reject(err);
+          });
+      });
+      this.schedule();
+    });
+  }
+
+  private schedule(): void {
+    const delay = Math.max(0, this.cooldownUntil - Date.now());
+    if (delay > 0) {
+      if (!this.schedulePending) {
+        this.schedulePending = true;
+        setTimeout(() => {
+          this.schedulePending = false;
+          this.schedule();
+        }, delay);
+      }
+      return;
+    }
+    while (this.pending.length > 0 && this.active < this.currentLimit) {
+      const next = this.pending.shift()!;
+      next();
+    }
+  }
+
+  private async executeWithRetry<T>(fn: () => Promise<T>, logger?: Logger): Promise<T> {
+    for (;;) {
+      const wait = this.cooldownUntil - Date.now();
+      if (wait > 0) await new Promise<void>(r => setTimeout(r, wait));
+      try {
+        return await fn();
+      } catch (err) {
+        if (this.is429(err)) {
+          this.onRateLimit(logger);
+        } else {
+          throw err;
+        }
+      }
+    }
+  }
+
+  private is429(err: unknown): boolean {
+    if (!(err instanceof Error)) return false;
+    return err.message.includes("429") || err.message.toLowerCase().includes("rate limit");
+  }
+
+  private onRateLimit(logger?: Logger): void {
+    this.consecutiveSuccesses = 0;
+    this.consecutiveRateLimits++;
+    const base = Math.min(2000 * (1.5 ** (this.consecutiveRateLimits - 1)), 30_000);
+    const jitter = (Math.random() * 2 - 1) * base * 0.1;
+    const cooldownMs = base + jitter;
+    this.cooldownUntil = Math.max(this.cooldownUntil, Date.now() + cooldownMs);
+    const prev = this.currentLimit;
+    this.currentLimit = Math.max(1, Math.floor(this.currentLimit * 0.7));
+    logger?.warn("Plex rate limit detected; reducing enrichment concurrency", {
+      prev,
+      current: this.currentLimit,
+      cooldownSecs: (cooldownMs / 1000).toFixed(1)
+    });
+  }
+
+  private onSuccess(logger?: Logger): void {
+    this.consecutiveRateLimits = 0;
+    this.consecutiveSuccesses++;
+    if (this.currentLimit < this.maxLimit && this.consecutiveSuccesses >= RECOVERY_THRESHOLD) {
+      this.currentLimit = Math.min(this.currentLimit + 1, this.maxLimit);
+      this.consecutiveSuccesses = Math.floor(RECOVERY_THRESHOLD / 2);
+      logger?.debug("Plex rate limit recovery: enrichment concurrency increased", { current: this.currentLimit });
+    }
+  }
+}
+
+const adaptiveItemLimiter = new AdaptiveItemLimiter(MAX_ENRICHMENT_CONCURRENCY);
 
 // ---------------------------------------------------------------------------
 // Filter string helpers for per-user Plex content isolation
@@ -806,7 +917,7 @@ export class PlexIntegration {
     const filteredItems = items.filter((entry) => entry.type === mediaType);
 
     const results = await Promise.all(filteredItems.map((item) =>
-      resolveWatchlistItemLimit(async (): Promise<ResolvedWatchlistItem> => {
+      adaptiveItemLimiter.run(async (): Promise<ResolvedWatchlistItem> => {
         this.logger.debug("Watchlist item raw data", { item });
 
         // Enrich first so we have tmdb/tvdb/imdb GUIDs from discover.provider.plex.tv
@@ -863,7 +974,7 @@ export class PlexIntegration {
             searchCandidates: match.candidates
           };
         }
-      })
+      }, this.logger)
     ));
 
     return results;
