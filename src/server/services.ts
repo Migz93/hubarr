@@ -555,7 +555,23 @@ export class HubarrServices {
           if (incomingDate && incomingDate !== WATCHLIST_DATE_UNKNOWN_SENTINEL) return incomingDate;
           return WATCHLIST_DATE_UNKNOWN_SENTINEL;
         })(),
-        matchedRatingKey: item.matchedRatingKey ?? existing?.matchedRatingKey ?? null
+        // item.matchedRatingKey comes from resolveWatchlistItems which always
+        // sets it explicitly (string or null). Using !== undefined lets a null
+        // (meaning "not in library right now") clear a stale stored key, while
+        // undefined (not yet resolved) falls back to whatever is stored.
+        matchedRatingKey: (() => {
+          if (item.matchedRatingKey !== undefined) {
+            if (item.matchedRatingKey === null && existing?.matchedRatingKey) {
+              this.logger.info("Clearing stale Plex match for watchlist item", {
+                title: item.title,
+                type: item.type,
+                staleRatingKey: existing.matchedRatingKey
+              });
+            }
+            return item.matchedRatingKey;
+          }
+          return existing?.matchedRatingKey ?? null;
+        })()
       };
     });
   }
@@ -629,6 +645,7 @@ export class HubarrServices {
     const watchlistByUser = new Map(trackedUsers.map((u) => [u.id, this.db.getWatchlistItems(u.id)]));
 
     let matchedCount = 0;
+    let clearedCount = 0;
     let affectedUsers = 0;
 
     for (const library of libraries.values()) {
@@ -642,7 +659,55 @@ export class HubarrServices {
           : await plex.getAllLibraryItems(library.libraryId, library.mediaType);
 
       const guidToRatingKey = this.buildGuidToRatingKeyMap(libraryItems);
-      if (guidToRatingKey.size === 0) {
+      // Build from libraryItems directly (not guidToRatingKey.values()) so that
+      // library items without GUIDs still contribute their ratingKey. Items with
+      // empty guids won't appear in guidToRatingKey at all, so deriving the set
+      // from the map values would produce false-positive stale clears.
+      const libraryRatingKeys = new Set(libraryItems.map((item) => item.ratingKey));
+
+      // If Plex returned items but none had GUIDs, GUID-based matching and
+      // re-match detection are skipped (no cross-reference is possible).
+      // The library is still processed: libraryRatingKeys is populated from
+      // ratingKey values, so stored matchedRatingKey entries can still be
+      // validated against the library. Stale-key clearing only happens in
+      // 'full' mode; in 'recent' mode those branches are not reached.
+      if (libraryItems.length > 0 && guidToRatingKey.size === 0) {
+        this.logger.warn("Library returned no GUIDs — GUID-based matching skipped; stale-key validation runs for full scans only", {
+          libraryId: library.libraryId,
+          mediaType: library.mediaType,
+          mode: options.mode,
+          libraryItemCount: libraryItems.length
+        });
+      }
+
+      // If a full scan returned zero library items, the library appears empty.
+      // Clear all stored matches for users in this library so they don't keep
+      // pointing at keys that no longer exist. Recent scans are skipped here —
+      // an empty "recently added" result just means nothing was added lately.
+      if (libraryItems.length === 0) {
+        if (options.mode === "full") {
+          for (const friendId of library.userIds) {
+            const watchlistItems = watchlistByUser.get(friendId) ?? [];
+            let friendChanged = false;
+            for (const item of watchlistItems) {
+              if (item.type !== library.mediaType || !item.matchedRatingKey) continue;
+              this.db.clearMatchedRatingKey(friendId, item.plexItemId);
+              clearedCount++;
+              friendChanged = true;
+              this.logger.info("Clearing stale Plex match — library returned empty during full scan", {
+                friendId,
+                title: item.title,
+                type: item.type,
+                staleRatingKey: item.matchedRatingKey,
+                libraryId: library.libraryId
+              });
+            }
+            if (friendChanged) {
+              affectedUsers++;
+              this.db.markUserSyncResult(friendId, null);
+            }
+          }
+        }
         continue;
       }
 
@@ -656,7 +721,26 @@ export class HubarrServices {
         let friendChanged = false;
 
         for (const item of watchlistItems) {
-          if (item.type !== library.mediaType || item.matchedRatingKey || !item.guids?.length) {
+          if (item.type !== library.mediaType) {
+            continue;
+          }
+
+          if (!item.guids?.length) {
+            // No GUIDs — GUID-based matching and re-match detection are not
+            // possible, but we can still validate a stored matchedRatingKey by
+            // checking whether it appears anywhere in the current library.
+            if (item.matchedRatingKey && !libraryRatingKeys.has(item.matchedRatingKey) && options.mode === "full") {
+              this.db.clearMatchedRatingKey(friendId, item.plexItemId);
+              clearedCount++;
+              friendChanged = true;
+              this.logger.info("Clearing stale Plex match for item without GUIDs during full library scan", {
+                friendId,
+                displayName: friend.displayName,
+                title: item.title,
+                type: item.type,
+                staleRatingKey: item.matchedRatingKey
+              });
+            }
             continue;
           }
 
@@ -664,6 +748,49 @@ export class HubarrServices {
             .map((guid) => guidToRatingKey.get(guid.toLowerCase()))
             .find((ratingKey): ratingKey is string => Boolean(ratingKey));
 
+          if (item.matchedRatingKey) {
+            // Item already has a stored match — verify it against the current library.
+            if (match === item.matchedRatingKey) {
+              continue; // Still valid, nothing to do
+            }
+            if (match) {
+              // Item was re-imported under a new ratingKey — update to the new one
+              this.db.upsertWatchlistItem(friendId, { ...item, matchedRatingKey: match });
+              matchedCount++;
+              friendChanged = true;
+              this.logger.info("Updated stale Plex match to new rating key during library scan", {
+                label: options.mode === "recent" ? "Plex Recently Added Scan" : "Plex Full Library Scan",
+                friendId,
+                displayName: friend.displayName,
+                title: item.title,
+                type: item.type,
+                oldRatingKey: item.matchedRatingKey,
+                newRatingKey: match
+              });
+            } else if (options.mode === "full" && !libraryRatingKeys.has(item.matchedRatingKey)) {
+              // Full scan covers the entire library; the GUID is gone AND the
+              // stored ratingKey is no longer present in the library, confirming
+              // the item was deleted. Clear the stale match so the watchlist row
+              // stays but the library link is severed. The ratingKey guard
+              // prevents false-positive clears when GUIDs are temporarily
+              // missing but the item itself still exists. Recent scans are
+              // skipped here — the item may exist but simply wasn't recently
+              // added.
+              this.db.clearMatchedRatingKey(friendId, item.plexItemId);
+              clearedCount++;
+              friendChanged = true;
+              this.logger.info("Clearing stale Plex match during full library scan", {
+                friendId,
+                displayName: friend.displayName,
+                title: item.title,
+                type: item.type,
+                staleRatingKey: item.matchedRatingKey
+              });
+            }
+            continue;
+          }
+
+          // No existing match — try to match against the current library
           if (!match) {
             continue;
           }
@@ -697,6 +824,7 @@ export class HubarrServices {
       mode: options.mode,
       since: options.since?.toISOString() ?? null,
       matchedCount,
+      clearedCount,
       affectedUsers
     });
 
@@ -992,18 +1120,55 @@ export class HubarrServices {
       });
       await plex.updateCollectionSortTitle(collectionRatingKey, `!10_${collectionName}`);
       await plex.updateCollectionContentSort(collectionRatingKey, effectiveSortOrder);
-      await plex.syncCollectionItems(collectionRatingKey, matchedRatingKeys);
-      // Explicitly push item positions into Plex for all custom-ordered modes.
-      // Title sort uses Plex's native alphabetical sort (collectionSort=1) and
-      // doesn't need explicit reordering; all other modes use collectionSort=2.
-      if (effectiveSortOrder !== "title") {
-        await plex.reorderCollectionItems(collectionRatingKey, matchedRatingKeys);
+      const { staleKeys: syncStaleKeys } = await plex.syncCollectionItems(collectionRatingKey, matchedRatingKeys);
+      if (syncStaleKeys.size > 0) {
+        this.logger.warn("Clearing stale matched rating keys found during collection sync", {
+          userId: friend.id,
+          mediaType,
+          staleKeys: [...syncStaleKeys]
+        });
+        for (const key of syncStaleKeys) {
+          this.db.clearMatchedRatingKeyByValue(key);
+        }
       }
+      // Exclude stale keys from reorder so move operations don't fail on items
+      // that were never successfully added to the collection.
+      const reorderKeys = syncStaleKeys.size > 0
+        ? matchedRatingKeys.filter((k) => !syncStaleKeys.has(k))
+        : matchedRatingKeys;
+      // For title sort (collectionSort=1) Plex ignores move calls, so skip the
+      // reorder and detect stale keys via a read-only collection fetch instead.
+      // For custom-order modes (date/watchlist-date, collectionSort=2) push
+      // explicit item positions which also catches stale keys via 404 failures.
+      let reorderStaleKeys: Set<string>;
+      if (effectiveSortOrder === "title") {
+        const liveKeys = new Set(await plex.getCollectionItems(collectionRatingKey));
+        reorderStaleKeys = new Set(reorderKeys.filter((k) => !liveKeys.has(k)));
+      } else {
+        ({ staleKeys: reorderStaleKeys } = await plex.reorderCollectionItems(collectionRatingKey, reorderKeys));
+      }
+      if (reorderStaleKeys.size > 0) {
+        this.logger.warn("Clearing stale matched rating keys found during post-sync validation", {
+          userId: friend.id,
+          mediaType,
+          effectiveSortOrder,
+          reordered: effectiveSortOrder !== "title",
+          staleKeys: [...reorderStaleKeys]
+        });
+        for (const key of reorderStaleKeys) {
+          this.db.clearMatchedRatingKeyByValue(key);
+        }
+      }
+      // Build the cleaned key list that was actually published — excludes any
+      // stale keys discovered during sync or reorder.
+      const cleanedKeys = (syncStaleKeys.size > 0 || reorderStaleKeys.size > 0)
+        ? matchedRatingKeys.filter((k) => !syncStaleKeys.has(k) && !reorderStaleKeys.has(k))
+        : matchedRatingKeys;
       this.logger.info("Collection items synced", {
         userId: friend.id,
         mediaType,
         collectionRatingKey,
-        matchedItems: matchedRatingKeys.length
+        matchedItems: cleanedKeys.length
       });
 
       const labelName = plex.createCollectionLabel(friend.displayName);
@@ -1027,7 +1192,7 @@ export class HubarrServices {
         collectionRatingKey,
         hubIdentifier
       });
-      const hash = plex.hashRatingKeys(matchedRatingKeys);
+      const hash = plex.hashRatingKeys(cleanedKeys);
       this.db.upsertCollectionRecord(friend.id, mediaType, {
         collectionRatingKey,
         visibleName: collectionName,
@@ -1048,7 +1213,7 @@ export class HubarrServices {
             mediaType,
             collectionName,
             collectionRatingKey,
-            matchedItems: matchedRatingKeys.length
+            matchedItems: cleanedKeys.length
           },
           friend.id
         );

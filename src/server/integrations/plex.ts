@@ -372,6 +372,14 @@ export class PlexIntegration {
     return JSON.parse(rawText) as T;
   }
 
+  // Returns true when a requestServer error indicates the specific item is
+  // missing or invalid in Plex (HTTP 400/404). Other status codes (401, 5xx,
+  // network failures) are transient and should not be treated as stale keys.
+  private isItemMissingError(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err);
+    return /Plex server request failed: (400|404) /.test(msg);
+  }
+
   private async requestCommunity<T>(query: string, variables?: Record<string, unknown>) {
     const response = await fetch(COMMUNITY_API_URL, {
       method: "POST",
@@ -1126,11 +1134,12 @@ export class PlexIntegration {
     return (response.MediaContainer?.Metadata || []).map((item) => item.ratingKey);
   }
 
-  async syncCollectionItems(collectionRatingKey: string, ratingKeys: string[]) {
+  async syncCollectionItems(collectionRatingKey: string, ratingKeys: string[]): Promise<{ staleKeys: Set<string> }> {
     const machineIdentifier = await this.getMachineIdentifier();
     const currentItems = await this.getCollectionItems(collectionRatingKey);
     const currentSet = new Set(currentItems);
     const desiredSet = new Set(ratingKeys);
+    const staleKeys = new Set<string>();
 
     const toAdd = ratingKeys.filter((key) => !currentSet.has(key));
     const toRemove = currentItems.filter((key) => !desiredSet.has(key));
@@ -1144,11 +1153,39 @@ export class PlexIntegration {
     });
 
     if (toAdd.length) {
-      const uri = `server://${machineIdentifier}/com.plexapp.plugins.library/library/metadata/${toAdd.join(",")}`;
-      await this.requestServer(
-        `/library/collections/${collectionRatingKey}/items?uri=${encodeURIComponent(uri)}`,
-        { method: "PUT" }
-      );
+      // Try adding all keys in one request. If Plex rejects the batch (e.g. a
+      // stale key causes a 400), fall back to per-key adds so we can isolate
+      // and skip whichever keys are no longer valid.
+      try {
+        const uri = `server://${machineIdentifier}/com.plexapp.plugins.library/library/metadata/${toAdd.join(",")}`;
+        await this.requestServer(
+          `/library/collections/${collectionRatingKey}/items?uri=${encodeURIComponent(uri)}`,
+          { method: "PUT" }
+        );
+      } catch (bulkErr) {
+        this.logger.warn("Bulk collection add failed, retrying per-key to isolate stale entries", {
+          collectionRatingKey,
+          toAdd: toAdd.length,
+          error: bulkErr instanceof Error ? bulkErr.message : String(bulkErr)
+        });
+        for (const key of toAdd) {
+          try {
+            const uri = `server://${machineIdentifier}/com.plexapp.plugins.library/library/metadata/${key}`;
+            await this.requestServer(
+              `/library/collections/${collectionRatingKey}/items?uri=${encodeURIComponent(uri)}`,
+              { method: "PUT" }
+            );
+          } catch (err) {
+            if (!this.isItemMissingError(err)) throw err;
+            this.logger.warn("Skipping stale rating key during collection add", {
+              collectionRatingKey,
+              staleKey: key,
+              error: err instanceof Error ? err.message : String(err)
+            });
+            staleKeys.add(key);
+          }
+        }
+      }
     }
 
     for (const key of toRemove) {
@@ -1157,6 +1194,8 @@ export class PlexIntegration {
         { method: "DELETE" }
       );
     }
+
+    return { staleKeys };
   }
 
   async ensureCollection(title: string, mediaType: MediaType, libraryId: string) {
@@ -1240,8 +1279,10 @@ export class PlexIntegration {
    * Moves every item into position sequentially — simple and guaranteed correct.
    * Skips the whole operation if the collection is already in the desired order.
    */
-  async reorderCollectionItems(collectionRatingKey: string, orderedRatingKeys: string[]): Promise<void> {
-    if (orderedRatingKeys.length <= 1) return;
+  async reorderCollectionItems(collectionRatingKey: string, orderedRatingKeys: string[]): Promise<{ staleKeys: Set<string> }> {
+    const staleKeys = new Set<string>();
+
+    if (orderedRatingKeys.length <= 1) return { staleKeys };
 
     const currentOrder = await this.getCollectionItems(collectionRatingKey);
 
@@ -1249,24 +1290,39 @@ export class PlexIntegration {
       currentOrder.length === orderedRatingKeys.length &&
       currentOrder.every((key, i) => key === orderedRatingKeys[i])
     ) {
-      return; // already in correct order
+      return { staleKeys }; // already in correct order
     }
 
-    for (let i = 0; i < orderedRatingKeys.length; i++) {
-      const itemKey = orderedRatingKeys[i];
-      if (i === 0) {
-        await this.requestServer(
-          `/library/collections/${collectionRatingKey}/items/${itemKey}/move`,
-          { method: "PUT" }
-        );
-      } else {
-        const afterKey = orderedRatingKeys[i - 1];
-        await this.requestServer(
-          `/library/collections/${collectionRatingKey}/items/${itemKey}/move?after=${afterKey}`,
-          { method: "PUT" }
-        );
+    // Track the last successfully placed key so the anchor for subsequent moves
+    // stays valid even when stale keys are skipped mid-sequence.
+    let lastPlacedKey: string | null = null;
+
+    for (const itemKey of orderedRatingKeys) {
+      try {
+        if (lastPlacedKey === null) {
+          await this.requestServer(
+            `/library/collections/${collectionRatingKey}/items/${itemKey}/move`,
+            { method: "PUT" }
+          );
+        } else {
+          await this.requestServer(
+            `/library/collections/${collectionRatingKey}/items/${itemKey}/move?after=${lastPlacedKey}`,
+            { method: "PUT" }
+          );
+        }
+        lastPlacedKey = itemKey;
+      } catch (err) {
+        if (!this.isItemMissingError(err)) throw err;
+        this.logger.warn("Skipping stale rating key during collection reorder", {
+          collectionRatingKey,
+          staleKey: itemKey,
+          error: err instanceof Error ? err.message : String(err)
+        });
+        staleKeys.add(itemKey);
       }
     }
+
+    return { staleKeys };
   }
 
   /**
