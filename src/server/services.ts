@@ -660,8 +660,12 @@ export class HubarrServices {
 
       const guidToRatingKey = this.buildGuidToRatingKeyMap(libraryItems);
 
-      // If Plex returned items but none had GUIDs, we can't do useful matching
-      // or stale-key detection — skip this library entirely.
+      // If Plex returned items but none had GUIDs, skip this library entirely.
+      // GUIDs are the only reliable cross-reference between Plex library items
+      // and stored watchlist rating keys. Without them, neither matching nor
+      // stale-key detection is safe — any attempt to clear or update keys would
+      // risk false positives. Skipping preserves all existing keys unchanged
+      // until GUIDs become available on a future scan.
       if (libraryItems.length > 0 && guidToRatingKey.size === 0) {
         continue;
       }
