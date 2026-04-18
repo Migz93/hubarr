@@ -195,6 +195,10 @@ export interface WatchlistPageResponse {
       movie: number;
       show: number;
     };
+    availability: {
+      available: number;
+      missing: number;
+    };
   };
   selectedUser: {
     userId: number;
