@@ -1072,7 +1072,17 @@ export class PlexIntegration {
         libraryId,
         query: fallbackParams.toString()
       });
-      response = await this.requestServer(`/library/sections/${libraryId}/all?${fallbackParams.toString()}`);
+      try {
+        response = await this.requestServer(`/library/sections/${libraryId}/all?${fallbackParams.toString()}`);
+      } catch (fallbackErr) {
+        this.logger.warn("Library search fallback request failed; treating as no match", {
+          title,
+          searchTitle,
+          libraryId,
+          query: fallbackParams.toString(),
+          error: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
+        });
+      }
     }
 
     this.logger.debug("Library search raw response", { response });
