@@ -10,6 +10,128 @@ export interface ResolvedWatchlistItem extends WatchlistItem {
 }
 
 // ---------------------------------------------------------------------------
+// Adaptive per-item enrichment limiter
+// ---------------------------------------------------------------------------
+// Shared across concurrent user syncs so all users draw from the same pool.
+// Starts at MAX_ENRICHMENT_CONCURRENCY. On a 429 the limit drops by 30% and
+// all in-flight items wait out an exponential-backoff cooldown before retrying.
+// After RECOVERY_THRESHOLD consecutive successes the limit climbs back by 1
+// until it reaches the original max.
+
+const MAX_ENRICHMENT_CONCURRENCY = 3;
+const RECOVERY_THRESHOLD = 5;
+
+class AdaptiveItemLimiter {
+  private currentLimit: number;
+  private readonly maxLimit: number;
+  private active = 0;
+  private consecutiveSuccesses = 0;
+  private consecutiveRateLimits = 0;
+  private readonly pending: Array<() => void> = [];
+  private cooldownUntil = 0;
+  private schedulePending = false;
+
+  constructor(limit: number) {
+    this.currentLimit = limit;
+    this.maxLimit = limit;
+  }
+
+  run<T>(fn: () => Promise<T>, logger?: Logger, maxRetries = 5): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.pending.push(() => {
+        this.active++;
+        this.executeWithRetry(fn, logger, maxRetries)
+          .then((result) => {
+            this.active--;
+            this.onSuccess(logger);
+            this.schedule();
+            resolve(result);
+          })
+          .catch((err) => {
+            this.active--;
+            this.schedule();
+            reject(err);
+          });
+      });
+      this.schedule();
+    });
+  }
+
+  private schedule(): void {
+    const delay = Math.max(0, this.cooldownUntil - Date.now());
+    if (delay > 0) {
+      if (!this.schedulePending) {
+        this.schedulePending = true;
+        setTimeout(() => {
+          this.schedulePending = false;
+          this.schedule();
+        }, delay);
+      }
+      return;
+    }
+    while (this.pending.length > 0 && this.active < this.currentLimit) {
+      const next = this.pending.shift()!;
+      next();
+    }
+  }
+
+  private async executeWithRetry<T>(fn: () => Promise<T>, logger?: Logger, maxRetries = 5): Promise<T> {
+    let attempts = 0;
+    for (;;) {
+      const wait = this.cooldownUntil - Date.now();
+      if (wait > 0) await new Promise<void>(r => setTimeout(r, wait));
+      try {
+        const result = await fn();
+        return result;
+      } catch (err) {
+        if (this.is429(err)) {
+          attempts++;
+          if (attempts > maxRetries) {
+            throw new Error(`Rate limit exceeded after ${maxRetries} retries`);
+          }
+          this.onRateLimit(logger);
+        } else {
+          throw err;
+        }
+      }
+    }
+  }
+
+  private is429(err: unknown): boolean {
+    if (!(err instanceof Error)) return false;
+    return err.message.includes("429") || err.message.toLowerCase().includes("rate limit");
+  }
+
+  private onRateLimit(logger?: Logger): void {
+    this.consecutiveSuccesses = 0;
+    this.consecutiveRateLimits++;
+    const base = Math.min(2000 * (1.5 ** (this.consecutiveRateLimits - 1)), 30_000);
+    const jitter = (Math.random() * 2 - 1) * base * 0.1;
+    const cooldownMs = base + jitter;
+    this.cooldownUntil = Math.max(this.cooldownUntil, Date.now() + cooldownMs);
+    const prev = this.currentLimit;
+    this.currentLimit = Math.max(1, Math.floor(this.currentLimit * 0.7));
+    logger?.warn("Plex rate limit detected; reducing enrichment concurrency", {
+      prev,
+      current: this.currentLimit,
+      cooldownSecs: (cooldownMs / 1000).toFixed(1)
+    });
+  }
+
+  private onSuccess(logger?: Logger): void {
+    this.consecutiveRateLimits = 0;
+    this.consecutiveSuccesses++;
+    if (this.currentLimit < this.maxLimit && this.consecutiveSuccesses >= RECOVERY_THRESHOLD) {
+      this.currentLimit = Math.min(this.currentLimit + 1, this.maxLimit);
+      this.consecutiveSuccesses = Math.floor(RECOVERY_THRESHOLD / 2);
+      logger?.debug("Plex rate limit recovery: enrichment concurrency increased", { current: this.currentLimit });
+    }
+  }
+}
+
+const adaptiveItemLimiter = new AdaptiveItemLimiter(MAX_ENRICHMENT_CONCURRENCY);
+
+// ---------------------------------------------------------------------------
 // Filter string helpers for per-user Plex content isolation
 // ---------------------------------------------------------------------------
 
@@ -388,6 +510,8 @@ export class PlexIntegration {
       `library/metadata/${item.plexItemId}`
     ].filter((endpoint): endpoint is string => Boolean(endpoint))));
 
+    let lastErr: Error | null = null;
+
     for (const endpoint of endpoints) {
       try {
         const response = await fetch(this.buildDiscoverMetadataUrl(endpoint), {
@@ -399,7 +523,9 @@ export class PlexIntegration {
         });
 
         if (!response.ok) {
-          continue;
+          let body = "";
+          try { body = await response.text(); } catch { /* ignore */ }
+          throw new Error(`Discover metadata request failed with HTTP ${response.status}: ${body}`);
         }
 
         const json = (await response.json()) as {
@@ -436,9 +562,23 @@ export class PlexIntegration {
             guids
           };
         }
-      } catch {
-        // Best-effort discover metadata lookup only.
+      } catch (err) {
+        if (err instanceof Error && (err.message.includes("429") || err.message.toLowerCase().includes("rate limit"))) {
+          throw err; // propagate rate-limit errors so adaptiveItemLimiter can handle backoff
+        }
+        // Non-rate-limit errors: store and try next endpoint
+        if (err instanceof Error) {
+          lastErr = err;
+        }
       }
+    }
+
+    if (lastErr) {
+      this.logger.warn("Discover metadata lookup failed for all endpoints", {
+        plexItemId: item.plexItemId,
+        message: lastErr.message,
+        stack: lastErr.stack
+      });
     }
 
     return null;
@@ -798,68 +938,70 @@ export class PlexIntegration {
   }
 
   async resolveWatchlistItems(items: WatchlistItem[], mediaType: MediaType, libraryId: string): Promise<ResolvedWatchlistItem[]> {
-    const resolved: ResolvedWatchlistItem[] = [];
+    const filteredItems = items.filter((entry) => entry.type === mediaType);
 
-    for (const item of items.filter((entry) => entry.type === mediaType)) {
-      this.logger.debug("Watchlist item raw data", { item });
+    const results = await Promise.all(filteredItems.map((item) =>
+      adaptiveItemLimiter.run(async (): Promise<ResolvedWatchlistItem> => {
+        this.logger.debug("Watchlist item raw data", { item });
 
-      // Enrich first so we have tmdb/tvdb/imdb GUIDs from discover.provider.plex.tv
-      // before attempting the library match.
-      const enriched = await this.enrichWatchlistMetadata(item);
-      const enrichedGuids = enriched.guids;
+        // Enrich first so we have tmdb/tvdb/imdb GUIDs from discover.provider.plex.tv
+        // before attempting the library match.
+        const enriched = await this.enrichWatchlistMetadata(item);
+        const enrichedGuids = enriched.guids;
 
-      this.logger.debug("Watchlist item enriched GUIDs", {
-        title: item.title,
-        originalGuids: item.guids ?? [],
-        enrichedGuids
-      });
-
-      const match = await this.searchLibraryItem(
-        item.title,
-        mediaType,
-        libraryId,
-        enriched.year || undefined,
-        enrichedGuids
-      );
-      const matchedRatingKey = match.ratingKey || null;
-
-      if (matchedRatingKey) {
-        this.logger.debug("Watchlist item resolved to library", {
+        this.logger.debug("Watchlist item enriched GUIDs", {
           title: item.title,
-          type: mediaType,
-          ratingKey: matchedRatingKey
+          originalGuids: item.guids ?? [],
+          enrichedGuids
         });
-        resolved.push({
-          ...item,
-          thumb: enriched.thumb,
-          year: enriched.year,
-          releaseDate: enriched.releaseDate,
-          guids: enrichedGuids,
-          matchedRatingKey
-        });
-      } else {
-        this.logger.warn("Watchlist item not matched in library", {
-          title: item.title,
-          type: mediaType,
-          year: enriched.year ?? null,
-          guids: enrichedGuids,
+
+        const match = await this.searchLibraryItem(
+          item.title,
+          mediaType,
           libraryId,
-          candidateCount: match.candidates.length,
-          candidates: match.candidates
-        });
-        resolved.push({
-          ...item,
-          thumb: enriched.thumb,
-          year: enriched.year,
-          releaseDate: enriched.releaseDate,
-          guids: enrichedGuids,
-          matchedRatingKey: null,
-          searchCandidates: match.candidates
-        });
-      }
-    }
+          enriched.year || undefined,
+          enrichedGuids
+        );
+        const matchedRatingKey = match.ratingKey || null;
 
-    return resolved;
+        if (matchedRatingKey) {
+          this.logger.debug("Watchlist item resolved to library", {
+            title: item.title,
+            type: mediaType,
+            ratingKey: matchedRatingKey
+          });
+          return {
+            ...item,
+            thumb: enriched.thumb,
+            year: enriched.year,
+            releaseDate: enriched.releaseDate,
+            guids: enrichedGuids,
+            matchedRatingKey
+          };
+        } else {
+          this.logger.warn("Watchlist item not matched in library", {
+            title: item.title,
+            type: mediaType,
+            year: enriched.year ?? null,
+            guids: enrichedGuids,
+            libraryId,
+            candidateCount: match.candidates.length,
+            candidates: match.candidates
+          });
+          return {
+            ...item,
+            thumb: enriched.thumb,
+            year: enriched.year,
+            releaseDate: enriched.releaseDate,
+            guids: enrichedGuids,
+            matchedRatingKey: null,
+            searchCandidates: match.candidates
+          };
+        }
+      }, this.logger)
+    ));
+
+    return results;
   }
 
   async searchLibraryItem(

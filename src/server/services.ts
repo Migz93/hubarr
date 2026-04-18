@@ -7,11 +7,14 @@ import type {
   PlexSettingsInput,
   WatchlistItem
 } from "../shared/types.js";
+import pLimit from "p-limit";
 import { HubarrDatabase } from "./db/index.js";
 import { ImageCacheService } from "./image-cache.js";
 import { Logger } from "./logger.js";
 import { PlexIntegration, WATCHLIST_DATE_UNKNOWN_SENTINEL, type PlexLibraryItemMatch, type ResolvedWatchlistItem } from "./integrations/plex.js";
 import { RssCache, type RssFeedItem } from "./rss-cache.js";
+
+const PLEX_SYNC_CONCURRENCY = 3;
 
 /**
  * Compare two watchlist items by release date for Plex collection ordering.
@@ -136,16 +139,15 @@ export class HubarrServices {
   private updateRunProgressSummary(
     runId: number,
     kind: "full" | "publish",
-    user: UserRecord,
-    current: number,
+    completed: number,
     total: number
   ): void {
     if (kind === "publish") {
-      this.db.updateSyncRunSummary(runId, `Collection sync: publishing collections for ${user.displayName} (${current}/${total}).`);
+      this.db.updateSyncRunSummary(runId, `Collection sync: publishing collections (${completed}/${total} users).`);
       return;
     }
 
-    this.db.updateSyncRunSummary(runId, `Full sync: syncing watchlist for ${user.displayName} (${current}/${total}).`);
+    this.db.updateSyncRunSummary(runId, `Full sync: syncing watchlists (${completed}/${total} users).`);
   }
 
   /**
@@ -318,29 +320,54 @@ export class HubarrServices {
 
         const runId = this.db.createSyncRun("full", "Onboarding preload watchlist sync.");
         let succeeded = 0;
+        let onboardingCompleted = 0;
         const failures: string[] = [];
 
-        for (let i = 0; i < trackedUsers.length; i++) {
-          const user = trackedUsers[i];
-          emit("graphql-sync", "running", `Syncing ${user.displayName}...`, { progress: i, total });
-          try {
-            await withTimeout(this.syncUser(user, runId), 60_000, `User sync for ${user.displayName}`);
-            succeeded++;
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            failures.push(`${user.displayName}: ${message}`);
-            this.logger.warn("Onboarding preload: user sync failed — continuing", {
-              userId: user.id,
-              displayName: user.displayName,
-              message
-            });
-            this.db.addSyncRunItem(runId, "sync.user", "error", {
-              userId: user.id,
-              displayName: user.displayName,
-              message
-            }, user.id);
-          }
-        }
+        const onboardingLimit = pLimit(PLEX_SYNC_CONCURRENCY);
+        await Promise.all(trackedUsers.map((user) =>
+          onboardingLimit(async () => {
+            const syncPromise = this.syncUser(user, runId);
+            let timedOut = false;
+            try {
+              await withTimeout(syncPromise, 60_000, `User sync for ${user.displayName}`);
+            } catch {
+              timedOut = true;
+            } finally {
+              // Always await the underlying sync before recording the outcome so
+              // a timeout rejection doesn't prematurely mark a user as failed
+              // when syncUser() completes successfully moments later.
+              const outcome = await syncPromise.then(
+                () => ({ ok: true as const }),
+                (err: unknown) => ({ ok: false as const, message: err instanceof Error ? err.message : String(err) })
+              );
+
+              if (outcome.ok) {
+                succeeded++;
+                if (timedOut) {
+                  this.logger.warn("Onboarding preload: user sync exceeded timeout but eventually completed", {
+                    userId: user.id,
+                    displayName: user.displayName
+                  });
+                }
+              } else {
+                failures.push(`${user.displayName}: ${outcome.message}`);
+                this.logger.warn("Onboarding preload: user sync failed — continuing", {
+                  userId: user.id,
+                  displayName: user.displayName,
+                  message: outcome.message
+                });
+                this.db.addSyncRunItem(runId, "sync.user", "error", {
+                  userId: user.id,
+                  displayName: user.displayName,
+                  message: outcome.message
+                }, user.id);
+              }
+
+              onboardingCompleted++;
+              emit("graphql-sync", "running", `Syncing watchlists (${onboardingCompleted}/${total})...`, { progress: onboardingCompleted, total });
+            }
+          })
+        ));
 
         const runStatus = succeeded === total ? "success" : "error";
         this.db.completeSyncRun(
@@ -598,6 +625,9 @@ export class HubarrServices {
       }
     }
 
+    const userMap = new Map(trackedUsers.map((u) => [u.id, u]));
+    const watchlistByUser = new Map(trackedUsers.map((u) => [u.id, this.db.getWatchlistItems(u.id)]));
+
     let matchedCount = 0;
     let affectedUsers = 0;
 
@@ -617,12 +647,12 @@ export class HubarrServices {
       }
 
       for (const friendId of library.userIds) {
-        const friend = trackedUsers.find((entry) => entry.id === friendId);
+        const friend = userMap.get(friendId);
         if (!friend) {
           continue;
         }
 
-        const watchlistItems = this.db.getWatchlistItems(friendId);
+        const watchlistItems = watchlistByUser.get(friendId) ?? [];
         let friendChanged = false;
 
         for (const item of watchlistItems) {
@@ -711,8 +741,10 @@ export class HubarrServices {
       return [await plex.fetchUserWatchlist(friend.plexUserId), null] as const;
     })();
 
-    const movieItems = await plex.resolveWatchlistItems(rawItems, "movie", movieLibraryId);
-    const showItems = await plex.resolveWatchlistItems(rawItems, "show", showLibraryId);
+    const [movieItems, showItems] = await Promise.all([
+      plex.resolveWatchlistItems(rawItems, "movie", movieLibraryId),
+      plex.resolveWatchlistItems(rawItems, "show", showLibraryId)
+    ]);
     const fetched: ResolvedWatchlistItem[] = [...movieItems, ...showItems].sort((a, b) => a.title.localeCompare(b.title));
 
     if (selfPlexUuid) {
@@ -735,17 +767,17 @@ export class HubarrServices {
     // Pre-register merged item identifiers before the activity-cache lookup so
     // newly fetched items can resolve dates through the alias catalog on this
     // same sync pass, before replaceWatchlistItems persists the watchlist.
-    for (const item of merged) {
-      this.db.upsertMediaItemIdentifiers(item);
-    }
+    // All writes go in one transaction to avoid per-item auto-commit overhead.
+    this.db.batchUpsertMediaItemIdentifiers(merged);
 
     // Step 1: Resolve addedAt from the activity cache for items still carrying
-    // the sentinel. Identifier aliasing is resolved via the DB's explicit user
-    // and media identifier tables, so the lookup can match across self-user ID
-    // aliases and media ID forms without duplicating fallback logic here.
+    // the sentinel. One bulk query fetches all cached dates for this user at
+    // once; the resulting map is keyed by normalized identifier value so any
+    // plexItemId that matches a stored identifier or canonical key will hit.
+    const activityCacheDates = this.db.getActivityCacheDatesForUser(friend.id);
     const afterActivityCache = merged.map((item) => {
       if (item.addedAt !== WATCHLIST_DATE_UNKNOWN_SENTINEL) return item;
-      const cached = this.db.getActivityCacheDateForUserItem(friend.id, item.plexItemId);
+      const cached = activityCacheDates.get(item.plexItemId.trim().toLowerCase());
       if (cached) {
         this.logger.debug("Resolved addedAt from activity cache", { title: item.title, watchlistedAt: cached });
         return { ...item, addedAt: cached };
@@ -788,22 +820,35 @@ export class HubarrServices {
 
     const plexSettings = this.db.getPlexSettings();
     if (plexSettings) {
-      for (const item of mergedWithDates) {
-        if (!item.thumb) continue;
-        if (item.thumb.startsWith("/")) {
-          await this.imageCache.ensurePosterCached(item.plexItemId, {
-            type: "plex-path",
-            value: item.thumb,
-            serverUrl: plexSettings.serverUrl,
-            token: plexSettings.token
-          });
-        } else if (item.thumb.startsWith("https://")) {
-          await this.imageCache.ensurePosterCached(item.plexItemId, {
-            type: "public-url",
-            value: item.thumb
-          });
-        }
-      }
+      const imageLimit = pLimit(5);
+      await Promise.all(mergedWithDates.map((item) =>
+        imageLimit(async () => {
+          try {
+            if (!item.thumb) return;
+            if (item.thumb.startsWith("/")) {
+              await this.imageCache.ensurePosterCached(item.plexItemId, {
+                type: "plex-path",
+                value: item.thumb,
+                serverUrl: plexSettings.serverUrl,
+                token: plexSettings.token
+              });
+            } else if (item.thumb.startsWith("https://")) {
+              await this.imageCache.ensurePosterCached(item.plexItemId, {
+                type: "public-url",
+                value: item.thumb
+              });
+            }
+          } catch (err) {
+            this.logger.warn("Failed to cache poster image; skipping", {
+              userId: friend.id,
+              displayName: friend.displayName,
+              plexItemId: item.plexItemId,
+              thumb: item.thumb,
+              message: err instanceof Error ? err.message : String(err)
+            });
+          }
+        })
+      ));
     }
 
     this.db.addSyncRunItem(
@@ -1051,29 +1096,36 @@ export class HubarrServices {
       });
     }
 
-    for (const [index, friend] of friends.entries()) {
-      this.updateRunProgressSummary(runId, "full", friend, index + 1, friends.length);
-      const rssDateMap = rssMaps
-        ? (friend.isSelf ? rssMaps.self : (rssMaps.byAuthor.get(friend.plexUserId) ?? new Map()))
-        : undefined;
-      try {
-        await this.syncUser(friend, runId, rssDateMap);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.error("Friend sync failed during full sync — continuing with remaining users", {
-          userId: friend.id,
-          displayName: friend.displayName,
-          message
-        });
-        this.db.markUserSyncResult(friend.id, message);
-        this.db.addSyncRunItem(runId, "sync.user", "error", {
-          userId: friend.id,
-          displayName: friend.displayName,
-          message
-        }, friend.id);
-        failures.push(`${friend.displayName}: ${message}`);
-      }
-    }
+    const limit = pLimit(PLEX_SYNC_CONCURRENCY);
+    let completed = 0;
+
+    await Promise.all(friends.map((friend) =>
+      limit(async () => {
+        const rssDateMap = rssMaps
+          ? (friend.isSelf ? rssMaps.self : (rssMaps.byAuthor.get(friend.plexUserId) ?? new Map()))
+          : undefined;
+        try {
+          await this.syncUser(friend, runId, rssDateMap);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.error("Friend sync failed during full sync — continuing with remaining users", {
+            userId: friend.id,
+            displayName: friend.displayName,
+            message
+          });
+          this.db.markUserSyncResult(friend.id, message);
+          this.db.addSyncRunItem(runId, "sync.user", "error", {
+            userId: friend.id,
+            displayName: friend.displayName,
+            message
+          }, friend.id);
+          failures.push(`${friend.displayName}: ${message}`);
+        } finally {
+          completed++;
+          this.updateRunProgressSummary(runId, "full", completed, friends.length);
+        }
+      })
+    ));
 
     if (failures.length > 0) {
       const summary = `Full sync finished: ${friends.length - failures.length}/${friends.length} users succeeded.`;
@@ -1187,27 +1239,34 @@ export class HubarrServices {
 
     this.logger.info("Collection sync started", { userCount: friends.length });
 
-    for (const [index, friend] of friends.entries()) {
-      this.updateRunProgressSummary(runId, "publish", friend, index + 1, friends.length);
-      try {
-        await this.publishUserCollections(friend, this.db.getWatchlistItems(friend.id), runId, plex);
-        this.db.markUserSyncResult(friend.id, null);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.error("Collection sync failed for user — continuing with remaining users", {
-          userId: friend.id,
-          displayName: friend.displayName,
-          message
-        });
-        this.db.markUserSyncResult(friend.id, message);
-        this.db.addSyncRunItem(runId, "collection.publish", "error", {
-          userId: friend.id,
-          displayName: friend.displayName,
-          message
-        }, friend.id);
-        failures.push(`${friend.displayName}: ${message}`);
-      }
-    }
+    const publishLimit = pLimit(PLEX_SYNC_CONCURRENCY);
+    let publishCompleted = 0;
+
+    await Promise.all(friends.map((friend) =>
+      publishLimit(async () => {
+        try {
+          await this.publishUserCollections(friend, this.db.getWatchlistItems(friend.id), runId, plex);
+          this.db.markUserSyncResult(friend.id, null);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.error("Collection sync failed for user — continuing with remaining users", {
+            userId: friend.id,
+            displayName: friend.displayName,
+            message
+          });
+          this.db.markUserSyncResult(friend.id, message);
+          this.db.addSyncRunItem(runId, "collection.publish", "error", {
+            userId: friend.id,
+            displayName: friend.displayName,
+            message
+          }, friend.id);
+          failures.push(`${friend.displayName}: ${message}`);
+        } finally {
+          publishCompleted++;
+          this.updateRunProgressSummary(runId, "publish", publishCompleted, friends.length);
+        }
+      })
+    ));
 
     await this.applyIsolationFilters(friends, runId);
 
