@@ -678,10 +678,12 @@ export class HubarrServices {
         if (options.mode === "full") {
           for (const friendId of library.userIds) {
             const watchlistItems = watchlistByUser.get(friendId) ?? [];
+            let friendChanged = false;
             for (const item of watchlistItems) {
               if (item.type !== library.mediaType || !item.matchedRatingKey) continue;
               this.db.clearMatchedRatingKey(friendId, item.plexItemId);
               clearedCount++;
+              friendChanged = true;
               this.logger.info("Clearing stale Plex match — library returned empty during full scan", {
                 friendId,
                 title: item.title,
@@ -689,6 +691,10 @@ export class HubarrServices {
                 staleRatingKey: item.matchedRatingKey,
                 libraryId: library.libraryId
               });
+            }
+            if (friendChanged) {
+              affectedUsers++;
+              this.db.markUserSyncResult(friendId, null);
             }
           }
         }
@@ -1100,8 +1106,10 @@ export class HubarrServices {
       // Explicitly push item positions into Plex for all custom-ordered modes.
       // Title sort uses Plex's native alphabetical sort (collectionSort=1) and
       // doesn't need explicit reordering; all other modes use collectionSort=2.
+      let reorderStaleKeys = new Set<string>();
       if (effectiveSortOrder !== "title") {
-        const { staleKeys: reorderStaleKeys } = await plex.reorderCollectionItems(collectionRatingKey, reorderKeys);
+        const reorderResult = await plex.reorderCollectionItems(collectionRatingKey, reorderKeys);
+        reorderStaleKeys = reorderResult.staleKeys;
         if (reorderStaleKeys.size > 0) {
           this.logger.warn("Clearing stale matched rating keys found during collection reorder", {
             userId: friend.id,
@@ -1113,11 +1121,16 @@ export class HubarrServices {
           }
         }
       }
+      // Build the cleaned key list that was actually published — excludes any
+      // stale keys discovered during sync or reorder.
+      const cleanedKeys = (syncStaleKeys.size > 0 || reorderStaleKeys.size > 0)
+        ? matchedRatingKeys.filter((k) => !syncStaleKeys.has(k) && !reorderStaleKeys.has(k))
+        : matchedRatingKeys;
       this.logger.info("Collection items synced", {
         userId: friend.id,
         mediaType,
         collectionRatingKey,
-        matchedItems: matchedRatingKeys.length
+        matchedItems: cleanedKeys.length
       });
 
       const labelName = plex.createCollectionLabel(friend.displayName);
@@ -1141,7 +1154,7 @@ export class HubarrServices {
         collectionRatingKey,
         hubIdentifier
       });
-      const hash = plex.hashRatingKeys(matchedRatingKeys);
+      const hash = plex.hashRatingKeys(cleanedKeys);
       this.db.upsertCollectionRecord(friend.id, mediaType, {
         collectionRatingKey,
         visibleName: collectionName,
@@ -1162,7 +1175,7 @@ export class HubarrServices {
             mediaType,
             collectionName,
             collectionRatingKey,
-            matchedItems: matchedRatingKeys.length
+            matchedItems: cleanedKeys.length
           },
           friend.id
         );
