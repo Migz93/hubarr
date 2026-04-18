@@ -665,17 +665,14 @@ export class HubarrServices {
       // from the map values would produce false-positive stale clears.
       const libraryRatingKeys = new Set(libraryItems.map((item) => item.ratingKey));
 
-      // If Plex returned items but none had GUIDs, skip this library entirely.
-      // GUIDs are the only reliable cross-reference between Plex library items
-      // and stored watchlist rating keys. Without them, neither matching nor
-      // stale-key detection is safe — any attempt to clear or update keys would
-      // risk false positives. Skipping preserves all existing keys unchanged
-      // until GUIDs become available on a future scan.
+      // If Plex returned items but none had GUIDs, GUID-based matching and
+      // re-match detection are skipped (no cross-reference is possible).
+      // The library is still processed: libraryRatingKeys is populated from
+      // ratingKey values, so stored matchedRatingKey entries can still be
+      // validated against the library. Stale-key clearing only happens in
+      // 'full' mode; in 'recent' mode those branches are not reached.
       if (libraryItems.length > 0 && guidToRatingKey.size === 0) {
-        // No GUIDs on any library item — GUID-based matching is impossible, but
-        // libraryRatingKeys is still populated so stale-key validation below can
-        // run. Log the situation for operator visibility and fall through.
-        this.logger.warn("Library returned no GUIDs — skipping GUID-based matching, stale-key check will still run", {
+        this.logger.warn("Library returned no GUIDs — GUID-based matching skipped; stale-key validation runs for full scans only", {
           libraryId: library.libraryId,
           mediaType: library.mediaType,
           mode: options.mode,
