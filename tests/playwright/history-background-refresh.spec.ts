@@ -211,7 +211,7 @@ test.describe("History background refresh", () => {
       startedAt: new Date(Date.now() - 60_000).toISOString(),
       completedAt: new Date(Date.now() - 20_000).toISOString(),
       summary: "Full sync finished: 1/2 users succeeded.",
-      error: "Alice: Plex request failed"
+      error: "Full sync partially failed"
     };
 
     await historyPage.route("**/api/history?*", async (route) => {
