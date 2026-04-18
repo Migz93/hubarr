@@ -327,27 +327,42 @@ export class HubarrServices {
         await Promise.all(trackedUsers.map((user) =>
           onboardingLimit(async () => {
             const syncPromise = this.syncUser(user, runId);
+            let timedOut = false;
             try {
               await withTimeout(syncPromise, 60_000, `User sync for ${user.displayName}`);
-              succeeded++;
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              failures.push(`${user.displayName}: ${message}`);
-              this.logger.warn("Onboarding preload: user sync failed — continuing", {
-                userId: user.id,
-                displayName: user.displayName,
-                message
-              });
-              this.db.addSyncRunItem(runId, "sync.user", "error", {
-                userId: user.id,
-                displayName: user.displayName,
-                message
-              }, user.id);
+            } catch {
+              timedOut = true;
             } finally {
-              // withTimeout() only rejects the wrapper promise. Always wait for
-              // the underlying sync to settle before advancing onboarding so a
-              // timed-out user sync cannot keep mutating state in Phase 3.
-              await syncPromise.catch(() => {});
+              // Always await the underlying sync before recording the outcome so
+              // a timeout rejection doesn't prematurely mark a user as failed
+              // when syncUser() completes successfully moments later.
+              const outcome = await syncPromise.then(
+                () => ({ ok: true as const }),
+                (err: unknown) => ({ ok: false as const, message: err instanceof Error ? err.message : String(err) })
+              );
+
+              if (outcome.ok) {
+                succeeded++;
+                if (timedOut) {
+                  this.logger.warn("Onboarding preload: user sync exceeded timeout but eventually completed", {
+                    userId: user.id,
+                    displayName: user.displayName
+                  });
+                }
+              } else {
+                failures.push(`${user.displayName}: ${outcome.message}`);
+                this.logger.warn("Onboarding preload: user sync failed — continuing", {
+                  userId: user.id,
+                  displayName: user.displayName,
+                  message: outcome.message
+                });
+                this.db.addSyncRunItem(runId, "sync.user", "error", {
+                  userId: user.id,
+                  displayName: user.displayName,
+                  message: outcome.message
+                }, user.id);
+              }
+
               onboardingCompleted++;
               emit("graphql-sync", "running", `Syncing watchlists (${onboardingCompleted}/${total})...`, { progress: onboardingCompleted, total });
             }
@@ -824,7 +839,13 @@ export class HubarrServices {
               });
             }
           } catch (err) {
-            this.logger.warn("Failed to cache poster image; skipping", { plexItemId: item.plexItemId, thumb: item.thumb, err });
+            this.logger.warn("Failed to cache poster image; skipping", {
+              userId: friend.id,
+              displayName: friend.displayName,
+              plexItemId: item.plexItemId,
+              thumb: item.thumb,
+              message: err instanceof Error ? err.message : String(err)
+            });
           }
         })
       ));
