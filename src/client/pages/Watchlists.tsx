@@ -116,8 +116,8 @@ export default function Watchlists() {
 
         <div className="w-px h-5 bg-outline-variant/40 mx-1 flex-shrink-0" />
 
-        <FilterChip label="In Library" active={availability === "available"} onClick={() => selectAvailability(availability === "available" ? "all" : "available")} />
-        <FilterChip label="Missing"    active={availability === "missing"}   onClick={() => selectAvailability(availability === "missing"   ? "all" : "missing")} />
+        <FilterChip label="In Library" active={availability === "available"} count={data?.facets.availability.available} onClick={() => selectAvailability(availability === "available" ? "all" : "available")} />
+        <FilterChip label="Missing"    active={availability === "missing"}   count={data?.facets.availability.missing}   onClick={() => selectAvailability(availability === "missing"   ? "all" : "missing")} />
       </div>
 
       {/* Row 2: Users */}
