@@ -659,6 +659,9 @@ export class HubarrServices {
           : await plex.getAllLibraryItems(library.libraryId, library.mediaType);
 
       const guidToRatingKey = this.buildGuidToRatingKeyMap(libraryItems);
+      // Pre-build a set of all ratingKey values so items that lack GUIDs can
+      // still have their stored matchedRatingKey validated against the library.
+      const libraryRatingKeys = new Set(guidToRatingKey.values());
 
       // If Plex returned items but none had GUIDs, skip this library entirely.
       // GUIDs are the only reliable cross-reference between Plex library items
@@ -667,6 +670,12 @@ export class HubarrServices {
       // risk false positives. Skipping preserves all existing keys unchanged
       // until GUIDs become available on a future scan.
       if (libraryItems.length > 0 && guidToRatingKey.size === 0) {
+        this.logger.warn("Skipping library scan for missing GUIDs", {
+          libraryId: library.libraryId,
+          mediaType: library.mediaType,
+          mode: options.mode,
+          libraryItemCount: libraryItems.length
+        });
         continue;
       }
 
@@ -711,7 +720,26 @@ export class HubarrServices {
         let friendChanged = false;
 
         for (const item of watchlistItems) {
-          if (item.type !== library.mediaType || !item.guids?.length) {
+          if (item.type !== library.mediaType) {
+            continue;
+          }
+
+          if (!item.guids?.length) {
+            // No GUIDs — GUID-based matching and re-match detection are not
+            // possible, but we can still validate a stored matchedRatingKey by
+            // checking whether it appears anywhere in the current library.
+            if (item.matchedRatingKey && !libraryRatingKeys.has(item.matchedRatingKey) && options.mode === "full") {
+              this.db.clearMatchedRatingKey(friendId, item.plexItemId);
+              clearedCount++;
+              friendChanged = true;
+              this.logger.info("Clearing stale Plex match for item without GUIDs during full library scan", {
+                friendId,
+                displayName: friend.displayName,
+                title: item.title,
+                type: item.type,
+                staleRatingKey: item.matchedRatingKey
+              });
+            }
             continue;
           }
 
@@ -1103,22 +1131,19 @@ export class HubarrServices {
       const reorderKeys = syncStaleKeys.size > 0
         ? matchedRatingKeys.filter((k) => !syncStaleKeys.has(k))
         : matchedRatingKeys;
-      // Explicitly push item positions into Plex for all custom-ordered modes.
-      // Title sort uses Plex's native alphabetical sort (collectionSort=1) and
-      // doesn't need explicit reordering; all other modes use collectionSort=2.
-      let reorderStaleKeys = new Set<string>();
-      if (effectiveSortOrder !== "title") {
-        const reorderResult = await plex.reorderCollectionItems(collectionRatingKey, reorderKeys);
-        reorderStaleKeys = reorderResult.staleKeys;
-        if (reorderStaleKeys.size > 0) {
-          this.logger.warn("Clearing stale matched rating keys found during collection reorder", {
-            userId: friend.id,
-            mediaType,
-            staleKeys: [...reorderStaleKeys]
-          });
-          for (const key of reorderStaleKeys) {
-            this.db.clearMatchedRatingKeyByValue(key);
-          }
+      // Push explicit item positions for all custom-ordered modes. For title
+      // sort, Plex manages ordering so the moves are no-ops from the user's
+      // perspective, but the call still detects keys that are no longer valid
+      // in Plex via move failures (404).
+      const { staleKeys: reorderStaleKeys } = await plex.reorderCollectionItems(collectionRatingKey, reorderKeys);
+      if (reorderStaleKeys.size > 0) {
+        this.logger.warn("Clearing stale matched rating keys found during collection reorder", {
+          userId: friend.id,
+          mediaType,
+          staleKeys: [...reorderStaleKeys]
+        });
+        for (const key of reorderStaleKeys) {
+          this.db.clearMatchedRatingKeyByValue(key);
         }
       }
       // Build the cleaned key list that was actually published — excludes any
