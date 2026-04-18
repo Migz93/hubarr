@@ -1136,11 +1136,17 @@ export class HubarrServices {
       const reorderKeys = syncStaleKeys.size > 0
         ? matchedRatingKeys.filter((k) => !syncStaleKeys.has(k))
         : matchedRatingKeys;
-      // Push explicit item positions for all custom-ordered modes. For title
-      // sort, Plex manages ordering so the moves are no-ops from the user's
-      // perspective, but the call still detects keys that are no longer valid
-      // in Plex via move failures (404).
-      const { staleKeys: reorderStaleKeys } = await plex.reorderCollectionItems(collectionRatingKey, reorderKeys);
+      // For title sort (collectionSort=1) Plex ignores move calls, so skip the
+      // reorder and detect stale keys via a read-only collection fetch instead.
+      // For custom-order modes (date/watchlist-date, collectionSort=2) push
+      // explicit item positions which also catches stale keys via 404 failures.
+      let reorderStaleKeys: Set<string>;
+      if (effectiveSortOrder === "title") {
+        const liveKeys = new Set(await plex.getCollectionItems(collectionRatingKey));
+        reorderStaleKeys = new Set(reorderKeys.filter((k) => !liveKeys.has(k)));
+      } else {
+        ({ staleKeys: reorderStaleKeys } = await plex.reorderCollectionItems(collectionRatingKey, reorderKeys));
+      }
       if (reorderStaleKeys.size > 0) {
         this.logger.warn("Clearing stale matched rating keys found during collection reorder", {
           userId: friend.id,
