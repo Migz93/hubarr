@@ -1045,7 +1045,7 @@ export class PlexIntegration {
       query: params.toString()
     });
 
-    const response = await this.requestServer<{
+    let response = await this.requestServer<{
       MediaContainer?: {
         Metadata?: Array<{
           ratingKey: string;
@@ -1057,6 +1057,23 @@ export class PlexIntegration {
         [key: string]: unknown;
       };
     }>(`/library/sections/${libraryId}/all?${params.toString()}`);
+
+    // If the stripped title returned nothing and the original title was different,
+    // retry with the original — the library may store the (YYYY) suffix canonically.
+    if (!response.MediaContainer?.Metadata?.length && searchTitle !== title) {
+      const fallbackParams = new URLSearchParams({
+        type: String(typeParam),
+        title,
+        includeGuids: "1"
+      });
+      this.logger.debug("Library search fallback with original title", {
+        title,
+        searchTitle,
+        libraryId,
+        query: fallbackParams.toString()
+      });
+      response = await this.requestServer(`/library/sections/${libraryId}/all?${fallbackParams.toString()}`);
+    }
 
     this.logger.debug("Library search raw response", { response });
 
