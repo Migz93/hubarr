@@ -372,6 +372,14 @@ export class PlexIntegration {
     return JSON.parse(rawText) as T;
   }
 
+  // Returns true when a requestServer error indicates the specific item is
+  // missing or invalid in Plex (HTTP 400/404). Other status codes (401, 5xx,
+  // network failures) are transient and should not be treated as stale keys.
+  private isItemMissingError(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err);
+    return /Plex server request failed: (400|404) /.test(msg);
+  }
+
   private async requestCommunity<T>(query: string, variables?: Record<string, unknown>) {
     const response = await fetch(COMMUNITY_API_URL, {
       method: "POST",
@@ -1168,6 +1176,7 @@ export class PlexIntegration {
               { method: "PUT" }
             );
           } catch (err) {
+            if (!this.isItemMissingError(err)) throw err;
             this.logger.warn("Skipping stale rating key during collection add", {
               collectionRatingKey,
               staleKey: key,
@@ -1303,6 +1312,7 @@ export class PlexIntegration {
         }
         lastPlacedKey = itemKey;
       } catch (err) {
+        if (!this.isItemMissingError(err)) throw err;
         this.logger.warn("Skipping stale rating key during collection reorder", {
           collectionRatingKey,
           staleKey: itemKey,

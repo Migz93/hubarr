@@ -659,7 +659,35 @@ export class HubarrServices {
           : await plex.getAllLibraryItems(library.libraryId, library.mediaType);
 
       const guidToRatingKey = this.buildGuidToRatingKeyMap(libraryItems);
-      if (guidToRatingKey.size === 0) {
+
+      // If Plex returned items but none had GUIDs, we can't do useful matching
+      // or stale-key detection — skip this library entirely.
+      if (libraryItems.length > 0 && guidToRatingKey.size === 0) {
+        continue;
+      }
+
+      // If a full scan returned zero library items, the library appears empty.
+      // Clear all stored matches for users in this library so they don't keep
+      // pointing at keys that no longer exist. Recent scans are skipped here —
+      // an empty "recently added" result just means nothing was added lately.
+      if (libraryItems.length === 0) {
+        if (options.mode === "full") {
+          for (const friendId of library.userIds) {
+            const watchlistItems = watchlistByUser.get(friendId) ?? [];
+            for (const item of watchlistItems) {
+              if (item.type !== library.mediaType || !item.matchedRatingKey) continue;
+              this.db.clearMatchedRatingKey(friendId, item.plexItemId);
+              clearedCount++;
+              this.logger.info("Clearing stale Plex match — library returned empty during full scan", {
+                friendId,
+                title: item.title,
+                type: item.type,
+                staleRatingKey: item.matchedRatingKey,
+                libraryId: library.libraryId
+              });
+            }
+          }
+        }
         continue;
       }
 
