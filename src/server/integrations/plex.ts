@@ -1023,22 +1023,29 @@ export class PlexIntegration {
     // Note: year is intentionally omitted from the query — it's too strict
     // and Plex sometimes stores a different year than the watchlist metadata.
     // GUID matching handles precision; title matching uses year only for disambiguation.
+
+    // Plex's GraphQL watchlist API appends (YYYY) to titles to disambiguate shows
+    // with the same name (e.g. "JoJo's Bizarre Adventure (2012)"). Library items
+    // don't carry the year suffix in their title field, so strip it before searching.
+    const searchTitle = title.replace(/\s+\(\d{4}\)$/, "").trim() || title;
+
     const params = new URLSearchParams({
       type: String(typeParam),
-      title,
+      title: searchTitle,
       includeGuids: "1"
     });
 
     this.logger.debug("Library match attempt", {
       mediaType,
       title,
+      searchTitle,
       year: year ?? null,
       guids: guids ?? [],
       libraryId,
       query: params.toString()
     });
 
-    const response = await this.requestServer<{
+    let response = await this.requestServer<{
       MediaContainer?: {
         Metadata?: Array<{
           ratingKey: string;
@@ -1050,6 +1057,33 @@ export class PlexIntegration {
         [key: string]: unknown;
       };
     }>(`/library/sections/${libraryId}/all?${params.toString()}`);
+
+    // If the stripped title returned nothing and the original title was different,
+    // retry with the original — the library may store the (YYYY) suffix canonically.
+    if (!response.MediaContainer?.Metadata?.length && searchTitle !== title) {
+      const fallbackParams = new URLSearchParams({
+        type: String(typeParam),
+        title,
+        includeGuids: "1"
+      });
+      this.logger.debug("Library search fallback with original title", {
+        title,
+        searchTitle,
+        libraryId,
+        query: fallbackParams.toString()
+      });
+      try {
+        response = await this.requestServer(`/library/sections/${libraryId}/all?${fallbackParams.toString()}`);
+      } catch (fallbackErr) {
+        this.logger.warn("Library search fallback request failed; treating as no match", {
+          title,
+          searchTitle,
+          libraryId,
+          query: fallbackParams.toString(),
+          error: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
+        });
+      }
+    }
 
     this.logger.debug("Library search raw response", { response });
 
