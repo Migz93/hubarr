@@ -659,9 +659,11 @@ export class HubarrServices {
           : await plex.getAllLibraryItems(library.libraryId, library.mediaType);
 
       const guidToRatingKey = this.buildGuidToRatingKeyMap(libraryItems);
-      // Pre-build a set of all ratingKey values so items that lack GUIDs can
-      // still have their stored matchedRatingKey validated against the library.
-      const libraryRatingKeys = new Set(guidToRatingKey.values());
+      // Build from libraryItems directly (not guidToRatingKey.values()) so that
+      // library items without GUIDs still contribute their ratingKey. Items with
+      // empty guids won't appear in guidToRatingKey at all, so deriving the set
+      // from the map values would produce false-positive stale clears.
+      const libraryRatingKeys = new Set(libraryItems.map((item) => item.ratingKey));
 
       // If Plex returned items but none had GUIDs, skip this library entirely.
       // GUIDs are the only reliable cross-reference between Plex library items
@@ -670,13 +672,15 @@ export class HubarrServices {
       // risk false positives. Skipping preserves all existing keys unchanged
       // until GUIDs become available on a future scan.
       if (libraryItems.length > 0 && guidToRatingKey.size === 0) {
-        this.logger.warn("Skipping library scan for missing GUIDs", {
+        // No GUIDs on any library item — GUID-based matching is impossible, but
+        // libraryRatingKeys is still populated so stale-key validation below can
+        // run. Log the situation for operator visibility and fall through.
+        this.logger.warn("Library returned no GUIDs — skipping GUID-based matching, stale-key check will still run", {
           libraryId: library.libraryId,
           mediaType: library.mediaType,
           mode: options.mode,
           libraryItemCount: libraryItems.length
         });
-        continue;
       }
 
       // If a full scan returned zero library items, the library appears empty.
@@ -766,11 +770,15 @@ export class HubarrServices {
                 oldRatingKey: item.matchedRatingKey,
                 newRatingKey: match
               });
-            } else if (options.mode === "full") {
-              // Full scan covers the entire library; absence of the GUID means
+            } else if (options.mode === "full" && !libraryRatingKeys.has(item.matchedRatingKey)) {
+              // Full scan covers the entire library; the GUID is gone AND the
+              // stored ratingKey is no longer present in the library, confirming
               // the item was deleted. Clear the stale match so the watchlist row
-              // stays but the library link is severed. Recent scans are skipped
-              // here — the item may exist but simply wasn't recently added.
+              // stays but the library link is severed. The ratingKey guard
+              // prevents false-positive clears when GUIDs are temporarily
+              // missing but the item itself still exists. Recent scans are
+              // skipped here — the item may exist but simply wasn't recently
+              // added.
               this.db.clearMatchedRatingKey(friendId, item.plexItemId);
               clearedCount++;
               friendChanged = true;
