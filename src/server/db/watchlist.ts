@@ -4,6 +4,7 @@ import type { WatchlistGroupedItem, WatchlistItem, WatchlistPageResponse, Watchl
 import { mergeRawPayloadGuids } from "./guid-dedupe.js";
 import { getDiscoverKeyForPlexItemId, upsertMediaItemIdentifiers } from "./identifiers.js";
 import { getAppSettings } from "./settings.js";
+import type { Logger } from "../logger.js";
 
 type ItemSummaryRow = {
   plexItemId: string;
@@ -389,7 +390,8 @@ export function getWatchlistGrouped(
     sortBy?: WatchlistSortBy;
     page: number;
     pageSize: number;
-  }
+  },
+  logger?: Logger
 ): WatchlistPageResponse {
   const { userId, mediaType, availability, sortBy = "added-desc", page, pageSize } = options;
   const offset = (page - 1) * pageSize;
@@ -417,6 +419,8 @@ export function getWatchlistGrouped(
     allowSelectedDisabledOnly,
     userId
   });
+
+  logger?.debug("Building watchlist facets with filters", { allowSelectedDisabledOnly, userId });
 
   const itemRows = loadWatchlistItemSummaries(db, whereClause, whereParams);
   const allItems = buildMergedWatchlistGroups(itemRows);
@@ -460,6 +464,8 @@ export function getWatchlistGrouped(
     available: availabilityFacetItems.filter((item) => item.plexAvailable).length,
     missing: availabilityFacetItems.filter((item) => !item.plexAvailable).length
   };
+
+  logger?.info("Computed watchlist facet counts", { totalItems: allItems.length, mediaCounts, availabilityCounts });
 
   const filteredItems = allItems.filter((item) => {
     if (userId && !item.userAddedAt.has(userId)) {
