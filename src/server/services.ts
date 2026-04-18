@@ -1148,9 +1148,11 @@ export class HubarrServices {
         ({ staleKeys: reorderStaleKeys } = await plex.reorderCollectionItems(collectionRatingKey, reorderKeys));
       }
       if (reorderStaleKeys.size > 0) {
-        this.logger.warn("Clearing stale matched rating keys found during collection reorder", {
+        this.logger.warn("Clearing stale matched rating keys found during post-sync validation", {
           userId: friend.id,
           mediaType,
+          effectiveSortOrder,
+          reordered: effectiveSortOrder !== "title",
           staleKeys: [...reorderStaleKeys]
         });
         for (const key of reorderStaleKeys) {
