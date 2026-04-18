@@ -295,6 +295,22 @@ export function getWatchlistDiscoverKey(db: Database.Database, plexItemId: strin
   }
 }
 
+// Clears the matched_rating_key for a specific user's watchlist item.
+// Use this when a full scan confirms the item is no longer in the Plex library.
+export function clearMatchedRatingKey(db: Database.Database, userId: number, plexItemId: string): void {
+  db.prepare(
+    "UPDATE watchlist_cache SET matched_rating_key = NULL WHERE user_id = ? AND plex_item_id = ?"
+  ).run(userId, plexItemId);
+}
+
+// Clears matched_rating_key for every user whose item references the given ratingKey value.
+// Use this when collection publishing discovers a ratingKey is no longer valid in Plex.
+export function clearMatchedRatingKeyByValue(db: Database.Database, ratingKey: string): void {
+  db.prepare(
+    "UPDATE watchlist_cache SET matched_rating_key = NULL WHERE matched_rating_key = ?"
+  ).run(ratingKey);
+}
+
 export function upsertWatchlistItem(db: Database.Database, userId: number, item: WatchlistItem): void {
   const discoverKey = item.discoverKey ?? null;
   db.prepare(`

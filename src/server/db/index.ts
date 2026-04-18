@@ -217,6 +217,14 @@ export class HubarrDatabase {
     watchlistRepo.upsertWatchlistItem(this.db, userId, item);
   }
 
+  clearMatchedRatingKey(userId: number, plexItemId: string): void {
+    watchlistRepo.clearMatchedRatingKey(this.db, userId, plexItemId);
+  }
+
+  clearMatchedRatingKeyByValue(ratingKey: string): void {
+    watchlistRepo.clearMatchedRatingKeyByValue(this.db, ratingKey);
+  }
+
   upsertMediaItemIdentifiers(item: Pick<WatchlistItem, "plexItemId" | "type" | "guids" | "discoverKey">): void {
     identifiersRepo.upsertMediaItemIdentifiers(this.db, item);
   }
