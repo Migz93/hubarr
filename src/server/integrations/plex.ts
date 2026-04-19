@@ -707,13 +707,16 @@ export class PlexIntegration {
   }
 
   async getLibraries(): Promise<PlexLibrary[]> {
+    this.logger.debug("Fetching Plex libraries");
     const response = await this.requestServer<{
       MediaContainer?: { Directory?: Array<{ key: string; title: string; type: "movie" | "show" }> };
     }>("/library/sections");
 
-    return (response.MediaContainer?.Directory || []).filter(
+    const libraries = (response.MediaContainer?.Directory || []).filter(
       (library) => library.type === "movie" || library.type === "show"
     );
+    this.logger.debug("Plex libraries fetched", { count: libraries.length });
+    return libraries;
   }
 
   async getRecentlyAddedLibraryItems(
@@ -1141,6 +1144,7 @@ export class PlexIntegration {
   }
 
   async createCollection(title: string, mediaType: MediaType, libraryId: string) {
+    this.logger.info("Creating Plex collection", { title, mediaType, libraryId });
     const type = mediaType === "movie" ? 1 : 2;
     const response = await this.requestServer<{
       MediaContainer?: {
@@ -1155,6 +1159,7 @@ export class PlexIntegration {
     if (!ratingKey) {
       throw new Error("Plex did not return a collection rating key.");
     }
+    this.logger.info("Plex collection created", { title, mediaType, ratingKey });
     return ratingKey;
   }
 
@@ -1241,6 +1246,7 @@ export class PlexIntegration {
   }
 
   async deleteCollection(collectionRatingKey: string): Promise<void> {
+    this.logger.info("Deleting Plex collection", { collectionRatingKey });
     await this.requestServer(`/library/metadata/${collectionRatingKey}`, { method: "DELETE" });
   }
 
@@ -1939,6 +1945,7 @@ export class PlexIntegration {
       updated++;
     }
 
+    this.logger.info("Isolation filters synced", { updated, skipped });
     return { updated, skipped };
   }
 

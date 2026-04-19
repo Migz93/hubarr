@@ -196,6 +196,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       });
     });
 
+    logger.info("Plex configuration saved", {
+      serverUrl: baseInput.serverUrl,
+      machineIdentifier: validation.machineIdentifier || baseInput.machineIdentifier,
+      librariesDiscovered: validation.libraries.length
+    });
+
     return {
       plex: db.getPlexSettingsView(),
       libraries: validation.libraries.map((lib) => ({
@@ -229,6 +235,9 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     try {
       account = await PlexIntegration.fetchAccountByToken(body.authToken);
     } catch (error) {
+      logger.warn("Plex authentication failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
       res
         .status(401)
         .json({ error: "Failed to authenticate with Plex.", detail: error instanceof Error ? error.message : String(error) });
@@ -247,6 +256,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         email: account.email,
         avatarUrl: account.avatarUrl
       });
+      logger.info("Plex owner account registered", { plexId: account.plexId, username: account.username });
 
       // Upsert self user record for watchlist tracking
       services.upsertSelfUser().catch((err) => {
@@ -256,6 +266,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       });
     } else if (existingOwner.plexId !== account.plexId) {
       // Different Plex account — not the owner
+      logger.warn("Plex login rejected: account does not match server owner", { attemptedPlexId: account.plexId });
       res.status(403).json({
         error: "unauthorized_account",
         message: "This Hubarr instance belongs to a different Plex account."
@@ -265,6 +276,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       // Owner re-authenticating — update their stored token and refresh email
       db.savePlexOwner({ ...existingOwner, plexToken: account.plexToken, email: account.email });
       db.updatePlexSettingsToken(account.plexToken);
+      logger.info("Plex owner re-authenticated", { plexId: account.plexId, username: account.username });
     }
 
     const sessionId = createSessionId();
@@ -351,6 +363,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       );
       res.json(options);
     } catch (error) {
+      logger.warn("Plex server discovery failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -360,6 +373,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       const result = await validateAndSavePlexConfiguration(req.body as PlexConfigPayload);
       res.json(result);
     } catch (error) {
+      logger.warn("Plex setup configuration save failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -389,6 +403,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         }))
       );
     } catch (error) {
+      logger.warn("Failed to fetch Plex libraries during setup", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -396,6 +411,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   /** Persist completion of the user-selection step before preload begins. */
   app.post("/api/setup/users/complete", requireAuth, (_req, res) => {
     db.updateAppSettings({ usersStepComplete: true });
+    logger.info("Onboarding users step marked complete");
     res.json({ ok: true });
   });
 
@@ -445,6 +461,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     }
     db.updateAppSettings({ usersStepComplete: true, onboardingComplete: true });
     services.clearOnboardingPreloadSession();
+    logger.info("Onboarding marked complete");
     res.json({ ok: true });
   });
 
@@ -481,6 +498,11 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     }
     const ids = (body.ids as unknown[]).filter((id): id is number => typeof id === "number");
     const updated = db.bulkUpdateUsers(ids, body.enabled);
+    logger.info("Bulk user update applied", {
+      requestedIds: ids.length,
+      enabled: body.enabled,
+      updated
+    });
     res.json({ updated });
   });
 
@@ -502,6 +524,14 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         return;
       }
       const user = db.updateUser(Number(req.params.id), body);
+      if (!user) {
+        throw new Error("User not found.");
+      }
+      logger.info("User settings updated", {
+        userId: user.id,
+        displayName: user.displayName,
+        patch: body
+      });
       res.json(user);
     } catch (error) {
       res.status(404).json({ error: error instanceof Error ? error.message : String(error) });
@@ -513,6 +543,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       const result = await services.runUserSync(Number(req.params.id));
       res.json(result);
     } catch (error) {
+      logger.warn("Manual user sync failed", { userId: req.params.id, error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -566,6 +597,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       const run = await services.refreshAllWatchlists();
       res.json(run);
     } catch (error) {
+      logger.warn("Manual watchlist refresh failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -712,6 +744,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       enabled: updated.rssEnabled
     });
 
+    logger.info("Application settings updated", { patch });
     res.json(updated);
   });
 
@@ -728,6 +761,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         }))
       );
     } catch (error) {
+      logger.warn("Failed to fetch Plex libraries for settings", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -737,6 +771,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       const result = await validateAndSavePlexConfiguration(req.body as PlexConfigPayload);
       res.json(result);
     } catch (error) {
+      logger.warn("Plex settings save failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -824,6 +859,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       const result = await services.resetCollections();
       res.json(result);
     } catch (error) {
+      logger.warn("Collection reset failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -1004,6 +1040,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         }
         res.json({ triggered: true });
       } else if (jobId === "activity-cache-fetch") {
+        logger.info("Manual job run requested", { jobId });
         services.syncActivityCache().catch((err) => {
           logger.warn("Manual activity cache fetch failed", { error: err instanceof Error ? err.message : String(err) });
         });

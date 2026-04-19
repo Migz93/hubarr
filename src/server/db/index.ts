@@ -39,7 +39,7 @@ export class HubarrDatabase {
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     this.logger = logger;
-    runMigrations(this.db);
+    runMigrations(this.db, logger);
     // reconcileStaleRuns must run after migrations and before any job scheduling/registration
     // to prevent stale rows left in a `running` state during startup.
     syncRepo.reconcileStaleRuns(this.db, logger);

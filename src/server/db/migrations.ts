@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import type { Logger } from "../logger.js";
 
 interface Migration {
   version: number;
@@ -452,7 +453,7 @@ const migrations: Migration[] = [
   }
 ];
 
-export function runMigrations(db: Database.Database): void {
+export function runMigrations(db: Database.Database, logger?: Logger): void {
   let currentVersion = db.pragma("user_version", { simple: true }) as number;
 
   if (currentVersion === 0) {
@@ -460,7 +461,14 @@ export function runMigrations(db: Database.Database): void {
     if (inferredVersion > 0) {
       db.pragma(`user_version = ${inferredVersion}`);
       currentVersion = inferredVersion;
+      logger?.info("Database schema version inferred from existing tables", { version: currentVersion });
     }
+  }
+
+  const latestVersion = migrations[migrations.length - 1]?.version ?? 0;
+  if (currentVersion >= latestVersion) {
+    logger?.debug("Database schema is up to date", { version: currentVersion });
+    return;
   }
 
   for (const migration of migrations) {
@@ -468,9 +476,12 @@ export function runMigrations(db: Database.Database): void {
       continue;
     }
 
+    logger?.info("Applying database migration", { from: currentVersion, to: migration.version });
     db.transaction(() => {
       migration.up(db);
       db.pragma(`user_version = ${migration.version}`);
     })();
+    logger?.info("Database migration applied", { version: migration.version });
+    currentVersion = migration.version;
   }
 }
