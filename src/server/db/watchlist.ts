@@ -4,6 +4,7 @@ import type { WatchlistGroupedItem, WatchlistItem, WatchlistPageResponse, Watchl
 import { mergeRawPayloadGuids } from "./guid-dedupe.js";
 import { getDiscoverKeyForPlexItemId, upsertMediaItemIdentifiers } from "./identifiers.js";
 import { getAppSettings } from "./settings.js";
+import type { Logger } from "../logger.js";
 
 type ItemSummaryRow = {
   plexItemId: string;
@@ -124,15 +125,9 @@ function compareGroupedItems(
 function buildWhereClause(options: {
   allowSelectedDisabledOnly: boolean;
   userId?: number;
-  mediaType?: "movie" | "show";
 }): { sql: string; params: (string | number)[] } {
   const whereParts: string[] = [options.allowSelectedDisabledOnly ? "f.id = ?" : "f.enabled = 1"];
   const params: (string | number)[] = options.allowSelectedDisabledOnly && options.userId ? [options.userId] : [];
-
-  if (options.mediaType) {
-    whereParts.push("w.type = ?");
-    params.push(options.mediaType);
-  }
 
   return {
     sql: whereParts.join(" AND "),
@@ -395,7 +390,8 @@ export function getWatchlistGrouped(
     sortBy?: WatchlistSortBy;
     page: number;
     pageSize: number;
-  }
+  },
+  logger?: Logger
 ): WatchlistPageResponse {
   const { userId, mediaType, availability, sortBy = "added-desc", page, pageSize } = options;
   const offset = (page - 1) * pageSize;
@@ -418,11 +414,13 @@ export function getWatchlistGrouped(
     !selectedUser.enabled &&
     getAppSettings(db).trackAllUsers
   );
+  // Load all items without mediaType filter so facet counts remain accurate across type switches
   const { sql: whereClause, params: whereParams } = buildWhereClause({
     allowSelectedDisabledOnly,
-    userId,
-    mediaType
+    userId
   });
+
+  logger?.debug("Building watchlist facets with filters", { allowSelectedDisabledOnly, userId });
 
   const itemRows = loadWatchlistItemSummaries(db, whereClause, whereParams);
   const allItems = buildMergedWatchlistGroups(itemRows);
@@ -438,6 +436,7 @@ export function getWatchlistGrouped(
     `)
     .all() as Array<{ userId: number; displayName: string; avatarUrl: string | null }>;
 
+  // User chip counts: total items per user regardless of type/availability
   const userCounts = new Map<number, number>();
   for (const item of allItems) {
     for (const userEntryId of item.userAddedAt.keys()) {
@@ -447,6 +446,7 @@ export function getWatchlistGrouped(
 
   const allUsersCount = allItems.length;
 
+  // Media type facets: filtered only by userId so switching type doesn't zero out other counts
   const mediaFacetItems = allItems.filter((item) =>
     userId ? item.userAddedAt.has(userId) : true
   );
@@ -456,8 +456,22 @@ export function getWatchlistGrouped(
     show: mediaFacetItems.filter((item) => item.type === "show").length
   };
 
+  // Availability facets: filtered by userId + mediaType but not by availability
+  const availabilityFacetItems = mediaFacetItems.filter((item) =>
+    mediaType ? item.type === mediaType : true
+  );
+  const availabilityCounts = {
+    available: availabilityFacetItems.filter((item) => item.plexAvailable).length,
+    missing: availabilityFacetItems.filter((item) => !item.plexAvailable).length
+  };
+
+  logger?.info("Computed watchlist facet counts", { totalItems: allItems.length, mediaCounts, availabilityCounts });
+
   const filteredItems = allItems.filter((item) => {
     if (userId && !item.userAddedAt.has(userId)) {
+      return false;
+    }
+    if (mediaType && item.type !== mediaType) {
       return false;
     }
     if (availability === "available" && !item.plexAvailable) {
@@ -559,7 +573,8 @@ export function getWatchlistGrouped(
             }]
           : [])
       ],
-      media: mediaCounts
+      media: mediaCounts,
+      availability: availabilityCounts
     },
     selectedUser: selectedUser
       ? {

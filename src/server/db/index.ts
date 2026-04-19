@@ -32,11 +32,13 @@ import type { Logger } from "../logger.js";
 export class HubarrDatabase {
   private readonly db: Database.Database;
   private readonly sessionSecret: string;
+  private readonly logger?: Logger;
 
   constructor(config: RuntimeConfig, logger?: Logger) {
     this.db = new Database(path.join(config.dataDir, "hubarr.db"));
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
+    this.logger = logger;
     runMigrations(this.db);
     // reconcileStaleRuns must run after migrations and before any job scheduling/registration
     // to prevent stale rows left in a `running` state during startup.
@@ -249,7 +251,7 @@ export class HubarrDatabase {
     page: number;
     pageSize: number;
   }): WatchlistPageResponse {
-    return watchlistRepo.getWatchlistGrouped(this.db, options);
+    return watchlistRepo.getWatchlistGrouped(this.db, options, this.logger);
   }
 
   computeWatchlistHash(userId: number, mediaType: "movie" | "show"): string {
