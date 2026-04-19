@@ -113,7 +113,7 @@ export function resolveSessionSecret(db: Database.Database, dataDir: string): st
 export function getBootstrapStatus(db: Database.Database, hasActiveSession: boolean): BootstrapStatus {
   const plexSettings = getSetting<PlexSettingsInput>(db, "plex");
   const appSettings = getAppSettings(db);
-  const setupComplete = Boolean(
+  const configurationValid = Boolean(
     plexSettings?.serverUrl &&
       appSettings.defaultMovieLibraryId &&
       appSettings.defaultShowLibraryId
@@ -121,15 +121,15 @@ export function getBootstrapStatus(db: Database.Database, hasActiveSession: bool
 
   // Backwards-compat: existing installs that were fully configured before the
   // onboardingComplete flag was introduced won't have the field in stored
-  // settings. For these we derive onboardingComplete from setupComplete so
+  // settings. For these we derive onboardingComplete from configurationValid so
   // they aren't forced through the wizard again.
   const stored = getSetting<AppSettings>(db, "app");
   const hasFlag = stored !== null && "onboardingComplete" in stored;
-  const onboardingComplete = hasFlag ? appSettings.onboardingComplete : setupComplete;
+  const onboardingComplete = hasFlag ? appSettings.onboardingComplete : configurationValid;
 
   return {
     hasOwner: Boolean(getSetting<PlexOwnerRecord>(db, "admin")),
-    setupComplete,
+    configurationValid,
     onboardingComplete,
     hasActiveSession
   };
