@@ -567,6 +567,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         return;
       }
 
+      const invalidFields = Object.keys(body).filter((key) => !allowedUserPatchFields.has(key));
+      if (invalidFields.length > 0) {
+        res.status(400).json({ error: `Unsupported fields: ${invalidFields.join(", ")}` });
+        return;
+      }
+
       const updatePayload: Partial<{
         enabled: boolean;
         movieLibraryId: string | null;
@@ -814,8 +820,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       if ("showLibraryId" in body.collections) {
         patch.defaultShowLibraryId = body.collections.showLibraryId ?? null;
       }
-      if (body.collections.visibilityDefaults) {
-        patch.visibilityDefaults = body.collections.visibilityDefaults as typeof patch.visibilityDefaults;
+      if ("visibilityDefaults" in body.collections) {
+        if (!isVisibilityConfig(body.collections.visibilityDefaults)) {
+          res.status(400).json({ error: "visibilityDefaults is invalid." });
+          return;
+        }
+        patch.visibilityDefaults = body.collections.visibilityDefaults;
       }
     }
 
