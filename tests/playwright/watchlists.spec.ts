@@ -20,8 +20,9 @@ test.describe("Watchlists filters and sorting", () => {
   });
 
   test("Availability filter chips are visible", async ({ page }) => {
-    await expect(page.getByRole("button", { name: /^in library$/i })).toBeVisible();
-    await expect(page.getByRole("button", { name: /^missing$/i })).toBeVisible();
+    // Use /^label/i (no $) to tolerate count badges appended to the label (e.g. "In Library 42")
+    await expect(page.getByRole("button", { name: /^in library/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^missing/i })).toBeVisible();
   });
 
   test("Sort options are all visible", async ({ page }) => {
@@ -42,12 +43,12 @@ test.describe("Watchlists filters and sorting", () => {
   });
 
   test("In Library filter updates URL", async ({ page }) => {
-    await page.getByRole("button", { name: /^in library$/i }).click();
+    await page.getByRole("button", { name: /^in library/i }).click();
     await expect(page).toHaveURL(/[?&]availability=available/);
   });
 
   test("Missing filter updates URL", async ({ page }) => {
-    await page.getByRole("button", { name: /^missing$/i }).click();
+    await page.getByRole("button", { name: /^missing/i }).click();
     await expect(page).toHaveURL(/[?&]availability=missing/);
   });
 
