@@ -11,7 +11,8 @@ import type {
   PlexConnectionOption,
   SettingsResponse,
   SessionUser,
-  SetupStatusResponse
+  SetupStatusResponse,
+  VisibilityConfig
 } from "../shared/types.js";
 import { createSessionId } from "./auth.js";
 import type { RuntimeConfig } from "./config.js";
@@ -44,6 +45,39 @@ function parseCookies(rawCookie = "") {
 
 function signedValue(secret: string, value: string) {
   return crypto.createHmac("sha256", secret).update(value).digest("hex");
+}
+
+function isVisibilityConfig(value: unknown): value is VisibilityConfig {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate["recommended"] === "boolean" &&
+    typeof candidate["home"] === "boolean" &&
+    typeof candidate["shared"] === "boolean"
+  );
+}
+
+function summarizeSettingsPatch(patch: Record<string, unknown>) {
+  const changedSections = Object.keys(patch).sort();
+  const fieldKeys = changedSections.flatMap((section) => {
+    const value = patch[section];
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return [section];
+    }
+
+    return Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map((key) => `${section}.${key}`);
+  });
+
+  return {
+    changedSections,
+    fieldKeys,
+    fieldCount: fieldKeys.length
+  };
 }
 
 export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
@@ -532,15 +566,69 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         res.status(400).json({ error: "Invalid collectionSortOrderOverride value." });
         return;
       }
-      const user = db.updateUser(Number(req.params.id), body);
+
+      const updatePayload: Partial<{
+        enabled: boolean;
+        movieLibraryId: string | null;
+        showLibraryId: string | null;
+        visibilityOverride: VisibilityConfig | null;
+        displayNameOverride: string | null;
+        collectionNameOverride: string | null;
+        collectionSortOrderOverride: CollectionSortOrder | null;
+      }> = {};
+
+      if ("enabled" in body) {
+        updatePayload.enabled = Boolean(body.enabled);
+      }
+      if ("movieLibraryId" in body) {
+        if (body.movieLibraryId !== null && typeof body.movieLibraryId !== "string") {
+          res.status(400).json({ error: "movieLibraryId must be a string or null." });
+          return;
+        }
+        updatePayload.movieLibraryId = body.movieLibraryId as string | null;
+      }
+      if ("showLibraryId" in body) {
+        if (body.showLibraryId !== null && typeof body.showLibraryId !== "string") {
+          res.status(400).json({ error: "showLibraryId must be a string or null." });
+          return;
+        }
+        updatePayload.showLibraryId = body.showLibraryId as string | null;
+      }
+      if ("visibilityOverride" in body) {
+        if (body.visibilityOverride !== null && !isVisibilityConfig(body.visibilityOverride)) {
+          res.status(400).json({ error: "visibilityOverride is invalid." });
+          return;
+        }
+        updatePayload.visibilityOverride = body.visibilityOverride as VisibilityConfig | null;
+      }
+      if ("displayNameOverride" in body) {
+        if (body.displayNameOverride !== null && typeof body.displayNameOverride !== "string") {
+          res.status(400).json({ error: "displayNameOverride must be a string or null." });
+          return;
+        }
+        updatePayload.displayNameOverride = body.displayNameOverride as string | null;
+      }
+      if ("collectionName" in body) {
+        if (body.collectionName !== null && typeof body.collectionName !== "string") {
+          res.status(400).json({ error: "collectionName must be a string or null." });
+          return;
+        }
+        updatePayload.collectionNameOverride = body.collectionName as string | null;
+      }
+      if ("collectionSortOrderOverride" in body) {
+        updatePayload.collectionSortOrderOverride = (body.collectionSortOrderOverride ?? null) as CollectionSortOrder | null;
+      }
+
+      const updatedFields = Object.keys(body).filter((key) => allowedUserPatchFields.has(key));
+      const user = db.updateUser(Number(req.params.id), updatePayload);
       if (!user) {
         throw new Error("User not found.");
       }
       logger.info("User settings updated", {
         userId: user.id,
         displayName: user.displayName,
-        updatedFields: Object.keys(body).filter((key) => allowedUserPatchFields.has(key)),
-        fieldCount: Object.keys(body).filter((key) => allowedUserPatchFields.has(key)).length
+        updatedFields,
+        fieldCount: updatedFields.length
       });
       res.json(user);
     } catch (error) {
@@ -753,7 +841,9 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       enabled: updated.rssEnabled
     });
 
-    logger.info("Application settings updated", { patch });
+    logger.info("Application settings updated", {
+      summary: summarizeSettingsPatch(patch as Record<string, unknown>)
+    });
     res.json(updated);
   });
 
