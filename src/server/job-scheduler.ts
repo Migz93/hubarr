@@ -230,9 +230,10 @@ export class JobScheduler {
       // the failed window on the next run.
       job.lastRunStatus = "error";
       this.persistState(job);
-      this.logger?.warn("Job failed", {
+      this.logger?.error("Job failed", {
         id: job.id,
-        error: err instanceof Error ? err.message : String(err)
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : String(err)
       });
       return false;
     } finally {

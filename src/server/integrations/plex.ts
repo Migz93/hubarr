@@ -1945,7 +1945,7 @@ export class PlexIntegration {
       updated++;
     }
 
-    this.logger.info("Isolation filters synced", { updated, skipped });
+    this.logger.debug("Isolation filters synced", { updated, skipped });
     return { updated, skipped };
   }
 

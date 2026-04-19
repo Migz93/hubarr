@@ -513,6 +513,15 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   app.patch("/api/users/:id", requireAuth, (req, res) => {
     try {
       const body = req.body as Record<string, unknown>;
+      const allowedUserPatchFields = new Set([
+        "enabled",
+        "collectionName",
+        "movieLibraryId",
+        "showLibraryId",
+        "visibilityOverride",
+        "displayNameOverride",
+        "collectionSortOrderOverride"
+      ]);
       // Validate collectionSortOrderOverride if provided — reject unknown values.
       const validSortOrders: CollectionSortOrder[] = ["date-desc", "date-asc", "title", "watchlist-date-desc", "watchlist-date-asc"];
       if (
@@ -530,7 +539,8 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       logger.info("User settings updated", {
         userId: user.id,
         displayName: user.displayName,
-        patch: body
+        updatedFields: Object.keys(body).filter((key) => allowedUserPatchFields.has(key)),
+        fieldCount: Object.keys(body).filter((key) => allowedUserPatchFields.has(key)).length
       });
       res.json(user);
     } catch (error) {
@@ -543,7 +553,6 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       const result = await services.runUserSync(Number(req.params.id));
       res.json(result);
     } catch (error) {
-      logger.warn("Manual user sync failed", { userId: req.params.id, error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
