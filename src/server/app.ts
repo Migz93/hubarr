@@ -578,7 +578,11 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       }> = {};
 
       if ("enabled" in body) {
-        updatePayload.enabled = Boolean(body.enabled);
+        if (typeof body.enabled !== "boolean") {
+          res.status(400).json({ error: "enabled must be a boolean." });
+          return;
+        }
+        updatePayload.enabled = body.enabled;
       }
       if ("movieLibraryId" in body) {
         if (body.movieLibraryId !== null && typeof body.movieLibraryId !== "string") {
@@ -621,9 +625,6 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
       const updatedFields = Object.keys(body).filter((key) => allowedUserPatchFields.has(key));
       const user = db.updateUser(Number(req.params.id), updatePayload);
-      if (!user) {
-        throw new Error("User not found.");
-      }
       logger.info("User settings updated", {
         userId: user.id,
         displayName: user.displayName,

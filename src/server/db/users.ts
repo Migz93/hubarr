@@ -147,7 +147,7 @@ export function updateUser(
       | "collectionSortOrderOverride"
     >
   >
-): UserRecord | null {
+): UserRecord {
   const current = getUser(db, id);
   if (!current) throw new Error("User not found.");
 
@@ -187,7 +187,12 @@ export function updateUser(
     }
   })();
 
-  return getUser(db, id);
+  const updated = getUser(db, id);
+  if (!updated) {
+    throw new Error("User not found after update.");
+  }
+
+  return updated;
 }
 
 export function bulkUpdateUsers(db: Database.Database, ids: number[], enabled: boolean): number[] {

@@ -187,7 +187,7 @@ export class HubarrDatabase {
         "enabled" | "movieLibraryId" | "showLibraryId" | "visibilityOverride" | "displayNameOverride" | "collectionNameOverride" | "collectionSortOrderOverride"
       >
     >
-  ): UserRecord | null {
+  ): UserRecord {
     return usersRepo.updateUser(this.db, id, patch);
   }
 
