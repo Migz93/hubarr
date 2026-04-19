@@ -200,6 +200,10 @@ export class HubarrServices {
         await this.imageCache.ensureAvatarCached(user.plexUserId, user.avatarUrl);
       }
     }
+    this.logger.info("Plex users discovered", {
+      friends: users.length,
+      managedUsers: managedResult.status === "fulfilled" ? managedResult.value.length : 0
+    });
     return users;
   }
 
@@ -468,6 +472,9 @@ export class HubarrServices {
       return;
     }
 
+    this.logger.info("Plex token refresh started", {
+      label: "Plex Refresh Token"
+    });
     await PlexIntegration.pingToken(owner.plexToken);
     this.logger.info("Plex token refresh ping succeeded", {
       label: "Plex Refresh Token"
@@ -479,6 +486,11 @@ export class HubarrServices {
       ? new Date(Math.max(0, Date.parse(lastRunAt) - 10 * 60 * 1000))
       : new Date(Date.now() - 24 * 60 * 60 * 1000);
 
+    this.logger.info("Plex recently added scan started", {
+      label: "Plex Recently Added Scan",
+      lastRunAt: lastRunAt ?? null,
+      since: since.toISOString()
+    });
     return this.runPlexAvailabilityScan({
       mode: "recent",
       since
@@ -486,6 +498,9 @@ export class HubarrServices {
   }
 
   async runPlexFullLibraryScan() {
+    this.logger.info("Plex full library scan started", {
+      label: "Plex Full Library Scan"
+    });
     return this.runPlexAvailabilityScan({
       mode: "full"
     });
@@ -639,6 +654,26 @@ export class HubarrServices {
           });
         }
       }
+    }
+
+    this.logger.info("Plex library availability scan started", {
+      label: options.mode === "recent" ? "Plex Recently Added Scan" : "Plex Full Library Scan",
+      mode: options.mode,
+      since: options.since?.toISOString() ?? null,
+      trackedUsers: trackedUsers.length,
+      libraries: libraries.size
+    });
+
+    if (libraries.size === 0) {
+      this.logger.info("Skipping Plex library availability scan — no target libraries configured", {
+        label: options.mode === "recent" ? "Plex Recently Added Scan" : "Plex Full Library Scan",
+        mode: options.mode,
+        trackedUsers: trackedUsers.length
+      });
+      return {
+        matchedCount: 0,
+        affectedUsers: 0
+      };
     }
 
     const userMap = new Map(trackedUsers.map((u) => [u.id, u]));
@@ -1590,8 +1625,13 @@ export class HubarrServices {
         this.logger.warn("RSS initialization skipped — no owner record found.");
         return;
       }
+      this.logger.info("RSS initialization started");
       const plex = this.getPlexIntegration();
       await Promise.all([this.initSelfRss(plex, owner.plexToken), this.initUsersRss(plex, owner.plexToken)]);
+      this.logger.info("RSS initialization complete", {
+        selfPrimed: this.selfRssPrimed,
+        friendsPrimed: this.usersRssPrimed
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn("RSS initialization failed at startup", { message });
@@ -2114,6 +2154,8 @@ export class HubarrServices {
 
     let deleted = 0;
     let skipped = 0;
+
+    this.logger.info("Hubarr collection reset started");
 
     // Scan all Plex libraries for collections carrying a hubarr:* label.
     // This catches both DB-tracked collections and any orphaned ones.

@@ -11,7 +11,8 @@ import type {
   PlexConnectionOption,
   SettingsResponse,
   SessionUser,
-  SetupStatusResponse
+  SetupStatusResponse,
+  VisibilityConfig
 } from "../shared/types.js";
 import { createSessionId } from "./auth.js";
 import type { RuntimeConfig } from "./config.js";
@@ -44,6 +45,39 @@ function parseCookies(rawCookie = "") {
 
 function signedValue(secret: string, value: string) {
   return crypto.createHmac("sha256", secret).update(value).digest("hex");
+}
+
+function isVisibilityConfig(value: unknown): value is VisibilityConfig {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate["recommended"] === "boolean" &&
+    typeof candidate["home"] === "boolean" &&
+    typeof candidate["shared"] === "boolean"
+  );
+}
+
+function summarizeSettingsPatch(patch: Record<string, unknown>) {
+  const changedSections = Object.keys(patch).sort();
+  const fieldKeys = changedSections.flatMap((section) => {
+    const value = patch[section];
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return [section];
+    }
+
+    return Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map((key) => `${section}.${key}`);
+  });
+
+  return {
+    changedSections,
+    fieldKeys,
+    fieldCount: fieldKeys.length
+  };
 }
 
 export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
@@ -196,6 +230,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       });
     });
 
+    logger.info("Plex configuration saved", {
+      serverUrl: baseInput.serverUrl,
+      machineIdentifier: validation.machineIdentifier || baseInput.machineIdentifier,
+      librariesDiscovered: validation.libraries.length
+    });
+
     return {
       plex: db.getPlexSettingsView(),
       libraries: validation.libraries.map((lib) => ({
@@ -229,6 +269,9 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     try {
       account = await PlexIntegration.fetchAccountByToken(body.authToken);
     } catch (error) {
+      logger.warn("Plex authentication failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
       res
         .status(401)
         .json({ error: "Failed to authenticate with Plex.", detail: error instanceof Error ? error.message : String(error) });
@@ -247,6 +290,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         email: account.email,
         avatarUrl: account.avatarUrl
       });
+      logger.info("Plex owner account registered", { plexId: account.plexId, username: account.username });
 
       // Upsert self user record for watchlist tracking
       services.upsertSelfUser().catch((err) => {
@@ -256,6 +300,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       });
     } else if (existingOwner.plexId !== account.plexId) {
       // Different Plex account — not the owner
+      logger.warn("Plex login rejected: account does not match server owner", { attemptedPlexId: account.plexId });
       res.status(403).json({
         error: "unauthorized_account",
         message: "This Hubarr instance belongs to a different Plex account."
@@ -265,6 +310,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       // Owner re-authenticating — update their stored token and refresh email
       db.savePlexOwner({ ...existingOwner, plexToken: account.plexToken, email: account.email });
       db.updatePlexSettingsToken(account.plexToken);
+      logger.info("Plex owner re-authenticated", { plexId: account.plexId, username: account.username });
     }
 
     const sessionId = createSessionId();
@@ -351,6 +397,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       );
       res.json(options);
     } catch (error) {
+      logger.warn("Plex server discovery failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -360,6 +407,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       const result = await validateAndSavePlexConfiguration(req.body as PlexConfigPayload);
       res.json(result);
     } catch (error) {
+      logger.warn("Plex setup configuration save failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -389,6 +437,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         }))
       );
     } catch (error) {
+      logger.warn("Failed to fetch Plex libraries during setup", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -396,6 +445,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   /** Persist completion of the user-selection step before preload begins. */
   app.post("/api/setup/users/complete", requireAuth, (_req, res) => {
     db.updateAppSettings({ usersStepComplete: true });
+    logger.info("Onboarding users step marked complete");
     res.json({ ok: true });
   });
 
@@ -445,6 +495,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     }
     db.updateAppSettings({ usersStepComplete: true, onboardingComplete: true });
     services.clearOnboardingPreloadSession();
+    logger.info("Onboarding marked complete");
     res.json({ ok: true });
   });
 
@@ -481,6 +532,11 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     }
     const ids = (body.ids as unknown[]).filter((id): id is number => typeof id === "number");
     const updated = db.bulkUpdateUsers(ids, body.enabled);
+    logger.info("Bulk user update applied", {
+      requestedIds: ids.length,
+      enabled: body.enabled,
+      updated
+    });
     res.json({ updated });
   });
 
@@ -491,6 +547,15 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   app.patch("/api/users/:id", requireAuth, (req, res) => {
     try {
       const body = req.body as Record<string, unknown>;
+      const allowedUserPatchFields = new Set([
+        "enabled",
+        "collectionName",
+        "movieLibraryId",
+        "showLibraryId",
+        "visibilityOverride",
+        "displayNameOverride",
+        "collectionSortOrderOverride"
+      ]);
       // Validate collectionSortOrderOverride if provided — reject unknown values.
       const validSortOrders: CollectionSortOrder[] = ["date-desc", "date-asc", "title", "watchlist-date-desc", "watchlist-date-asc"];
       if (
@@ -501,7 +566,77 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         res.status(400).json({ error: "Invalid collectionSortOrderOverride value." });
         return;
       }
-      const user = db.updateUser(Number(req.params.id), body);
+
+      const invalidFields = Object.keys(body).filter((key) => !allowedUserPatchFields.has(key));
+      if (invalidFields.length > 0) {
+        res.status(400).json({ error: `Unsupported fields: ${invalidFields.join(", ")}` });
+        return;
+      }
+
+      const updatePayload: Partial<{
+        enabled: boolean;
+        movieLibraryId: string | null;
+        showLibraryId: string | null;
+        visibilityOverride: VisibilityConfig | null;
+        displayNameOverride: string | null;
+        collectionNameOverride: string | null;
+        collectionSortOrderOverride: CollectionSortOrder | null;
+      }> = {};
+
+      if ("enabled" in body) {
+        if (typeof body.enabled !== "boolean") {
+          res.status(400).json({ error: "enabled must be a boolean." });
+          return;
+        }
+        updatePayload.enabled = body.enabled;
+      }
+      if ("movieLibraryId" in body) {
+        if (body.movieLibraryId !== null && typeof body.movieLibraryId !== "string") {
+          res.status(400).json({ error: "movieLibraryId must be a string or null." });
+          return;
+        }
+        updatePayload.movieLibraryId = body.movieLibraryId as string | null;
+      }
+      if ("showLibraryId" in body) {
+        if (body.showLibraryId !== null && typeof body.showLibraryId !== "string") {
+          res.status(400).json({ error: "showLibraryId must be a string or null." });
+          return;
+        }
+        updatePayload.showLibraryId = body.showLibraryId as string | null;
+      }
+      if ("visibilityOverride" in body) {
+        if (body.visibilityOverride !== null && !isVisibilityConfig(body.visibilityOverride)) {
+          res.status(400).json({ error: "visibilityOverride is invalid." });
+          return;
+        }
+        updatePayload.visibilityOverride = body.visibilityOverride as VisibilityConfig | null;
+      }
+      if ("displayNameOverride" in body) {
+        if (body.displayNameOverride !== null && typeof body.displayNameOverride !== "string") {
+          res.status(400).json({ error: "displayNameOverride must be a string or null." });
+          return;
+        }
+        updatePayload.displayNameOverride = body.displayNameOverride as string | null;
+      }
+      if ("collectionName" in body) {
+        if (body.collectionName !== null && typeof body.collectionName !== "string") {
+          res.status(400).json({ error: "collectionName must be a string or null." });
+          return;
+        }
+        updatePayload.collectionNameOverride = body.collectionName as string | null;
+      }
+      if ("collectionSortOrderOverride" in body) {
+        updatePayload.collectionSortOrderOverride = (body.collectionSortOrderOverride ?? null) as CollectionSortOrder | null;
+      }
+
+      const updatedFields = Object.keys(body).filter((key) => allowedUserPatchFields.has(key));
+      const user = db.updateUser(Number(req.params.id), updatePayload);
+      logger.info("User settings updated", {
+        userId: user.id,
+        displayName: user.displayName,
+        updatedFields,
+        fieldCount: updatedFields.length
+      });
       res.json(user);
     } catch (error) {
       res.status(404).json({ error: error instanceof Error ? error.message : String(error) });
@@ -566,6 +701,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       const run = await services.refreshAllWatchlists();
       res.json(run);
     } catch (error) {
+      logger.warn("Manual watchlist refresh failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -684,8 +820,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       if ("showLibraryId" in body.collections) {
         patch.defaultShowLibraryId = body.collections.showLibraryId ?? null;
       }
-      if (body.collections.visibilityDefaults) {
-        patch.visibilityDefaults = body.collections.visibilityDefaults as typeof patch.visibilityDefaults;
+      if ("visibilityDefaults" in body.collections) {
+        if (!isVisibilityConfig(body.collections.visibilityDefaults)) {
+          res.status(400).json({ error: "visibilityDefaults is invalid." });
+          return;
+        }
+        patch.visibilityDefaults = body.collections.visibilityDefaults;
       }
     }
 
@@ -712,6 +852,9 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       enabled: updated.rssEnabled
     });
 
+    logger.info("Application settings updated", {
+      summary: summarizeSettingsPatch(patch as Record<string, unknown>)
+    });
     res.json(updated);
   });
 
@@ -728,6 +871,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         }))
       );
     } catch (error) {
+      logger.warn("Failed to fetch Plex libraries for settings", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -737,6 +881,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       const result = await validateAndSavePlexConfiguration(req.body as PlexConfigPayload);
       res.json(result);
     } catch (error) {
+      logger.warn("Plex settings save failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -824,6 +969,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       const result = await services.resetCollections();
       res.json(result);
     } catch (error) {
+      logger.warn("Collection reset failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -1004,6 +1150,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         }
         res.json({ triggered: true });
       } else if (jobId === "activity-cache-fetch") {
+        logger.info("Manual job run requested", { jobId });
         services.syncActivityCache().catch((err) => {
           logger.warn("Manual activity cache fetch failed", { error: err instanceof Error ? err.message : String(err) });
         });

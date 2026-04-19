@@ -6,6 +6,7 @@ const config = loadRuntimeConfig();
 const scheduler = new JobScheduler();
 const { app, db, logger, services } = createApp(config, scheduler);
 
+scheduler.setLogger(logger);
 scheduler.setPersistence({
   load: (id) => db.getJobRunState(id),
   save: (id, state) => db.saveJobRunState(id, state)
