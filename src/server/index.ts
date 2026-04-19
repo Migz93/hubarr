@@ -23,7 +23,7 @@ const appSettings = db.getAppSettings();
  */
 function isSetupReady(): boolean {
   const bootstrap = db.getBootstrapStatus(false);
-  return bootstrap.onboardingComplete && bootstrap.setupComplete;
+  return bootstrap.onboardingComplete && bootstrap.configurationValid;
 }
 
 /**

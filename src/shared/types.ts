@@ -3,7 +3,7 @@ export type MediaType = "movie" | "show";
 
 export interface BootstrapStatus {
   hasOwner: boolean;
-  setupComplete: boolean;
+  configurationValid: boolean;
   onboardingComplete: boolean;
   hasActiveSession: boolean;
 }
