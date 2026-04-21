@@ -1211,7 +1211,11 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
     const candidate = { ...current, ...patch };
     let validatedSeerr = null as ReturnType<typeof services.buildSeerrIntegration> | null;
-    if (candidate.baseUrl) {
+    if (candidate.enabled && (!candidate.baseUrl || !candidate.apiKey)) {
+      res.status(400).json({ error: "Base URL and API key are required to enable Seerr." });
+      return;
+    }
+    if (candidate.baseUrl && candidate.apiKey) {
       try {
         validatedSeerr = services.buildSeerrIntegration(candidate.baseUrl, candidate.apiKey);
       } catch (err) {

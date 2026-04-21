@@ -28,6 +28,8 @@ type SeerrRequestProcessingOptions = {
   requireAutoRequest: boolean;
 };
 
+type SeerrRequestWorkItem = { user: UserRecord; items: WatchlistItem[] };
+
 /**
  * Compare two watchlist items by release date for Plex collection ordering.
  *
@@ -124,6 +126,7 @@ export class HubarrServices {
   private usersRssPrimed = false;
   private readonly usersRssCache = new RssCache();
   private seerrRequestSyncActiveRuns = 0;
+  private seerrRequestSyncQueue: Promise<void> = Promise.resolve();
   private onboardingPreloadSession: {
     events: PreloadProgressEvent[];
     listeners: Set<(event: PreloadProgressEvent) => void>;
@@ -1898,7 +1901,7 @@ export class HubarrServices {
       }
 
       try {
-        const match = await plex.searchLibraryItem(item.title, item.type, libraryId, watchlistItem.year || undefined, item.guids);
+        const match = await plex.searchLibraryItem(item.title, item.type, libraryId, watchlistItem.year || undefined, watchlistItem.guids);
         matchedRatingKey = match.ratingKey ?? null;
       } catch {
         // Not in local library yet
@@ -1915,7 +1918,7 @@ export class HubarrServices {
           title: item.title,
           type: item.type,
           year: watchlistItem.year ?? null,
-          guids: item.guids
+          guids: watchlistItem.guids
         });
       }
 
@@ -2055,7 +2058,7 @@ export class HubarrServices {
       }
 
       try {
-        const match = await plex.searchLibraryItem(item.title, item.type, libraryId, watchlistItem.year || undefined, item.guids);
+        const match = await plex.searchLibraryItem(item.title, item.type, libraryId, watchlistItem.year || undefined, watchlistItem.guids);
         matchedRatingKey = match.ratingKey ?? null;
       } catch {
         // Not in local library yet
@@ -2074,7 +2077,7 @@ export class HubarrServices {
           title: item.title,
           type: item.type,
           year: watchlistItem.year ?? null,
-          guids: item.guids
+          guids: watchlistItem.guids
         });
       }
 
@@ -2191,7 +2194,7 @@ export class HubarrServices {
     return this.db.getWatchlistItems(userId).filter((item) => !item.matchedRatingKey);
   }
 
-  private buildSeerrRequestWork(scope: SeerrRequestSyncScope): Array<{ user: UserRecord; items: WatchlistItem[] }> {
+  private buildSeerrRequestWork(scope: SeerrRequestSyncScope): SeerrRequestWorkItem[] {
     if (scope.mode === "all") {
       const { trackedUsers } = this.getUserScopes();
       return trackedUsers.map((user) => ({
@@ -2215,7 +2218,29 @@ export class HubarrServices {
     }].filter((entry) => entry.items.length > 0);
   }
 
+  private dedupeSeerrRequestWork(work: SeerrRequestWorkItem[]): SeerrRequestWorkItem[] {
+    return work.map((entry) => {
+      const byItem = new Map<string, WatchlistItem>();
+      for (const item of entry.items) {
+        const tmdbId = extractTmdbId(item.guids ?? []);
+        const key = tmdbId !== null ? `tmdb:${tmdbId}` : `plex:${item.plexItemId}`;
+        if (!byItem.has(key)) {
+          byItem.set(key, item);
+        }
+      }
+
+      return { user: entry.user, items: Array.from(byItem.values()) };
+    }).filter((entry) => entry.items.length > 0);
+  }
+
   async runSeerrRequestSync(scope: SeerrRequestSyncScope = { mode: "all", triggeredBy: "manual" }): Promise<void> {
+    const previousRun = this.seerrRequestSyncQueue.catch(() => undefined);
+    const queuedRun = previousRun.then(() => this.runSeerrRequestSyncNow(scope));
+    this.seerrRequestSyncQueue = queuedRun.catch(() => undefined);
+    return queuedRun;
+  }
+
+  private async runSeerrRequestSyncNow(scope: SeerrRequestSyncScope): Promise<void> {
     const runId = this.db.createSyncRun("seerr", "Seerr request sync started.");
     const startedAt = Date.now();
     this.seerrRequestSyncActiveRuns++;
@@ -2240,7 +2265,8 @@ export class HubarrServices {
         return;
       }
 
-      const work = this.buildSeerrRequestWork(scope);
+      const rawWork = this.buildSeerrRequestWork(scope);
+      const work = this.dedupeSeerrRequestWork(rawWork);
       const requireAutoRequest = scope.mode !== "all";
       const itemCount = work.reduce((sum, entry) => sum + entry.items.length, 0);
       let processedUsers = 0;

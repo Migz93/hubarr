@@ -519,8 +519,8 @@ export class PlexIntegration {
     const plexGuidHex = (() => {
       const plexItemId = item.plexItemId.trim();
       const m = plexItemId.match(/^plex:\/\/(?:movie|show)\/([a-f0-9]{24})$/i);
-      if (m) return m[1];
-      if (/^[a-f0-9]{24}$/i.test(plexItemId)) return plexItemId;
+      if (m) return m[1].toLowerCase();
+      if (/^[a-f0-9]{24}$/i.test(plexItemId)) return plexItemId.toLowerCase();
       return null;
     })();
 

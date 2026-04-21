@@ -142,7 +142,7 @@ export class SeerrIntegration {
   }
 
   private async get<T>(path: string): Promise<T> {
-    // lgtm[js/request-forgery] baseUrl is parsed and restricted to http/https in the constructor.
+    // codeql[js/request-forgery]
     const res = await fetch(this.url(path), {
       headers: this.headers,
       signal: AbortSignal.timeout(SeerrIntegration.REQUEST_TIMEOUT_MS)
@@ -155,7 +155,7 @@ export class SeerrIntegration {
   }
 
   private async post<T>(path: string, body: unknown, extraHeaders?: Record<string, string>): Promise<T> {
-    // lgtm[js/request-forgery] baseUrl is parsed and restricted to http/https in the constructor.
+    // codeql[js/request-forgery]
     const res = await fetch(this.url(path), {
       method: "POST",
       headers: { ...this.headers, ...extraHeaders },
@@ -170,7 +170,7 @@ export class SeerrIntegration {
   }
 
   private async put<T>(path: string, body: unknown): Promise<T> {
-    // lgtm[js/request-forgery] baseUrl is parsed and restricted to http/https in the constructor.
+    // codeql[js/request-forgery]
     const res = await fetch(this.url(path), {
       method: "PUT",
       headers: this.headers,
@@ -185,7 +185,7 @@ export class SeerrIntegration {
   }
 
   private async delete(path: string): Promise<void> {
-    // lgtm[js/request-forgery] baseUrl is parsed and restricted to http/https in the constructor.
+    // codeql[js/request-forgery]
     const res = await fetch(this.url(path), {
       method: "DELETE",
       headers: this.headers,
@@ -317,14 +317,20 @@ export class SeerrIntegration {
   private async disableServiceAccountRequestNotifications(userId: number): Promise<void> {
     const settings = await this.get<SeerrUserNotificationSettings>(`/user/${userId}/settings/notifications`);
     const notificationTypes = { ...(settings.notificationTypes ?? {}) };
-    const disableRequestEvents = (value: number | null | undefined): number =>
-      (value ?? SEERR_NOTIFICATION_ALL_TYPES) & ~SEERR_NOTIFICATION_REQUEST_EVENTS_TO_DISABLE;
+    const disableRequestEvents = (value: number): number =>
+      value & ~SEERR_NOTIFICATION_REQUEST_EVENTS_TO_DISABLE;
 
     for (const [agent, value] of Object.entries(notificationTypes)) {
-      notificationTypes[agent] = disableRequestEvents(value);
+      if (typeof value === "number") {
+        notificationTypes[agent] = disableRequestEvents(value);
+      }
     }
-    notificationTypes.email = disableRequestEvents(notificationTypes.email);
-    notificationTypes.webpush = disableRequestEvents(notificationTypes.webpush);
+    if (typeof notificationTypes.email === "number") {
+      notificationTypes.email = disableRequestEvents(notificationTypes.email);
+    }
+    if (typeof notificationTypes.webpush === "number") {
+      notificationTypes.webpush = disableRequestEvents(notificationTypes.webpush);
+    }
 
     await this.post<SeerrUserNotificationSettings>(`/user/${userId}/settings/notifications`, {
       pgpKey: settings.pgpKey,

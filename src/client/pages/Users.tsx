@@ -569,28 +569,54 @@ function EditModal({
   // server-side mappings with local defaults if the fetch fails.
   const [seerrLinkLoaded, setSeerrLinkLoaded] = useState(false);
   const [seerrLinkLoadError, setSeerrLinkLoadError] = useState<string | null>(null);
+  const seerrLoadRequestId = useRef(0);
   const seerrEnabled = settings.seerr.enabled;
 
   useEffect(() => {
-    if (!seerrEnabled) return;
+    const requestId = seerrLoadRequestId.current + 1;
+    seerrLoadRequestId.current = requestId;
+    const currentUserId = user.id;
+    const isCurrentRequest = () => seerrLoadRequestId.current === requestId;
+
+    if (!seerrEnabled) {
+      setSeerrLinkLoaded(false);
+      setSeerrLinkLoadError(null);
+      setSeerrUsers([]);
+      return () => {
+        seerrLoadRequestId.current++;
+      };
+    }
+
     setSeerrLinkLoaded(false);
     setSeerrLinkLoadError(null);
+    setSeerrUsers([]);
     apiGet<SeerrUserLink>(`/api/users/${user.id}/seerr`)
       .then((link) => {
+        if (!isCurrentRequest()) return;
         setSeerrLink(link);
         setManualSeerrUserId(link.manualSeerrUserId);
         setAutoRequestEnabledOverride(link.autoRequestEnabledOverride);
         setSeerrLinkLoaded(true);
       })
       .catch((err) => {
-        console.error("Failed to load Seerr user link", { error: err, userId: user.id });
+        if (!isCurrentRequest()) return;
+        console.error("Failed to load Seerr user link", { error: err, userId: currentUserId });
         setSeerrLinkLoadError(err instanceof Error ? err.message : String(err));
       });
     apiGet<SeerrUser[]>("/api/settings/seerr/users")
-      .then(setSeerrUsers)
+      .then((users) => {
+        if (!isCurrentRequest()) return;
+        setSeerrUsers(users);
+      })
       .catch((err) => {
+        if (!isCurrentRequest()) return;
         console.error("Failed to load Seerr users list", { error: err });
+        setSeerrLinkLoadError(err instanceof Error ? err.message : String(err));
       });
+
+    return () => {
+      seerrLoadRequestId.current++;
+    };
   }, [user.id, seerrEnabled]);
 
   useEffect(() => {
@@ -847,6 +873,11 @@ function EditModal({
                     label="Linked Seerr User"
                     hint="Select which Seerr user this Hubarr user is linked to."
                   >
+                    {seerrLinkLoadError && (
+                      <div className="mb-2 rounded-lg border border-error/30 bg-error/10 px-3 py-2 text-sm text-error">
+                        Could not load Seerr users: {seerrLinkLoadError}
+                      </div>
+                    )}
                     <SelectInput
                       value={
                         manualSeerrUserId === NO_SEERR_USER_SELECTED
