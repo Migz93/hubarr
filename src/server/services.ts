@@ -1900,11 +1900,18 @@ export class HubarrServices {
         };
       }
 
+      let libraryLookupFailed = false;
       try {
         const match = await plex.searchLibraryItem(item.title, item.type, libraryId, watchlistItem.year || undefined, watchlistItem.guids);
         matchedRatingKey = match.ratingKey ?? null;
-      } catch {
-        // Not in local library yet
+      } catch (err) {
+        libraryLookupFailed = true;
+        this.logger.warn("Library lookup failed for self RSS item; skipping Seerr candidate classification", {
+          title: item.title,
+          type: item.type,
+          userId: selfUser.id,
+          message: err instanceof Error ? err.message : String(err)
+        });
       }
 
       if (matchedRatingKey) {
@@ -1913,7 +1920,7 @@ export class HubarrServices {
           type: item.type,
           ratingKey: matchedRatingKey
         });
-      } else {
+      } else if (!libraryLookupFailed) {
         this.logger.warn("Self RSS item not matched in library", {
           title: item.title,
           type: item.type,
@@ -1929,7 +1936,7 @@ export class HubarrServices {
 
       this.db.upsertWatchlistItem(selfUser.id, watchlistItem);
       processedCount++;
-      if (!matchedRatingKey) {
+      if (!matchedRatingKey && !libraryLookupFailed) {
         missingItems.push(watchlistItem);
       }
 
@@ -2057,11 +2064,18 @@ export class HubarrServices {
         };
       }
 
+      let libraryLookupFailed = false;
       try {
         const match = await plex.searchLibraryItem(item.title, item.type, libraryId, watchlistItem.year || undefined, watchlistItem.guids);
         matchedRatingKey = match.ratingKey ?? null;
-      } catch {
-        // Not in local library yet
+      } catch (err) {
+        libraryLookupFailed = true;
+        this.logger.warn("Library lookup failed for RSS item; skipping Seerr candidate classification", {
+          userId: friend.id,
+          title: item.title,
+          type: item.type,
+          message: err instanceof Error ? err.message : String(err)
+        });
       }
 
       if (matchedRatingKey) {
@@ -2071,7 +2085,7 @@ export class HubarrServices {
           type: item.type,
           ratingKey: matchedRatingKey
         });
-      } else {
+      } else if (!libraryLookupFailed) {
         this.logger.warn("RSS item not matched in library", {
           userId: friend.id,
           title: item.title,
@@ -2088,7 +2102,7 @@ export class HubarrServices {
 
       this.db.upsertWatchlistItem(friend.id, watchlistItem);
       processedCount++;
-      if (!matchedRatingKey) {
+      if (!matchedRatingKey && !libraryLookupFailed) {
         const existing = missingItemsByUser.get(friend.id);
         if (existing) {
           existing.items.push(watchlistItem);
@@ -2458,9 +2472,43 @@ export class HubarrServices {
 
       // Always fetch live Seerr state for linked users with missing items —
       // this keeps the cached state fresh regardless of whether auto-request is on.
-      const mediaInfo = item.type === "movie"
-        ? await seerr.getMovieStatus(tmdbId)
-        : await seerr.getTvStatus(tmdbId);
+      let mediaInfo: Awaited<ReturnType<SeerrIntegration["getMovieStatus"]>>;
+      try {
+        mediaInfo = item.type === "movie"
+          ? await seerr.getMovieStatus(tmdbId)
+          : await seerr.getTvStatus(tmdbId);
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        this.logger.error("Seerr media status lookup failed", {
+          userId: friend.id,
+          displayName: friend.displayName,
+          plexItemId: item.plexItemId,
+          title: item.title,
+          type: item.type,
+          tmdbId,
+          error
+        });
+        this.db.upsertSeerrRequestState({
+          userId: friend.id,
+          plexItemId: item.plexItemId,
+          tmdbId,
+          outcome: "failed",
+          lastError: error,
+          effectiveSeerrUserId: requesterSeerrUserId,
+          executionSeerrUserId
+        });
+        this.db.addSyncRunItem(runId, "seerr.request.failed", "error", {
+          userId: friend.id,
+          displayName: friend.displayName,
+          plexItemId: item.plexItemId,
+          title: item.title,
+          type: item.type,
+          tmdbId,
+          outcome: "failed",
+          error
+        }, friend.id);
+        continue;
+      }
 
       const evaluation = seerr.evaluateMediaInfo(mediaInfo, requesterSeerrUserId);
 
