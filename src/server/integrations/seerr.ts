@@ -247,10 +247,13 @@ export class SeerrIntegration {
    * Create or reconcile the Hubarr service account in Seerr.
    * Returns the Seerr user ID of the service account.
    */
-  async createOrReconcileServiceAccount(avatarUrl?: string | null): Promise<number> {
-    const users = await this.getUsers();
+  async createOrReconcileServiceAccount(
+    avatarUrl?: string | null,
+    users: SeerrUser[] = []
+  ): Promise<number> {
+    const seerrUsers = users.length > 0 ? users : await this.getUsers();
 
-    const existing = users.find(
+    const existing = seerrUsers.find(
       (u) => u.email.toLowerCase() === SEERR_SERVICE_ACCOUNT_EMAIL.toLowerCase()
     );
 
@@ -325,9 +328,9 @@ export class SeerrIntegration {
    * Delete the Hubarr service account from Seerr if it exists.
    * This is used when service account mode is disabled in Hubarr settings.
    */
-  async deleteServiceAccount(): Promise<void> {
-    const users = await this.getUsers();
-    const existing = users.find(
+  async deleteServiceAccount(users: SeerrUser[] = []): Promise<void> {
+    const seerrUsers = users.length > 0 ? users : await this.getUsers();
+    const existing = seerrUsers.find(
       (u) => u.email.toLowerCase() === SEERR_SERVICE_ACCOUNT_EMAIL.toLowerCase()
     );
 
