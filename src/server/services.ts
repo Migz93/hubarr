@@ -2307,14 +2307,10 @@ export class HubarrServices {
    * Manual overrides are always preserved.
    */
   async syncSeerrUserMappings(seerrUsers: SeerrUser[]): Promise<void> {
-    const seerr = new SeerrIntegration(
-      { baseUrl: "", apiKey: "" },  // only autoMatchUser is needed, no HTTP calls
-      this.logger
-    );
     const users = this.db.listUsers();
 
     for (const user of users) {
-      const match = seerr.autoMatchUser(seerrUsers, user.username);
+      const match = SeerrIntegration.autoMatchUser(seerrUsers, user.username);
       const existing = this.db.getSeerrUserLink(user.id);
 
       // Only update auto-match; never overwrite a manual override

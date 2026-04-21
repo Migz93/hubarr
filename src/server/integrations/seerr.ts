@@ -142,6 +142,7 @@ export class SeerrIntegration {
   }
 
   private async get<T>(path: string): Promise<T> {
+    // lgtm[js/request-forgery] baseUrl is parsed and restricted to http/https in the constructor.
     const res = await fetch(this.url(path), {
       headers: this.headers,
       signal: AbortSignal.timeout(SeerrIntegration.REQUEST_TIMEOUT_MS)
@@ -154,6 +155,7 @@ export class SeerrIntegration {
   }
 
   private async post<T>(path: string, body: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+    // lgtm[js/request-forgery] baseUrl is parsed and restricted to http/https in the constructor.
     const res = await fetch(this.url(path), {
       method: "POST",
       headers: { ...this.headers, ...extraHeaders },
@@ -168,6 +170,7 @@ export class SeerrIntegration {
   }
 
   private async put<T>(path: string, body: unknown): Promise<T> {
+    // lgtm[js/request-forgery] baseUrl is parsed and restricted to http/https in the constructor.
     const res = await fetch(this.url(path), {
       method: "PUT",
       headers: this.headers,
@@ -182,6 +185,7 @@ export class SeerrIntegration {
   }
 
   private async delete(path: string): Promise<void> {
+    // lgtm[js/request-forgery] baseUrl is parsed and restricted to http/https in the constructor.
     const res = await fetch(this.url(path), {
       method: "DELETE",
       headers: this.headers,
@@ -243,7 +247,7 @@ export class SeerrIntegration {
    * Find a Seerr user by exact plexUsername match (case-insensitive),
    * then by exact local username match.
    */
-  autoMatchUser(seerrUsers: SeerrUser[], plexUsername: string): SeerrUser | null {
+  static autoMatchUser(seerrUsers: SeerrUser[], plexUsername: string): SeerrUser | null {
     const normalized = plexUsername.trim().toLowerCase();
 
     // Priority 1: plexUsername exact match

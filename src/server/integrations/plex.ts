@@ -517,9 +517,10 @@ export class PlexIntegration {
     // stableKey as plexItemId before enrichment resolves the real GUID, and that
     // format is not a valid discover endpoint path.
     const plexGuidHex = (() => {
-      const m = item.plexItemId.match(/^plex:\/\/(?:movie|show)\/([a-f0-9]{24})$/);
+      const plexItemId = item.plexItemId.trim();
+      const m = plexItemId.match(/^plex:\/\/(?:movie|show)\/([a-f0-9]{24})$/i);
       if (m) return m[1];
-      if (/^[a-f0-9]{24}$/.test(item.plexItemId)) return item.plexItemId;
+      if (/^[a-f0-9]{24}$/i.test(plexItemId)) return plexItemId;
       return null;
     })();
 

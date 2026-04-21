@@ -568,10 +568,13 @@ function EditModal({
   // Only PATCH Seerr fields on save when the link preload succeeded — prevents wiping existing
   // server-side mappings with local defaults if the fetch fails.
   const [seerrLinkLoaded, setSeerrLinkLoaded] = useState(false);
+  const [seerrLinkLoadError, setSeerrLinkLoadError] = useState<string | null>(null);
   const seerrEnabled = settings.seerr.enabled;
 
   useEffect(() => {
     if (!seerrEnabled) return;
+    setSeerrLinkLoaded(false);
+    setSeerrLinkLoadError(null);
     apiGet<SeerrUserLink>(`/api/users/${user.id}/seerr`)
       .then((link) => {
         setSeerrLink(link);
@@ -581,6 +584,7 @@ function EditModal({
       })
       .catch((err) => {
         console.error("Failed to load Seerr user link", { error: err, userId: user.id });
+        setSeerrLinkLoadError(err instanceof Error ? err.message : String(err));
       });
     apiGet<SeerrUser[]>("/api/settings/seerr/users")
       .then(setSeerrUsers)
@@ -825,48 +829,64 @@ function EditModal({
           {/* Seerr tab */}
           {activeTab === "seerr" && seerrEnabled && (
             <div className="space-y-4">
-              <Field
-                label="Linked Seerr User"
-                hint="Select which Seerr user this Hubarr user is linked to."
-              >
-                <SelectInput
-                  value={
-                    manualSeerrUserId === NO_SEERR_USER_SELECTED
-                      ? NO_SEERR_USER_SELECTED.toString()
-                      : (effectiveSeerrUserId?.toString() ?? NO_SEERR_USER_SELECTED.toString())
-                  }
-                  onChange={(value) => {
-                    const selectedId = Number(value);
-                    if (selectedId === NO_SEERR_USER_SELECTED) {
-                      setManualSeerrUserId(NO_SEERR_USER_SELECTED);
-                      return;
-                    }
-                    setManualSeerrUserId(
-                      selectedId === (seerrLink?.autoMatchedSeerrUserId ?? null) ? null : selectedId
-                    );
-                  }}
-                >
-                  <option value={NO_SEERR_USER_SELECTED.toString()}>No User Selected</option>
-                  {seerrUsers.map((entry) => (
-                    <option key={entry.id} value={entry.id.toString()}>
-                      {entry.displayName ?? entry.username ?? entry.email} ({entry.plexUsername ? `Plex: ${entry.plexUsername}` : entry.email})
-                    </option>
-                  ))}
-                </SelectInput>
-              </Field>
+              {!seerrLinkLoaded && !seerrLinkLoadError && (
+                <div className="rounded-lg border border-outline-variant/20 bg-surface-container-low px-3 py-3 text-sm text-on-surface-variant">
+                  Loading Seerr user mapping...
+                </div>
+              )}
 
-              <OverridableField
-                label="Automatic Requests"
-                isOverridden={autoRequestEnabledOverride !== null}
-                onRestore={() => setAutoRequestEnabledOverride(null)}
-              >
-                <ToggleField
-                  label="Automatic Seerr Requests"
-                  hint="Enable to automatically request missing watchlist items via Seerr."
-                  checked={effectiveAutoRequestEnabled}
-                  onChange={(value) => setAutoRequestEnabledOverride(value)}
-                />
-              </OverridableField>
+              {!seerrLinkLoaded && seerrLinkLoadError && (
+                <div className="rounded-lg border border-error/30 bg-error/10 px-3 py-3 text-sm text-error">
+                  Could not load Seerr user mapping: {seerrLinkLoadError}
+                </div>
+              )}
+
+              {seerrLinkLoaded && (
+                <>
+                  <Field
+                    label="Linked Seerr User"
+                    hint="Select which Seerr user this Hubarr user is linked to."
+                  >
+                    <SelectInput
+                      value={
+                        manualSeerrUserId === NO_SEERR_USER_SELECTED
+                          ? NO_SEERR_USER_SELECTED.toString()
+                          : (effectiveSeerrUserId?.toString() ?? NO_SEERR_USER_SELECTED.toString())
+                      }
+                      onChange={(value) => {
+                        const selectedId = Number(value);
+                        if (selectedId === NO_SEERR_USER_SELECTED) {
+                          setManualSeerrUserId(NO_SEERR_USER_SELECTED);
+                          return;
+                        }
+                        setManualSeerrUserId(
+                          selectedId === (seerrLink?.autoMatchedSeerrUserId ?? null) ? null : selectedId
+                        );
+                      }}
+                    >
+                      <option value={NO_SEERR_USER_SELECTED.toString()}>No User Selected</option>
+                      {seerrUsers.map((entry) => (
+                        <option key={entry.id} value={entry.id.toString()}>
+                          {entry.displayName ?? entry.username ?? entry.email} ({entry.plexUsername ? `Plex: ${entry.plexUsername}` : entry.email})
+                        </option>
+                      ))}
+                    </SelectInput>
+                  </Field>
+
+                  <OverridableField
+                    label="Automatic Requests"
+                    isOverridden={autoRequestEnabledOverride !== null}
+                    onRestore={() => setAutoRequestEnabledOverride(null)}
+                  >
+                    <ToggleField
+                      label="Automatic Seerr Requests"
+                      hint="Enable to automatically request missing watchlist items via Seerr."
+                      checked={effectiveAutoRequestEnabled}
+                      onChange={(value) => setAutoRequestEnabledOverride(value)}
+                    />
+                  </OverridableField>
+                </>
+              )}
             </div>
           )}
         </div>

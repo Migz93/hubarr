@@ -1209,12 +1209,24 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       }
     }
 
+    const candidate = { ...current, ...patch };
+    let validatedSeerr = null as ReturnType<typeof services.buildSeerrIntegration> | null;
+    if (candidate.baseUrl) {
+      try {
+        validatedSeerr = services.buildSeerrIntegration(candidate.baseUrl, candidate.apiKey);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn("Rejected invalid Seerr settings", { message });
+        res.status(400).json({ error: message });
+        return;
+      }
+    }
+
     const updated = db.updateSeerrSettings(patch);
 
     // Kick off auto-matching whenever Seerr settings change and integration is enabled
-    if (updated.enabled && updated.baseUrl && updated.apiKey) {
-      services.buildSeerrIntegration(updated.baseUrl, updated.apiKey)
-        .getUsers()
+    if (updated.enabled && updated.baseUrl && updated.apiKey && validatedSeerr) {
+      validatedSeerr.getUsers()
         .then((seerrUsers) => services.syncSeerrUserMappings(seerrUsers))
         .catch((err) => {
           logger.warn("Seerr auto-match sync failed after settings update", {
