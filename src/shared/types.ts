@@ -426,6 +426,7 @@ export type SeerrRequestOutcome =
   | "created"
   | "already_requested"
   | "already_available"
+  | "added_directly"
   | "skipped_unlinked_user"
   | "skipped_missing_ids"
   | "failed";

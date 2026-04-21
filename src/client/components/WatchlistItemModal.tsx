@@ -23,10 +23,10 @@ function formatRuntime(ms: number): string {
 }
 
 // Outcomes that mean the item is definitively handled in Seerr — suppress Request buttons for all other users.
-const TERMINAL_POSITIVE = new Set(["created", "already_requested", "already_available"]);
+const TERMINAL_POSITIVE = new Set(["created", "already_requested", "already_available", "added_directly"]);
 
 // Priority order for picking the single "best" state that represents the item across all users.
-const OUTCOME_PRIORITY = ["created", "already_requested", "already_available", "failed", "skipped_unlinked_user", "skipped_missing_ids"];
+const OUTCOME_PRIORITY = ["created", "already_requested", "already_available", "added_directly", "failed", "skipped_unlinked_user", "skipped_missing_ids"];
 
 function getBestSeerrState(states: SeerrRequestState[]): SeerrRequestState | null {
   for (const outcome of OUTCOME_PRIORITY) {
@@ -53,6 +53,18 @@ interface SeerrBadgeProps {
 
 function SeerrBadge({ outcome, url, isRequesting, onAction }: SeerrBadgeProps) {
   const base = "inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap";
+
+  if (outcome === "added_directly") {
+    if (url) {
+      return (
+        <a href={url} target="_blank" rel="noopener noreferrer" title="View in Seerr" className={`${base} bg-success/10 text-success hover:bg-success/20`}>
+          <SeerrIcon />
+          In Seerr
+        </a>
+      );
+    }
+    return <span className={`${base} bg-success/10 text-success`}><SeerrIcon />In Seerr</span>;
+  }
 
   if (outcome === "created" || outcome === "already_requested" || outcome === "already_available") {
     if (url) {

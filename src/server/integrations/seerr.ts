@@ -73,7 +73,7 @@ interface SeerrUserNotificationSettings {
 }
 
 export interface SeerrCheckResult {
-  outcome: Extract<SeerrRequestOutcome, "already_requested" | "already_available" | "created" | "failed">;
+  outcome: Extract<SeerrRequestOutcome, "already_requested" | "already_available" | "added_directly" | "created" | "failed">;
   seerrRequestId: number | null;
   seerrMediaId: number | null;
   tmdbId: number | null;
@@ -90,6 +90,7 @@ export class SeerrHttpError extends Error {
 export class SeerrIntegration {
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
+  private static readonly requestLocks = new Map<string, Promise<SeerrCheckResult>>();
   private static readonly REQUEST_TIMEOUT_MS = 10_000;
 
   constructor(settings: SeerrSettingsInput, private readonly logger: Logger) {
@@ -188,6 +189,7 @@ export class SeerrIntegration {
   // ---------------------------------------------------------------------------
 
   async getUsers(take = 100, skip = 0): Promise<SeerrUser[]> {
+    const startSkip = skip;
     const data = await this.get<SeerrUsersListResponse>(`/user?take=${take}&skip=${skip}`);
     const results = data.results ?? [];
 
@@ -203,7 +205,7 @@ export class SeerrIntegration {
     const pages = data.pageInfo?.pages ?? 1;
     if (pages > 1) {
       for (let page = 2; page <= pages; page++) {
-        const nextData = await this.get<SeerrUsersListResponse>(`/user?take=${take}&skip=${(page - 1) * take}`);
+        const nextData = await this.get<SeerrUsersListResponse>(`/user?take=${take}&skip=${startSkip + (page - 1) * take}`);
         for (const u of nextData.results ?? []) {
           users.push({
             id: u.id,
@@ -377,13 +379,13 @@ export class SeerrIntegration {
    *   - status <= 1 (UNKNOWN) → requestable
    *   - status >= 5 (AVAILABLE) → already_available
    *   - status 2-4 with requests → already_requested
-   *   - status 2-4 with no requests → already_available (added via Radarr/Sonarr directly,
+   *   - status 2-4 with no requests → added_directly (added via Radarr/Sonarr directly,
    *     or requests not visible to this caller)
    */
   evaluateMediaInfo(
     mediaInfo: SeerrMediaInfo | null,
     requesterSeerrUserId: number
-  ): { skip: true; outcome: "already_available" | "already_requested"; seerrRequestId: number | null; seerrMediaId: number | null } | null {
+  ): { skip: true; outcome: "already_available" | "already_requested" | "added_directly"; seerrRequestId: number | null; seerrMediaId: number | null } | null {
     if (!mediaInfo || !SEERR_SKIP_STATUSES.has(mediaInfo.status)) {
       // Only statuses 2-5 are known "in-flight or available" — everything else is requestable
       // (includes 1=UNKNOWN, 6=DELETED, and any undocumented future codes)
@@ -398,7 +400,7 @@ export class SeerrIntegration {
     const requests = mediaInfo.requests ?? [];
     if (requests.length === 0) {
       // Added via Radarr/Sonarr directly (no Seerr request) — still in-flight, don't re-request.
-      return { skip: true, outcome: "already_requested", seerrRequestId: null, seerrMediaId: mediaInfo.id };
+      return { skip: true, outcome: "added_directly", seerrRequestId: null, seerrMediaId: mediaInfo.id };
     }
 
     const ownRequest = requests.find((r) => r.requestedBy?.id === requesterSeerrUserId);
@@ -435,6 +437,35 @@ export class SeerrIntegration {
    *   (recorded for audit; the admin API key is always used for execution)
    */
   async checkAndRequest(
+    tmdbId: number,
+    mediaType: "movie" | "show",
+    requesterSeerrUserId: number,
+    executionSeerrUserId: number
+  ): Promise<SeerrCheckResult> {
+    const lockKey = `${mediaType}:${tmdbId}:${requesterSeerrUserId}`;
+    const existingLock = SeerrIntegration.requestLocks.get(lockKey);
+    if (existingLock) {
+      this.logger.info("Seerr request deduplicated by in-flight lock", {
+        tmdbId,
+        mediaType,
+        requesterSeerrUserId
+      });
+      return existingLock;
+    }
+
+    const pending = this.checkAndRequestLocked(
+      tmdbId,
+      mediaType,
+      requesterSeerrUserId,
+      executionSeerrUserId
+    ).finally(() => {
+      SeerrIntegration.requestLocks.delete(lockKey);
+    });
+    SeerrIntegration.requestLocks.set(lockKey, pending);
+    return pending;
+  }
+
+  private async checkAndRequestLocked(
     tmdbId: number,
     mediaType: "movie" | "show",
     requesterSeerrUserId: number,
@@ -480,6 +511,29 @@ export class SeerrIntegration {
         tmdbId
       };
     } catch (err) {
+      if (err instanceof SeerrHttpError && err.status === 409) {
+        const refreshedMediaInfo = mediaType === "movie"
+          ? await this.getMovieStatus(tmdbId)
+          : await this.getTvStatus(tmdbId);
+        const existing = this.evaluateMediaInfo(refreshedMediaInfo, requesterSeerrUserId);
+
+        if (existing) {
+          this.logger.info("Seerr request conflict treated as existing request", {
+            tmdbId,
+            mediaType,
+            outcome: existing.outcome,
+            seerrRequestId: existing.seerrRequestId,
+            seerrMediaId: existing.seerrMediaId
+          });
+          return {
+            outcome: existing.outcome,
+            seerrRequestId: existing.seerrRequestId,
+            seerrMediaId: existing.seerrMediaId,
+            tmdbId
+          };
+        }
+      }
+
       const error = err instanceof Error ? err.message : String(err);
       this.logger.error("Seerr request creation failed", { tmdbId, mediaType, error });
       return {

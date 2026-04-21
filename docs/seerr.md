@@ -131,7 +131,7 @@ for each missing item:
   ├── if no TMDB ID AND autoRequest enabled → record skipped_missing_ids
   ├── fetch live Seerr mediaInfo (getMovieStatus / getTvStatus)
   ├── evaluateMediaInfo → skip result or null
-  ├── if skip result → upsertSeerrRequestState (already_available / already_requested)
+  ├── if skip result → upsertSeerrRequestState (already_available / already_requested / added_directly)
   ├── if requestable → deleteSeerrRequestState (clear stale cache)
   └── if requestable + autoRequest enabled → createRequest → upsertSeerrRequestState (created / failed)
 ```
@@ -162,16 +162,16 @@ const SEERR_SKIP_STATUSES = new Set([2, 3, 4, 5]);
 | Status | Name | Treatment |
 |---|---|---|
 | 1 | UNKNOWN | Requestable |
-| 2 | PENDING | Skip → `already_requested` |
-| 3 | PROCESSING | Skip → `already_requested` |
-| 4 | PARTIALLY_AVAILABLE | Skip → `already_requested` |
+| 2 | PENDING | Skip → `already_requested`, or `added_directly` when Seerr has no request record |
+| 3 | PROCESSING | Skip → `already_requested`, or `added_directly` when Seerr has no request record |
+| 4 | PARTIALLY_AVAILABLE | Skip → `already_requested`, or `added_directly` when Seerr has no request record |
 | 5 | AVAILABLE | Skip → `already_available` |
 | 6 | DELETED | Requestable |
 | 7+ | Undocumented | Requestable (whitelist approach) |
 
 For statuses 2–4 with no visible requests, the item is treated as
-`already_requested`. This covers items that are in Seerr via another path, such
-as being added directly through Radarr/Sonarr, where there is no specific Seerr
+`added_directly`. This covers items that are in Seerr via another path, such as
+being added directly through Radarr/Sonarr, where there is no specific Seerr
 requester to attribute.
 
 ---
@@ -185,6 +185,7 @@ All outcomes are stored in `seerr_request_state.outcome`:
 | `created` | Hubarr successfully submitted a new Seerr request |
 | `already_requested` | Seerr already has a request for this item |
 | `already_available` | Seerr reports the item as available |
+| `added_directly` | Seerr has the item in progress without a visible request record |
 | `skipped_unlinked_user` | User has no effective Seerr mapping |
 | `skipped_missing_ids` | No TMDB ID could be extracted from Plex GUIDs |
 | `failed` | Seerr API call succeeded but the request POST failed |
@@ -267,20 +268,21 @@ also has Seerr state, the poster shows the green tick.
 
 When Seerr is enabled, the Watchlists page also shows a **Requested** filter
 chip. It uses `availability=requested` and returns watchlist items with a
-terminal positive Seerr outcome (`created`, `already_requested`, or
-`already_available`).
+terminal positive Seerr outcome (`created`, `already_requested`,
+`already_available`, or `added_directly`).
 
 The watchlist item modal shows Seerr badges on user rows and, when needed,
 additional ghost rows. The "best" state across all users is selected using this
 priority:
 
 ```text
-created > already_requested > already_available > failed > skipped_*
+created > already_requested > already_available > added_directly > failed > skipped_*
 ```
 
 | Badge | Colour | Action |
 |---|---|---|
 | Requested | Green | Opens item page in Seerr |
+| In Seerr | Green | Opens item page in Seerr |
 | Request | Red | Submits a new Seerr request |
 | Retry | Red | Retries a failed request |
 

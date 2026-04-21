@@ -125,7 +125,7 @@ export function deleteSeerrUserLink(db: Database.Database, userId: number): void
 // Request state
 // ---------------------------------------------------------------------------
 
-const SEERR_PRESENT_OUTCOMES = ["created", "already_requested", "already_available"];
+const SEERR_PRESENT_OUTCOMES = ["created", "already_requested", "already_available", "added_directly"];
 
 interface SeerrRequestStateRow {
   id: number;
