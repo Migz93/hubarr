@@ -27,6 +27,7 @@ const SEERR_NOTIFICATION_REQUEST_EVENTS_TO_DISABLE =
 
 const SEERR_SERVICE_ACCOUNT_EMAIL = "hubarr@hubarr.local";
 const SEERR_SERVICE_ACCOUNT_USERNAME = "Hubarr";
+const SEERR_USER_TYPE_LOCAL = 3;
 
 interface SeerrUserResponse {
   id: number;
@@ -265,7 +266,7 @@ export class SeerrIntegration {
         email: SEERR_SERVICE_ACCOUNT_EMAIL,
         username: SEERR_SERVICE_ACCOUNT_USERNAME,
         ...(avatarUrl ? { avatar: avatarUrl } : {}),
-        userType: 3  // LOCAL user type
+        userType: SEERR_USER_TYPE_LOCAL
       });
       userId = created.id;
       this.logger.info("Seerr service account created", {
