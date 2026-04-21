@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { ChevronDown, ChevronRight, Edit2, Play, RefreshCw, X } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { Field, SelectInput, ToggleField } from "../components/FormControls";
-import type { CollectionSortOrder, UserRecord, ManagedUserRecord, JobInfo, SettingsResponse, VisibilityConfig } from "../../shared/types";
+import type { CollectionSortOrder, SeerrUser, SeerrUserLink, UserRecord, ManagedUserRecord, JobInfo, SettingsResponse, VisibilityConfig } from "../../shared/types";
 
 /** Human-readable labels for each CollectionSortOrder value, matching the
  *  dropdown text used in CollectionsConfigForm and the EditModal. */
@@ -243,7 +243,6 @@ export default function Users() {
           onClose={() => setEditingId(null)}
           onSave={async (patch) => {
             await apiPatch(`/api/users/${editingId}`, patch);
-            setEditingId(null);
             await refreshNow();
           }}
         />
@@ -498,6 +497,45 @@ function ManagedUserCard({ user }: { user: ManagedUserRecord }) {
   );
 }
 
+const NO_SEERR_USER_SELECTED = -1;
+
+function OverridableField({
+  label,
+  hint,
+  isOverridden,
+  onRestore,
+  children
+}: {
+  label: string;
+  hint?: string;
+  isOverridden: boolean;
+  onRestore: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div>
+      <div className="flex items-start justify-between gap-3 mb-1.5">
+        <div>
+          <div className="text-sm font-medium text-on-surface">{label}</div>
+          {hint && <div className="text-xs text-on-surface-variant mt-0.5">{hint}</div>}
+        </div>
+        {isOverridden && (
+          <button
+            type="button"
+            onClick={onRestore}
+            className="text-xs text-primary hover:text-primary-dim flex-shrink-0 mt-0.5"
+          >
+            Restore Default
+          </button>
+        )}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+type EditModalTab = "user" | "collection" | "seerr";
+
 function EditModal({
   user,
   settings,
@@ -509,6 +547,7 @@ function EditModal({
   onSave: (patch: Partial<UserRecord>) => Promise<void>;
   onClose: () => void;
 }) {
+  const [activeTab, setActiveTab] = useState<EditModalTab>("user");
   const [enabled, setEnabled] = useState(user.enabled);
   const [displayNameOverride, setDisplayNameOverride] = useState(user.displayNameOverride ?? "");
   const [collectionNameOverride, setCollectionNameOverride] = useState(user.collectionNameOverride ?? "");
@@ -521,11 +560,45 @@ function EditModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Seerr mapping state
+  const [seerrLink, setSeerrLink] = useState<SeerrUserLink | null>(null);
+  const [seerrUsers, setSeerrUsers] = useState<SeerrUser[]>([]);
+  const [manualSeerrUserId, setManualSeerrUserId] = useState<number | null>(null);
+  const [autoRequestEnabledOverride, setAutoRequestEnabledOverride] = useState<boolean | null>(null);
+  const seerrEnabled = settings.seerr.enabled;
+
+  useEffect(() => {
+    if (!seerrEnabled) return;
+    apiGet<SeerrUserLink>(`/api/users/${user.id}/seerr`)
+      .then((link) => {
+        setSeerrLink(link);
+        setManualSeerrUserId(link.manualSeerrUserId);
+        setAutoRequestEnabledOverride(link.autoRequestEnabledOverride);
+      })
+      .catch(() => {});
+    apiGet<SeerrUser[]>("/api/settings/seerr/users")
+      .then(setSeerrUsers)
+      .catch(() => {});
+  }, [user.id, seerrEnabled]);
+
+  useEffect(() => {
+    function handleKeydown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleKeydown);
+    return () => document.removeEventListener("keydown", handleKeydown);
+  }, [onClose]);
+
   const defaultName = settings.collections.collectionNamePattern.replace(
     "{user}",
     displayNameOverride.trim() || user.username
   );
   const effectiveVisibility = visibilityOverride ?? settings.collections.visibilityDefaults;
+  const effectiveAutoRequestEnabled = autoRequestEnabledOverride ?? settings.seerr.autoRequestEnabled;
+  const effectiveSeerrUserId =
+    manualSeerrUserId === NO_SEERR_USER_SELECTED
+      ? null
+      : (manualSeerrUserId ?? seerrLink?.autoMatchedSeerrUserId ?? null);
 
   async function save() {
     setSaving(true);
@@ -538,11 +611,29 @@ function EditModal({
         visibilityOverride,
         collectionSortOrderOverride
       });
+
+      if (seerrEnabled) {
+        await apiPatch<SeerrUserLink>(`/api/users/${user.id}/seerr`, {
+          manualSeerrUserId,
+          autoRequestEnabledOverride
+        });
+      }
+
+      onClose();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
       setSaving(false);
     }
   }
+
+  const tabs: { id: EditModalTab; label: string }[] = [
+    { id: "user", label: "User" },
+    { id: "collection", label: "Collection" },
+    ...(seerrEnabled ? [{ id: "seerr" as EditModalTab, label: "Seerr" }] : [])
+  ];
+
+  const headerDisplayName = displayNameOverride.trim() || user.displayName;
 
   return (
     <div
@@ -550,128 +641,235 @@ function EditModal({
       onClick={onClose}
     >
       <div
-        className="bg-surface-container rounded-2xl p-6 w-full max-w-lg border border-outline-variant/20 shadow-xl"
+        className="bg-surface-container rounded-2xl w-full max-w-md border border-outline-variant/20 shadow-xl flex flex-col"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-center justify-between mb-5">
-          <h3 className="font-headline font-semibold text-lg text-on-surface">
-            Edit {user.displayName}
-          </h3>
+        {/* Header */}
+        <div className="flex items-center gap-3 px-5 pt-5 pb-4">
+          <Avatar avatarUrl={user.avatarUrl} displayName={headerDisplayName} size="w-12 h-12" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-semibold text-on-surface text-base leading-snug truncate">
+                {user.username}
+              </span>
+              {user.isSelf && (
+                <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded-md font-medium flex-shrink-0">
+                  You
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+              <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${enabled ? "bg-success/10 text-success" : "bg-outline-variant/30 text-on-surface-variant"}`}>
+                {enabled ? "Enabled" : "Disabled"}
+              </span>
+              {displayNameOverride.trim() && (
+                <span className="text-xs text-on-surface-variant truncate">
+                  {displayNameOverride.trim()}
+                </span>
+              )}
+            </div>
+          </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high"
+            className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors flex-shrink-0"
+            aria-label="Close"
           >
             <X size={18} />
           </button>
         </div>
 
-        <div className="space-y-4">
-          <ToggleField label="Enabled" checked={enabled} onChange={setEnabled} />
-
-          <Field label="Display name override" hint={`Plex Username: ${user.username}`}>
-            <input
-              value={displayNameOverride}
-              onChange={(event) => setDisplayNameOverride(event.target.value)}
-              placeholder="Leave blank to use Plex Username"
-              className="w-full bg-surface-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-on-surface text-sm placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary/50"
-            />
-          </Field>
-
-          <Field label="Collection name" hint={`Default name is ${defaultName}`}>
-            <input
-              value={collectionNameOverride}
-              onChange={(event) => setCollectionNameOverride(event.target.value)}
-              placeholder="Leave blank to use the default naming pattern"
-              className="w-full bg-surface-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-on-surface text-sm placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary/50"
-            />
-          </Field>
-
-          <div className="border-t border-outline-variant/10 pt-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-sm font-medium text-on-surface">Hub Visibility</div>
-              {visibilityOverride && (
-                <button
-                  onClick={() => setVisibilityOverride(null)}
-                  className="text-xs text-primary hover:text-primary-dim"
-                >
-                  Restore to global default
-                </button>
-              )}
-            </div>
-            <div className="space-y-3">
-              <ToggleField
-                label="Library Recommended"
-                checked={effectiveVisibility.recommended}
-                onChange={(value) =>
-                  setVisibilityOverride((current) => ({
-                    ...(current ?? settings.collections.visibilityDefaults),
-                    recommended: value
-                  }))
-                }
-              />
-              <ToggleField
-                label="Home"
-                checked={effectiveVisibility.home}
-                onChange={(value) =>
-                  setVisibilityOverride((current) => ({
-                    ...(current ?? settings.collections.visibilityDefaults),
-                    home: value
-                  }))
-                }
-              />
-              <ToggleField
-                label="Friends Home"
-                checked={effectiveVisibility.shared}
-                onChange={(value) =>
-                  setVisibilityOverride((current) => ({
-                    ...(current ?? settings.collections.visibilityDefaults),
-                    shared: value
-                  }))
-                }
-              />
-            </div>
-          </div>
-
-          <div className="border-t border-outline-variant/10 pt-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-sm font-medium text-on-surface">Collection Ordering</div>
-              {collectionSortOrderOverride && (
-                <button
-                  onClick={() => setCollectionSortOrderOverride(null)}
-                  className="text-xs text-primary hover:text-primary-dim"
-                >
-                  Restore to global default
-                </button>
-              )}
-            </div>
-            <div className="text-xs text-on-surface-variant mb-1.5">
-              {`Global default: ${SORT_ORDER_LABELS[settings.collections.collectionSortOrder] ?? settings.collections.collectionSortOrder}`}
-            </div>
-            <div>
-              <SelectInput
-                value={collectionSortOrderOverride ?? ""}
-                onChange={(value) =>
-                  setCollectionSortOrderOverride((value as CollectionSortOrder) || null)
-                }
+        {/* Tab bar */}
+        <div className="px-5 pb-3">
+          <div className="flex p-1 bg-surface-container-high rounded-xl gap-1">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex-1 text-sm font-medium rounded-lg py-2 transition-all ${
+                  activeTab === tab.id
+                    ? "bg-surface-container text-on-surface shadow-sm"
+                    : "text-on-surface-variant hover:text-on-surface"
+                }`}
               >
-                <option value="">Use global default</option>
-                <option value="date-desc">Release Date (New to Old)</option>
-                <option value="date-asc">Release Date (Old to New)</option>
-                <option value="title">Title (A–Z)</option>
-                <option value="watchlist-date-desc">Watchlisted Date (New to Old)</option>
-                <option value="watchlist-date-asc">Watchlisted Date (Old to New)</option>
-              </SelectInput>
-            </div>
+                {tab.label}
+              </button>
+            ))}
           </div>
         </div>
 
+        {/* Tab content */}
+        <div className="px-5 pb-2 min-h-[230px] flex flex-col justify-start">
+
+          {/* User tab */}
+          {activeTab === "user" && (
+            <div className="space-y-4">
+              <ToggleField label="Enabled" checked={enabled} onChange={setEnabled} />
+              <Field
+                label="Display Name"
+                hint="Override the name displayed for this user."
+              >
+                <input
+                  value={displayNameOverride}
+                  onChange={(event) => setDisplayNameOverride(event.target.value)}
+                  placeholder="Leave blank to use Plex username"
+                  className="w-full bg-surface-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-on-surface text-sm placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+                />
+              </Field>
+            </div>
+          )}
+
+          {/* Collection tab */}
+          {activeTab === "collection" && !enabled && (
+            <div className="flex flex-col items-center justify-center flex-1 py-8 text-center gap-3">
+              <p className="text-sm text-on-surface-variant leading-relaxed">
+                Collection settings are only available for enabled users.
+              </p>
+              <button
+                onClick={() => setActiveTab("user")}
+                className="text-sm text-primary hover:text-primary-dim font-medium"
+              >
+                Go to User tab to enable →
+              </button>
+            </div>
+          )}
+
+          {activeTab === "collection" && enabled && (
+            <div className="space-y-4">
+              <Field
+                label="Collection Name"
+                hint="Override the collection name created for this user."
+              >
+                <input
+                  value={collectionNameOverride}
+                  onChange={(event) => setCollectionNameOverride(event.target.value)}
+                  placeholder={defaultName}
+                  className="w-full bg-surface-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-on-surface text-sm placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+                />
+              </Field>
+
+              <OverridableField
+                label="Sort Order"
+                hint="Change the order of items in the collection."
+                isOverridden={!!collectionSortOrderOverride}
+                onRestore={() => setCollectionSortOrderOverride(null)}
+              >
+                <SelectInput
+                  value={collectionSortOrderOverride ?? ""}
+                  onChange={(value) =>
+                    setCollectionSortOrderOverride((value as CollectionSortOrder) || null)
+                  }
+                >
+                  <option value="">
+                    {`Use Global Default — ${SORT_ORDER_LABELS[settings.collections.collectionSortOrder] ?? settings.collections.collectionSortOrder}`}
+                  </option>
+                  <option value="date-desc">Release Date (New to Old)</option>
+                  <option value="date-asc">Release Date (Old to New)</option>
+                  <option value="title">Title (A–Z)</option>
+                  <option value="watchlist-date-desc">Watchlisted Date (New to Old)</option>
+                  <option value="watchlist-date-asc">Watchlisted Date (Old to New)</option>
+                </SelectInput>
+              </OverridableField>
+
+              <OverridableField
+                label="Hub Visibility"
+                hint="Select which Plex locations this collection appears in. Multiple allowed."
+                isOverridden={!!visibilityOverride}
+                onRestore={() => setVisibilityOverride(null)}
+              >
+                <div className="grid grid-cols-3 w-full gap-2">
+                  {(
+                    [
+                      { key: "recommended", label: "Library Recommended" },
+                      { key: "home",        label: "Admin Home" },
+                      { key: "shared",      label: "Friends Home" }
+                    ] as { key: keyof typeof effectiveVisibility; label: string }[]
+                  ).map(({ key, label }) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() =>
+                        setVisibilityOverride((current) => ({
+                          ...(current ?? settings.collections.visibilityDefaults),
+                          [key]: !effectiveVisibility[key]
+                        }))
+                      }
+                      className={`flex flex-col items-center gap-1 rounded-xl py-3 px-3 border text-xs font-medium transition-all ${
+                        effectiveVisibility[key]
+                          ? "bg-primary/10 border-primary/30 text-primary"
+                          : "bg-surface-container-low border-outline-variant/20 text-on-surface-variant"
+                      }`}
+                    >
+                      <div className={`w-3 h-3 rounded-full border-2 mb-0.5 transition-all ${
+                        effectiveVisibility[key]
+                          ? "bg-primary border-primary"
+                          : "border-outline-variant"
+                      }`} />
+                      {label.split(" ").map((word, i) => (
+                        <span key={i} className="leading-tight">{word}</span>
+                      ))}
+                    </button>
+                  ))}
+                </div>
+              </OverridableField>
+            </div>
+          )}
+
+          {/* Seerr tab */}
+          {activeTab === "seerr" && seerrEnabled && (
+            <div className="space-y-4">
+              <Field
+                label="Linked Seerr User"
+                hint="Select which Seerr user this Hubarr user is linked to."
+              >
+                <SelectInput
+                  value={
+                    manualSeerrUserId === NO_SEERR_USER_SELECTED
+                      ? NO_SEERR_USER_SELECTED.toString()
+                      : (effectiveSeerrUserId?.toString() ?? NO_SEERR_USER_SELECTED.toString())
+                  }
+                  onChange={(value) => {
+                    const selectedId = Number(value);
+                    if (selectedId === NO_SEERR_USER_SELECTED) {
+                      setManualSeerrUserId(NO_SEERR_USER_SELECTED);
+                      return;
+                    }
+                    setManualSeerrUserId(
+                      selectedId === (seerrLink?.autoMatchedSeerrUserId ?? null) ? null : selectedId
+                    );
+                  }}
+                >
+                  <option value={NO_SEERR_USER_SELECTED.toString()}>No User Selected</option>
+                  {seerrUsers.map((entry) => (
+                    <option key={entry.id} value={entry.id.toString()}>
+                      {entry.displayName ?? entry.username ?? entry.email} ({entry.plexUsername ? `Plex: ${entry.plexUsername}` : entry.email})
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+
+              <OverridableField
+                label="Automatic Requests"
+                isOverridden={autoRequestEnabledOverride !== null}
+                onRestore={() => setAutoRequestEnabledOverride(null)}
+              >
+                <ToggleField
+                  label="Automatic Seerr Requests"
+                  hint="Enable to automatically request missing watchlist items via Seerr."
+                  checked={effectiveAutoRequestEnabled}
+                  onChange={(value) => setAutoRequestEnabledOverride(value)}
+                />
+              </OverridableField>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
         {error && (
-          <div className="bg-error/10 border border-error/30 rounded-lg px-4 py-3 text-error text-sm mt-4">
+          <div className="mx-5 bg-error/10 border border-error/30 rounded-lg px-4 py-3 text-error text-sm">
             {error}
           </div>
         )}
-
-        <div className="flex gap-3 mt-6">
+        <div className="flex gap-3 px-5 py-4 mt-2 border-t border-outline-variant/15">
           <button
             onClick={onClose}
             className="flex-1 bg-surface-container-high hover:bg-surface-bright text-on-surface text-sm font-medium rounded-xl py-2.5 transition-colors border border-outline-variant/20"
@@ -683,7 +881,7 @@ function EditModal({
             onClick={() => void save()}
             className="flex-1 bg-primary hover:bg-primary-dim disabled:opacity-50 text-on-primary text-sm font-semibold rounded-xl py-2.5 transition-colors"
           >
-            {saving ? "Saving..." : "Save changes"}
+            {saving ? "Saving..." : "Save Changes"}
           </button>
         </div>
       </div>

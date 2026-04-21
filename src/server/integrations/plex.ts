@@ -512,10 +512,20 @@ export class PlexIntegration {
    * Best-effort: returns null when all endpoint attempts fail.
    */
   private async fetchDiscoverMetadata(item: WatchlistItem): Promise<{ posterUrl: string | null; year: number | null; releaseDate: string | null; guids: string[] } | null> {
+    // Only use plexItemId as a fallback endpoint when it's a valid plex:// GUID
+    // (extract the hex part) or a bare 24-char hex. RSS items temporarily use a
+    // stableKey as plexItemId before enrichment resolves the real GUID, and that
+    // format is not a valid discover endpoint path.
+    const plexGuidHex = (() => {
+      const m = item.plexItemId.match(/^plex:\/\/(?:movie|show)\/([a-f0-9]{24})$/);
+      if (m) return m[1];
+      if (/^[a-f0-9]{24}$/.test(item.plexItemId)) return item.plexItemId;
+      return null;
+    })();
+
     const endpoints = Array.from(new Set([
       item.discoverKey ? item.discoverKey.replace(/^\//, "") : null,
-      `library/metadata/${encodeURIComponent(item.plexItemId)}`,
-      `library/metadata/${item.plexItemId}`
+      plexGuidHex ? `library/metadata/${plexGuidHex}` : null,
     ].filter((endpoint): endpoint is string => Boolean(endpoint))));
 
     let lastErr: Error | null = null;
@@ -1082,6 +1092,39 @@ export class PlexIntegration {
           query: fallbackParams.toString(),
           error: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
         });
+      }
+    }
+
+    // If still no results, retry with Unicode dashes normalised to a regular
+    // hyphen. Plex watchlist titles sometimes use en-dash (–) or em-dash (—)
+    // while the local library stores the same show with a plain hyphen (-),
+    // causing the title search to return zero candidates even though the item
+    // is present. This prevents a failed search from being mistaken for a
+    // genuine absence and clearing a valid stored match.
+    if (!response.MediaContainer?.Metadata?.length) {
+      const dashNormalised = searchTitle.replace(/[\u2013\u2014\u2012\u2015]/g, "-");
+      if (dashNormalised !== searchTitle) {
+        const dashParams = new URLSearchParams({
+          type: String(typeParam),
+          title: dashNormalised,
+          includeGuids: "1"
+        });
+        this.logger.debug("Library search fallback with dash-normalised title", {
+          title,
+          normalisedTitle: dashNormalised,
+          libraryId,
+          query: dashParams.toString()
+        });
+        try {
+          response = await this.requestServer(`/library/sections/${libraryId}/all?${dashParams.toString()}`);
+        } catch (dashErr) {
+          this.logger.warn("Library search dash-normalised fallback failed; treating as no match", {
+            title,
+            normalisedTitle: dashNormalised,
+            libraryId,
+            error: dashErr instanceof Error ? dashErr.message : String(dashErr)
+          });
+        }
       }
     }
 

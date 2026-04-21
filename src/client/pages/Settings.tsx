@@ -6,15 +6,16 @@ import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { formatRelativeTime } from "../lib/utils";
 import PlexConfigForm from "../components/PlexConfigForm";
 import CollectionsConfigForm from "../components/CollectionsConfigForm";
-import { SaveBar, SectionCard, ToggleField } from "../components/FormControls";
-import type { AboutInfo, JobInfo, LogEntry, LogsPageResponse, SettingsResponse } from "../../shared/types";
+import { Field, SaveBar, SectionCard, TextInput, ToggleField } from "../components/FormControls";
+import type { AboutInfo, JobInfo, LogEntry, LogsPageResponse, SeerrSettingsView, SeerrUser, SettingsResponse } from "../../shared/types";
 
-type Tab = "general" | "plex" | "collections" | "logs" | "jobs" | "about";
+type Tab = "general" | "plex" | "collections" | "seerr" | "logs" | "jobs" | "about";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "general", label: "General" },
   { id: "plex", label: "Plex" },
   { id: "collections", label: "Collections" },
+  { id: "seerr", label: "Seerr" },
   { id: "logs", label: "Logs" },
   { id: "jobs", label: "Jobs" },
   { id: "about", label: "About" }
@@ -54,20 +55,36 @@ export default function Settings() {
         <h1 className="font-headline font-bold text-2xl text-on-surface">Settings</h1>
       </div>
 
-      <div className="flex gap-0.5 border-b border-outline-variant/20 mb-6 overflow-x-auto no-scrollbar pb-1">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setTab(tab.id)}
-            className={`px-4 py-2.5 text-sm font-medium rounded-t-lg transition-colors border-b-2 -mb-px whitespace-nowrap ${
-              activeTab === tab.id
-                ? "text-primary border-primary"
-                : "text-on-surface-variant border-transparent hover:text-on-surface"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+      {/* Mobile: dropdown */}
+      <div className="md:hidden mb-6">
+        <select
+          value={activeTab}
+          onChange={(e) => setTab(e.target.value as Tab)}
+          className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-2.5 text-sm font-medium text-on-surface focus:outline-none focus:border-primary/50"
+        >
+          {TABS.map((tab) => (
+            <option key={tab.id} value={tab.id}>{tab.label}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Desktop: pill bar */}
+      <div className="hidden md:block mb-6">
+        <div className="flex p-1 bg-surface-container-high rounded-xl gap-1">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setTab(tab.id)}
+              className={`flex-1 text-sm font-medium rounded-lg px-4 py-2 transition-all whitespace-nowrap ${
+                activeTab === tab.id
+                  ? "bg-surface-container text-on-surface shadow-sm"
+                  : "text-on-surface-variant hover:text-on-surface"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {error && (
@@ -104,6 +121,9 @@ export default function Settings() {
                 await loadSettings();
               }}
             />
+          )}
+          {activeTab === "seerr" && settings && (
+            <SeerrTab settings={settings} onSave={loadSettings} />
           )}
           {activeTab === "logs" && <LogsTab />}
           {activeTab === "jobs" && <JobsTab />}
@@ -214,106 +234,136 @@ function GeneralTab({
   }
 
   return (
-    <div className="space-y-6">
-      <SectionCard
-        title="General Settings"
-        description="Changes to proxy support require a container restart to take effect."
-      >
-        <ToggleField
-          label="Trust Proxy"
-          hint="Enable when Hubarr is running behind a reverse proxy (e.g. Nginx, Traefik, Caddy) so that rate limiting uses the real client IP from X-Forwarded-For headers."
-          checked={form.trustProxy}
-          onChange={(value) => setForm((current) => ({ ...current, trustProxy: value }))}
-          restartRequired
-        />
-        <ToggleField
-          label="Track All Users"
-          hint="This allows you to view watchlist data for all your Plex users regardless of their enabled status. This will not publish collections."
-          checked={form.trackAllUsers}
-          onChange={(value) => setForm((current) => ({ ...current, trackAllUsers: value }))}
-        />
-        <ToggleField
-          label="Startup Sync"
-          hint="When Hubarr starts, run a full scan of your libraries and watchlists, then publish collections."
-          checked={form.fullSyncOnStartup}
-          onChange={(value) => setForm((current) => ({ ...current, fullSyncOnStartup: value }))}
-        />
-        <div className="mt-5">
-          <label className="block text-sm font-medium text-on-surface mb-2">
-            History Retention
-          </label>
-          <p className="text-xs text-on-surface-variant mb-3">
-            Choose how many days of scheduled sync history Hubarr should keep before trimming older entries.
-          </p>
-          <input
-            type="number"
-            min={1}
-            step={1}
-            value={form.historyRetentionDays}
-            onChange={(e) =>
-              setForm((current) => ({
-                ...current,
-                historyRetentionDays: Math.max(1, Math.floor(Number(e.target.value) || 1))
-              }))
-            }
-            className="w-full max-w-xs bg-surface-container-low border border-outline-variant/30 rounded-xl px-3 py-2.5 text-sm text-on-surface focus:outline-none focus:border-primary"
-          />
-        </div>
-        <SaveBar saving={saving} success={success} error={error} onSave={() => void save()} />
-
-        <div className="border-t border-outline-variant/10 pt-4">
-          <div className="text-sm font-medium text-on-surface mb-2">Reset</div>
-          <p className="text-xs text-on-surface-variant mb-3">
-            Delete Hubarr managed collections and remove Hubarr exclusion labels from all users.
-          </p>
-          {confirmReset && !resetting && (
-            <div className="fixed inset-0 z-10" onClick={() => setConfirmReset(false)} />
-          )}
-          <button
-            disabled={resetting}
-            onClick={() => void resetCollections()}
-            className={`relative z-20 text-sm font-semibold rounded-xl px-4 py-2 min-w-[160px] transition-colors disabled:opacity-50 ${
-              confirmReset
-                ? "bg-error text-white animate-pulse hover:bg-error/90"
-                : "bg-surface-container-high hover:bg-surface-bright border border-error/40 text-error"
-            }`}
-          >
-            {resetting ? "Resetting…" : confirmReset ? "Are you sure?" : "Reset Collections"}
-          </button>
-          {resetMessage && <div className="text-xs text-on-surface-variant mt-3">{resetMessage}</div>}
-        </div>
-      </SectionCard>
-
-      <SectionCard title="Cache">
+    <div className="space-y-5">
+      {/* Settings card */}
+      <div className="bg-surface-container rounded-2xl border border-outline-variant/20 p-5">
+        <h3 className="font-headline font-semibold text-base text-on-surface mb-1">Settings</h3>
+        <p className="text-xs text-on-surface-variant mb-4">Changes to proxy support require a container restart to take effect.</p>
         <div className="space-y-4">
+          <ToggleField
+            label="Trust Proxy"
+            hint="Enable when Hubarr is running behind a reverse proxy (e.g. Nginx, Traefik, Caddy) so that rate limiting uses the real client IP from X-Forwarded-For headers."
+            checked={form.trustProxy}
+            onChange={(value) => setForm((current) => ({ ...current, trustProxy: value }))}
+            restartRequired
+          />
+          <ToggleField
+            label="Track All Users"
+            hint="This allows you to view watchlist data for all your Plex users regardless of their enabled status. This will not publish collections."
+            checked={form.trackAllUsers}
+            onChange={(value) => setForm((current) => ({ ...current, trackAllUsers: value }))}
+          />
+          <ToggleField
+            label="Startup Sync"
+            hint="When Hubarr starts, run a full scan of your libraries and watchlists, then publish collections."
+            checked={form.fullSyncOnStartup}
+            onChange={(value) => setForm((current) => ({ ...current, fullSyncOnStartup: value }))}
+          />
+
+          <div className="flex items-center gap-3 pt-1">
+            <span className="text-xs font-semibold text-on-surface-variant uppercase tracking-widest">History</span>
+            <div className="flex-1 h-px bg-outline-variant/20" />
+          </div>
+
           <div>
-            <p className="text-xs text-on-surface-variant mb-3">
-              Hubarr caches poster art and user avatars locally to make loading faster. Clearing the cache forces a re-download on the next sync.
+            <label className="block text-sm font-medium text-on-surface mb-1">History Retention</label>
+            <p className="text-xs text-on-surface-variant mb-2">
+              How many days of scheduled sync history to keep before trimming older entries.
             </p>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={form.historyRetentionDays}
+                onChange={(e) =>
+                  setForm((current) => ({
+                    ...current,
+                    historyRetentionDays: Math.max(1, Math.floor(Number(e.target.value) || 1))
+                  }))
+                }
+                className="w-28 bg-surface-container-low border border-outline-variant/30 rounded-xl px-3 py-2 text-sm text-on-surface focus:outline-none focus:border-primary"
+              />
+              <span className="text-sm text-on-surface-variant">days</span>
+            </div>
+          </div>
+
+          <div className="pt-1">
+            <SaveBar saving={saving} success={success} error={error} onSave={() => void save()} />
+          </div>
+        </div>
+      </div>
+
+      {/* Maintenance card */}
+      <div className="bg-surface-container rounded-2xl border border-outline-variant/20 p-5">
+        <h3 className="font-headline font-semibold text-base text-on-surface mb-4">Maintenance</h3>
+        <div className="space-y-3">
+
+          {/* Reset Collections */}
+          <div className="flex items-start justify-between gap-4 p-4 bg-surface-container-low rounded-xl border border-outline-variant/15">
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-on-surface mb-0.5">Reset Collections</div>
+              <div className="text-xs text-on-surface-variant leading-relaxed">
+                Delete Hubarr managed collections and remove Hubarr exclusion labels from all users.
+              </div>
+              {resetMessage && <div className="text-xs text-on-surface-variant mt-2">{resetMessage}</div>}
+            </div>
+            <div className="flex-shrink-0 relative">
+              {confirmReset && !resetting && (
+                <div className="fixed inset-0 z-10" onClick={() => setConfirmReset(false)} />
+              )}
+              <button
+                disabled={resetting}
+                onClick={() => void resetCollections()}
+                className={`relative z-20 text-sm font-semibold rounded-xl px-4 py-2 min-w-[120px] transition-colors disabled:opacity-50 ${
+                  confirmReset
+                    ? "bg-error text-white animate-pulse hover:bg-error/90"
+                    : "bg-surface-container-high hover:bg-surface-bright border border-error/40 text-error"
+                }`}
+              >
+                {resetting ? "Resetting…" : confirmReset ? "Are you sure?" : "Reset"}
+              </button>
+            </div>
+          </div>
+
+          {/* Image Cache */}
+          <div className="flex items-start justify-between gap-4 p-4 bg-surface-container-low rounded-xl border border-outline-variant/15">
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-on-surface mb-0.5">Image Cache</div>
+              <div className="text-xs text-on-surface-variant leading-relaxed">
+                Hubarr caches poster art and user avatars locally. Clearing forces a re-download on the next sync.
+              </div>
+              {clearCacheMessage && <div className="text-xs text-on-surface-variant mt-2">{clearCacheMessage}</div>}
+            </div>
             <button
               disabled={clearingCache}
               onClick={() => void clearImageCache()}
-              className="text-sm font-semibold rounded-xl px-4 py-2 min-w-[160px] transition-colors disabled:opacity-50 bg-surface-container-high hover:bg-surface-bright border border-outline-variant/30 text-on-surface"
+              className="flex-shrink-0 text-sm font-semibold rounded-xl px-4 py-2 min-w-[120px] transition-colors disabled:opacity-50 bg-surface-container-high hover:bg-surface-bright border border-outline-variant/30 text-on-surface"
             >
-              {clearingCache ? "Clearing…" : "Clear Image Cache"}
+              {clearingCache ? "Clearing…" : "Clear Cache"}
             </button>
-            {clearCacheMessage && <div className="text-xs text-on-surface-variant mt-3">{clearCacheMessage}</div>}
           </div>
-          <div className="border-t border-outline-variant/20 pt-4">
-            <p className="text-xs text-on-surface-variant mb-3">
-              Hubarr caches Plex watchlist activity to resolve when items were added to a watchlist. Clearing this cache removes all stored dates — they will be re-fetched on the next activity cache run.
-            </p>
+
+          {/* Activity Cache */}
+          <div className="flex items-start justify-between gap-4 p-4 bg-surface-container-low rounded-xl border border-outline-variant/15">
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-on-surface mb-0.5">Activity Cache</div>
+              <div className="text-xs text-on-surface-variant leading-relaxed">
+                Stores when items were added to a watchlist. Clearing removes all stored dates — re-fetched on the next activity cache run.
+              </div>
+              {clearActivityCacheMessage && <div className="text-xs text-on-surface-variant mt-2">{clearActivityCacheMessage}</div>}
+            </div>
             <button
               disabled={clearingActivityCache}
               onClick={() => void clearActivityCache()}
-              className="text-sm font-semibold rounded-xl px-4 py-2 min-w-[160px] transition-colors disabled:opacity-50 bg-surface-container-high hover:bg-surface-bright border border-outline-variant/30 text-on-surface"
+              className="flex-shrink-0 text-sm font-semibold rounded-xl px-4 py-2 min-w-[120px] transition-colors disabled:opacity-50 bg-surface-container-high hover:bg-surface-bright border border-outline-variant/30 text-on-surface"
             >
-              {clearingActivityCache ? "Clearing…" : "Clear Activity Cache"}
+              {clearingActivityCache ? "Clearing…" : "Clear Cache"}
             </button>
-            {clearActivityCacheMessage && <div className="text-xs text-on-surface-variant mt-3">{clearActivityCacheMessage}</div>}
           </div>
+
         </div>
-      </SectionCard>
+      </div>
     </div>
   );
 }
@@ -766,7 +816,7 @@ function JobsTab() {
                       <div className="text-xs text-on-surface-variant mt-0.5">{job.intervalDescription}</div>
                     </td>
                     <td className="py-3 pr-4 text-on-surface-variant">
-                      {job.nextRunAt ? formatRelativeTime(job.nextRunAt) : "—"}
+                      {job.nextRunAt ? formatRelativeTime(job.nextRunAt) : job.nextRunLabel ?? "—"}
                     </td>
                     <td className="py-3 pr-4">
                       {(() => {
@@ -1006,6 +1056,190 @@ function AboutTab() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function SeerrTab({
+  settings,
+  onSave
+}: {
+  settings: SettingsResponse;
+  onSave: () => Promise<void>;
+}) {
+  const [form, setForm] = useState<{
+    enabled: boolean;
+    baseUrl: string;
+    apiKey: string;
+    autoRequestEnabled: boolean;
+    useServiceAccount: boolean;
+  }>({
+    enabled: settings.seerr.enabled,
+    baseUrl: settings.seerr.baseUrl,
+    apiKey: "",
+    autoRequestEnabled: settings.seerr.autoRequestEnabled,
+    useServiceAccount: settings.seerr.useServiceAccount
+  });
+  const [saving, setSaving] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [apiKeyTouched, setApiKeyTouched] = useState(false);
+
+  useEffect(() => {
+    setForm({
+      enabled: settings.seerr.enabled,
+      baseUrl: settings.seerr.baseUrl,
+      apiKey: "",
+      autoRequestEnabled: settings.seerr.autoRequestEnabled,
+      useServiceAccount: settings.seerr.useServiceAccount
+    });
+    setApiKeyTouched(false);
+  }, [settings.seerr]);
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    setSuccess(false);
+    try {
+      const patch: Record<string, unknown> = {
+        enabled: form.enabled,
+        baseUrl: form.baseUrl,
+        autoRequestEnabled: form.autoRequestEnabled,
+        useServiceAccount: form.useServiceAccount
+      };
+      if (form.apiKey) patch["apiKey"] = form.apiKey;
+      await apiPatch<SeerrSettingsView>("/api/settings/seerr", patch);
+      setSuccess(true);
+      setForm((f) => ({ ...f, apiKey: "" }));
+      setApiKeyTouched(false);
+      await onSave();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function testConnection() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const payload: Record<string, string> = { baseUrl: form.baseUrl };
+      if (form.apiKey) payload["apiKey"] = form.apiKey;
+      const result = await apiPost<{ ok: boolean; version?: string; userCount?: number; error?: string }>(
+        "/api/settings/seerr/test",
+        payload
+      );
+      if (result.ok) {
+        setTestResult({ ok: true, message: `Test Succeeded — Seerr v${result.version ?? "?"}` });
+      } else {
+        setTestResult({ ok: false, message: result.error ?? "Connection failed" });
+      }
+    } catch (caught) {
+      setTestResult({ ok: false, message: caught instanceof Error ? caught.message : String(caught) });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  return (
+    <div>
+      <div className="bg-surface-container rounded-2xl border border-outline-variant/20 p-5">
+        <h3 className="font-headline font-semibold text-base text-on-surface mb-4">Seerr Integration</h3>
+
+        <div className="space-y-4">
+          <ToggleField
+            label="Enable Seerr Integration"
+            hint="Connect Hubarr to Seerr so missing watchlist items can be turned into requests."
+            checked={form.enabled}
+            onChange={(v) => setForm((f) => ({ ...f, enabled: v }))}
+          />
+
+          <div className="flex items-center gap-3 pt-1">
+            <span className="text-xs font-semibold text-on-surface-variant uppercase tracking-widest">Connection</span>
+            <div className="flex-1 h-px bg-outline-variant/20" />
+          </div>
+
+          <Field label="Seerr URL" hint="Example: http://seerr:5055">
+            <TextInput
+              value={form.baseUrl}
+              onChange={(v) => setForm((f) => ({ ...f, baseUrl: v }))}
+              placeholder="http://seerr:5055"
+            />
+          </Field>
+
+          <Field label="API Key" hint="Seerr API key for Hubarr to use.">
+            <input
+              type="password"
+              value={apiKeyTouched ? form.apiKey : (settings.seerr.apiKeyConfigured ? "**************" : "")}
+              onFocus={() => {
+                if (!apiKeyTouched) {
+                  setApiKeyTouched(true);
+                  setForm((f) => ({ ...f, apiKey: "" }));
+                }
+              }}
+              onChange={(event) => {
+                setApiKeyTouched(true);
+                setForm((f) => ({ ...f, apiKey: event.target.value }));
+              }}
+              placeholder=""
+              className="w-full bg-surface-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-on-surface text-sm placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+            />
+          </Field>
+
+          <div className="flex items-center gap-3 pt-1">
+            <span className="text-xs font-semibold text-on-surface-variant uppercase tracking-widest">Behaviour</span>
+            <div className="flex-1 h-px bg-outline-variant/20" />
+          </div>
+
+          <ToggleField
+            label="Automatic Requests"
+            hint="When enabled Hubarr creates a request in Seerr for missing watchlist items that are not already in Seerr."
+            checked={form.autoRequestEnabled}
+            onChange={(v) => setForm((f) => ({ ...f, autoRequestEnabled: v }))}
+          />
+
+          <ToggleField
+            label="Use Hubarr Service Account"
+            hint="When enabled Hubarr creates a dedicated Seerr user account to manage requests. When disabled, Hubarr uses the admin account associated with the API key."
+            checked={form.useServiceAccount}
+            onChange={(v) => setForm((f) => ({ ...f, useServiceAccount: v }))}
+          />
+
+          {(success || error) && (
+            <div className="space-y-1 pt-1">
+              {success && <p className="text-xs text-success">Saved</p>}
+              {error && <p className="text-xs text-error">{error}</p>}
+            </div>
+          )}
+
+          <div className="flex items-center justify-between gap-3 pt-2 border-t border-outline-variant/15">
+            <div className="flex items-center gap-3 flex-wrap">
+              <button
+                onClick={() => void testConnection()}
+                disabled={testing || !form.baseUrl}
+                className="bg-surface-container-high hover:bg-surface-bright disabled:opacity-50 text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
+              >
+                {testing ? "Testing..." : "Test Connection"}
+              </button>
+              {testResult && (
+                <span className={`text-xs font-medium ${testResult.ok ? "text-success" : "text-error"}`}>
+                  {testResult.message}
+                </span>
+              )}
+            </div>
+            <button
+              disabled={saving}
+              onClick={() => void save()}
+              className="bg-primary hover:bg-primary-dim disabled:opacity-50 text-on-primary text-sm font-semibold rounded-xl px-4 py-2 transition-colors"
+            >
+              {saving ? "Saving..." : "Save Seerr"}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

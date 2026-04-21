@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiPatch } from "../lib/api";
 import type { CollectionSortOrder, PlexLibrary, VisibilityConfig } from "../../shared/types";
-import { Field, SaveBar, SectionCard, SelectInput, TextInput, ToggleField } from "./FormControls";
+import { Field, SaveBar, SectionCard, SelectInput, TextInput } from "./FormControls";
 
 interface CollectionsFormValue {
   collectionNamePattern: string;
@@ -153,38 +153,44 @@ export default function CollectionsConfigForm({
         )}
 
         <div className="pt-2 border-t border-outline-variant/10">
-          <div className="text-sm font-medium text-on-surface mb-3">Default Hub Visibility</div>
-          <div className="space-y-3">
-            <ToggleField
-              label="Library Recommended"
-              checked={form.visibilityDefaults.recommended}
-              onChange={(value) =>
-                setForm((current) => ({
-                  ...current,
-                  visibilityDefaults: { ...current.visibilityDefaults, recommended: value }
-                }))
-              }
-            />
-            <ToggleField
-              label="Home"
-              checked={form.visibilityDefaults.home}
-              onChange={(value) =>
-                setForm((current) => ({
-                  ...current,
-                  visibilityDefaults: { ...current.visibilityDefaults, home: value }
-                }))
-              }
-            />
-            <ToggleField
-              label="Friends Home"
-              checked={form.visibilityDefaults.shared}
-              onChange={(value) =>
-                setForm((current) => ({
-                  ...current,
-                  visibilityDefaults: { ...current.visibilityDefaults, shared: value }
-                }))
-              }
-            />
+          <div className="text-sm font-medium text-on-surface mb-1">Default Hub Visibility</div>
+          <div className="text-xs text-on-surface-variant mb-3">Select which Plex locations this collection appears in. Multiple allowed.</div>
+          <div className="grid grid-cols-3 w-fit gap-2">
+            {(
+              [
+                { key: "recommended" as const, label: "Library Recommended" },
+                { key: "home"        as const, label: "Admin Home" },
+                { key: "shared"      as const, label: "Friends Home" }
+              ]
+            ).map(({ key, label }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() =>
+                  setForm((current) => ({
+                    ...current,
+                    visibilityDefaults: {
+                      ...current.visibilityDefaults,
+                      [key]: !current.visibilityDefaults[key]
+                    }
+                  }))
+                }
+                className={`flex flex-col items-center gap-1 rounded-xl py-3 px-3 border text-xs font-medium transition-all ${
+                  form.visibilityDefaults[key]
+                    ? "bg-primary/10 border-primary/30 text-primary"
+                    : "bg-surface-container-low border-outline-variant/20 text-on-surface-variant"
+                }`}
+              >
+                <div className={`w-3 h-3 rounded-full border-2 mb-0.5 flex-shrink-0 transition-all ${
+                  form.visibilityDefaults[key]
+                    ? "bg-primary border-primary"
+                    : "border-outline-variant"
+                }`} />
+                {label.split(" ").map((word, i) => (
+                  <span key={i} className="leading-tight">{word}</span>
+                ))}
+              </button>
+            ))}
           </div>
         </div>
 

@@ -449,6 +449,85 @@ const migrations: Migration[] = [
           ON media_item_identifiers(identifier_value);
       `);
     }
+  },
+  {
+    version: 10,
+    up(db) {
+      db.exec(`
+        CREATE TABLE seerr_user_links (
+          user_id INTEGER PRIMARY KEY,
+          manual_seerr_user_id INTEGER,
+          auto_matched_seerr_user_id INTEGER,
+          effective_seerr_user_id INTEGER,
+          mapping_status TEXT NOT NULL DEFAULT 'unlinked',
+          auto_request_enabled INTEGER NOT NULL DEFAULT 1,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE seerr_request_state (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          plex_item_id TEXT NOT NULL,
+          seerr_request_id INTEGER,
+          seerr_media_id INTEGER,
+          tmdb_id INTEGER,
+          last_attempted_at TEXT,
+          outcome TEXT,
+          last_error TEXT,
+          effective_seerr_user_id INTEGER,
+          execution_seerr_user_id INTEGER,
+          updated_at TEXT NOT NULL,
+          UNIQUE(user_id, plex_item_id),
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX idx_seerr_request_state_user_id
+          ON seerr_request_state(user_id);
+        CREATE INDEX idx_seerr_request_state_plex_item_id
+          ON seerr_request_state(plex_item_id);
+      `);
+    }
+  },
+  {
+    version: 11,
+    up(db) {
+      db.exec(`
+        ALTER TABLE seerr_user_links RENAME TO seerr_user_links_old;
+
+        CREATE TABLE seerr_user_links (
+          user_id INTEGER PRIMARY KEY,
+          manual_seerr_user_id INTEGER,
+          auto_matched_seerr_user_id INTEGER,
+          effective_seerr_user_id INTEGER,
+          mapping_status TEXT NOT NULL DEFAULT 'unlinked',
+          auto_request_enabled INTEGER,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        INSERT INTO seerr_user_links (
+          user_id,
+          manual_seerr_user_id,
+          auto_matched_seerr_user_id,
+          effective_seerr_user_id,
+          mapping_status,
+          auto_request_enabled,
+          updated_at
+        )
+        SELECT
+          user_id,
+          manual_seerr_user_id,
+          auto_matched_seerr_user_id,
+          effective_seerr_user_id,
+          mapping_status,
+          auto_request_enabled,
+          updated_at
+        FROM seerr_user_links_old;
+
+        DROP TABLE seerr_user_links_old;
+      `);
+    }
   }
 ];
 

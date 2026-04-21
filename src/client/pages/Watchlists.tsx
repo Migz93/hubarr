@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { apiGet } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
+import { useSettings } from "../lib/useSettings";
 import { WatchlistItemModal } from "../components/WatchlistItemModal";
 import type {
   MediaType,
@@ -15,7 +16,7 @@ import { formatWatchlistDateShort } from "../lib/utils";
 
 const PAGE_SIZE = 24;
 
-type AvailabilityFilter = "all" | "available" | "missing";
+type AvailabilityFilter = "all" | "available" | "missing" | "requested";
 
 const SORT_OPTIONS: { value: WatchlistSortBy; label: string }[] = [
   { value: "added-desc", label: "Watchlisted (Newest)" },
@@ -25,7 +26,7 @@ const SORT_OPTIONS: { value: WatchlistSortBy; label: string }[] = [
 ];
 
 const VALID_SORT_VALUES = ["added-desc", "added-asc", "title-asc", "title-desc"];
-const VALID_AVAILABILITY = ["all", "available", "missing"];
+const VALID_AVAILABILITY = ["all", "available", "missing", "requested"];
 const VALID_MEDIA_TYPES = ["all", "movie", "show"];
 const WATCHLISTS_REFRESH_MS = 20_000;
 
@@ -61,6 +62,8 @@ export default function Watchlists() {
   const [loading, setLoading] = useState(true);
   const [selectedItem, setSelectedItem] = useState<WatchlistGroupedItem | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { settings } = useSettings();
+  const seerrEnabled = Boolean(settings?.seerr.enabled);
 
   async function load(background = false) {
     setLoading((current) => current || !background);
@@ -118,6 +121,9 @@ export default function Watchlists() {
 
         <FilterChip label="In Library" active={availability === "available"} count={data?.facets?.availability?.available ?? 0} onClick={() => selectAvailability(availability === "available" ? "all" : "available")} />
         <FilterChip label="Missing"    active={availability === "missing"}   count={data?.facets?.availability?.missing ?? 0}   onClick={() => selectAvailability(availability === "missing"   ? "all" : "missing")} />
+        {seerrEnabled && (
+          <FilterChip label="Requested" active={availability === "requested"} count={data?.facets?.availability?.requested ?? 0} onClick={() => selectAvailability(availability === "requested" ? "all" : "requested")} />
+        )}
       </div>
 
       {/* Row 2: Users */}
@@ -179,6 +185,7 @@ export default function Watchlists() {
                 key={item.plexItemId}
                 item={item}
                 selectedUserId={selectedUserId}
+                seerrEnabled={seerrEnabled}
                 onClick={() => setSelectedItem(item)}
               />
             ))}
@@ -217,7 +224,7 @@ export default function Watchlists() {
 
       {/* Item detail modal */}
       {selectedItem && (
-        <WatchlistItemModal item={selectedItem} onClose={() => setSelectedItem(null)} />
+        <WatchlistItemModal item={selectedItem} onClose={() => setSelectedItem(null)} seerrSettings={settings?.seerr} />
       )}
     </div>
   );
@@ -265,10 +272,12 @@ function FilterChip({
 function WatchlistPoster({
   item,
   selectedUserId,
+  seerrEnabled,
   onClick
 }: {
   item: WatchlistGroupedItem;
   selectedUserId: number | null;
+  seerrEnabled: boolean;
   onClick: () => void;
 }) {
   const posterSrc = getPlexImageSrc(item.posterUrl);
@@ -310,6 +319,10 @@ function WatchlistPoster({
             <div className="relative">
               <div className="absolute inset-[3px] rounded-full bg-[#0a3d1f]" />
               <CheckCircle size={18} className="relative text-success drop-shadow-[0_0_4px_rgba(0,0,0,1)]" />
+            </div>
+          ) : seerrEnabled && item.seerrRequested ? (
+            <div className="relative w-[18px] h-[18px] rounded-full bg-surface-container-highest border border-outline-variant/40 flex items-center justify-center drop-shadow-[0_0_4px_rgba(0,0,0,1)]">
+              <img src="/seerr-icon.svg" alt="Requested in Seerr" className="w-3 h-3" />
             </div>
           ) : (
             <div className="relative">

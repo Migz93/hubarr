@@ -18,6 +18,8 @@ long gone.
   refresh behavior, storage model, and cache lifecycle details
 - [maintenance.md](maintenance.md) — scheduled housekeeping tasks, current
   cleanup responsibilities, and how to add new maintenance work safely
+- [seerr.md](seerr.md) — Seerr integration: configuration, user mapping, request
+  flow, service account, failure modes, and API quirks
 
 ## When To Read Which Doc
 
@@ -31,6 +33,8 @@ long gone.
   storage, refresh, or serving behavior.
 - Read [maintenance.md](maintenance.md) when adding background cleanup,
   consistency checks, pruning, or other housekeeping tasks.
+- Read [seerr.md](seerr.md) when changing Seerr connectivity, user mapping,
+  request logic, or the service account lifecycle.
 
 ## Maintenance Rule
 

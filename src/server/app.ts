@@ -7,8 +7,11 @@ import helmet from "helmet";
 import type {
   CollectionSortOrder,
   HealthResponse,
+  JobInfo,
   PlexConfigPayload,
   PlexConnectionOption,
+  SeerrSettingsPatch,
+  SeerrSettingsView,
   SettingsResponse,
   SessionUser,
   SetupStatusResponse
@@ -530,7 +533,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         : undefined;
     const availabilityParam = req.query["availability"];
     const availability =
-      availabilityParam === "available" || availabilityParam === "missing"
+      availabilityParam === "available" || availabilityParam === "missing" || availabilityParam === "requested"
         ? availabilityParam
         : undefined;
     const sortByParam = req.query["sortBy"];
@@ -606,6 +609,16 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   app.get("/api/settings", requireAuth, (_req, res) => {
     const app = db.getAppSettings();
     const plexView = db.getPlexSettingsView();
+    const seerrStored = db.getSeerrSettings();
+
+    const seerrView: SeerrSettingsView = {
+      enabled: seerrStored.enabled,
+      baseUrl: seerrStored.baseUrl,
+      apiKeyConfigured: Boolean(seerrStored.apiKey),
+      autoRequestEnabled: seerrStored.autoRequestEnabled,
+      useServiceAccount: seerrStored.useServiceAccount,
+      serviceAccountSeerrUserId: seerrStored.serviceAccountSeerrUserId
+    };
 
     const payload: SettingsResponse = {
       general: {
@@ -626,7 +639,8 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         movieLibraryId: app.defaultMovieLibraryId,
         showLibraryId: app.defaultShowLibraryId,
         visibilityDefaults: app.visibilityDefaults
-      }
+      },
+      seerr: seerrView
     };
     res.json(payload);
   });
@@ -831,6 +845,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   /** Job status */
   app.get("/api/settings/jobs", requireAuth, (_req, res) => {
     const settings = db.getAppSettings();
+    const seerrSettings = db.getSeerrSettings();
     const recentRuns = db.listSyncRuns(20);
 
     // Keep the "last run" fields anchored to the most recent completed run so
@@ -838,8 +853,10 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     const lastFull = recentRuns.find((r) => r.kind === "full" && r.completedAt);
     const lastPublish = recentRuns.find((r) => r.kind === "publish" && r.completedAt);
     const lastRss = recentRuns.find((r) => r.kind === "rss" && r.completedAt);
+    const lastSeerr = recentRuns.find((r) => r.kind === "seerr" && r.completedAt);
+    const seerrJobState = db.getJobRunState("seerr-request-sync");
 
-    const jobs = [
+    const jobs: JobInfo[] = [
       {
         id: "collection-publish",
         name: "Collection Sync",
@@ -923,7 +940,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
           ? `Every ${settings.rssPollIntervalSeconds / 60} minute${settings.rssPollIntervalSeconds / 60 !== 1 ? "s" : ""}`
           : "Disabled",
         isRunning: scheduler?.isRunning("rss-sync") ?? false,
-        nextRunAt: scheduler?.getNextRunAt("rss-sync"),
+        nextRunAt: scheduler?.getNextRunAt("rss-sync") ?? null,
         lastRunAt: lastRss?.completedAt ?? null,
         lastRunStatus: lastRss?.status === "success" || lastRss?.status === "error" ? lastRss.status : null
       },
@@ -937,6 +954,21 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         lastRunStatus: scheduler?.getLastRunStatus("activity-cache-fetch") ?? null
       }
     ];
+
+    if (seerrSettings.enabled) {
+      jobs.push({
+        id: "seerr-request-sync",
+        name: "Seerr Request Sync",
+        intervalDescription: "Manual",
+        isRunning: services.isSeerrRequestSyncRunning(),
+        nextRunAt: null,
+        nextRunLabel: "Manual",
+        lastRunAt: seerrJobState?.lastRunAt ?? lastSeerr?.completedAt ?? null,
+        lastRunStatus: seerrJobState?.lastRunStatus ?? (
+          lastSeerr?.status === "success" || lastSeerr?.status === "error" ? lastSeerr.status : null
+        )
+      });
+    }
 
     jobs.sort((a, b) => a.name.localeCompare(b.name));
 
@@ -1006,6 +1038,11 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       } else if (jobId === "activity-cache-fetch") {
         services.syncActivityCache().catch((err) => {
           logger.warn("Manual activity cache fetch failed", { error: err instanceof Error ? err.message : String(err) });
+        });
+        res.json({ triggered: true });
+      } else if (jobId === "seerr-request-sync") {
+        services.runSeerrRequestSync({ mode: "all", triggeredBy: "manual" }).catch((err) => {
+          logger.warn("Manual Seerr request sync failed", { error: err instanceof Error ? err.message : String(err) });
         });
         res.json({ triggered: true });
       } else {
@@ -1096,6 +1133,248 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   app.post("/api/settings/image-cache/prune", requireAuth, (_req, res) => {
     const removed = imageCache.pruneOrphaned();
     res.json({ removed });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Seerr settings
+  // ---------------------------------------------------------------------------
+
+  app.patch("/api/settings/seerr", requireAuth, async (req, res) => {
+    const body = req.body as SeerrSettingsPatch;
+    const current = db.getSeerrSettings();
+    const serviceAccountAvatarUrl = "https://raw.githubusercontent.com/Migz93/hubarr/refs/heads/main/public/logo.png";
+
+    const patch: Parameters<typeof db.updateSeerrSettings>[0] = {};
+
+    if (typeof body.enabled === "boolean") patch.enabled = body.enabled;
+    if (typeof body.baseUrl === "string") patch.baseUrl = body.baseUrl.trim();
+    if (typeof body.apiKey === "string" && body.apiKey) patch.apiKey = body.apiKey;
+    if (typeof body.autoRequestEnabled === "boolean") patch.autoRequestEnabled = body.autoRequestEnabled;
+
+    if (typeof body.useServiceAccount === "boolean") {
+      patch.useServiceAccount = body.useServiceAccount;
+
+      // When enabling service account mode, always reconcile the Hubarr Seerr account.
+      // This runs on every save (not just first enable) so permissions are corrected
+      // if they were changed in Seerr after initial setup.
+      if (body.useServiceAccount) {
+        const baseUrl = patch.baseUrl ?? current.baseUrl;
+        const apiKey = patch.apiKey ?? current.apiKey;
+        if (!baseUrl || !apiKey) {
+          res.status(400).json({ error: "Base URL and API key are required to enable service account mode." });
+          return;
+        }
+        try {
+          const seerr = services.buildSeerrIntegration(baseUrl, apiKey);
+          const seerrUserId = await seerr.createOrReconcileServiceAccount(serviceAccountAvatarUrl);
+          patch.serviceAccountSeerrUserId = seerrUserId;
+          logger.info("Seerr service account reconciled on settings save", {
+            seerrUserId,
+            avatarUrl: serviceAccountAvatarUrl
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          logger.error("Failed to create Seerr service account", { message });
+          res.status(400).json({ error: `Could not create Seerr service account: ${message}` });
+          return;
+        }
+      }
+
+      if (!body.useServiceAccount) {
+        const baseUrl = patch.baseUrl ?? current.baseUrl;
+        const apiKey = patch.apiKey ?? current.apiKey;
+
+        if (current.useServiceAccount && current.serviceAccountSeerrUserId !== null) {
+          if (!baseUrl || !apiKey) {
+            res.status(400).json({ error: "Base URL and API key are required to disable service account mode cleanly." });
+            return;
+          }
+
+          try {
+            const seerr = services.buildSeerrIntegration(baseUrl, apiKey);
+            await seerr.deleteServiceAccount();
+            logger.info("Seerr service account deleted on settings save", {
+              seerrUserId: current.serviceAccountSeerrUserId
+            });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            logger.error("Failed to delete Seerr service account", { message });
+            res.status(400).json({ error: `Could not delete Seerr service account: ${message}` });
+            return;
+          }
+        }
+
+        // Disabling service account mode — clear the stored user ID after cleanup
+        patch.serviceAccountSeerrUserId = null;
+      }
+    }
+
+    const updated = db.updateSeerrSettings(patch);
+
+    // Kick off auto-matching whenever Seerr settings change and integration is enabled
+    if (updated.enabled && updated.baseUrl && updated.apiKey) {
+      services.buildSeerrIntegration(updated.baseUrl, updated.apiKey)
+        .getUsers()
+        .then((seerrUsers) => services.syncSeerrUserMappings(seerrUsers))
+        .catch((err) => {
+          logger.warn("Seerr auto-match sync failed after settings update", {
+            message: err instanceof Error ? err.message : String(err)
+          });
+        });
+
+      // Run the Seerr Request Sync job so newly-missing items get their state
+      // refreshed immediately without the user needing to trigger it manually.
+      services.runSeerrRequestSync({ mode: "all", triggeredBy: "manual" }).catch((err) => {
+        logger.warn("Seerr request sync failed after settings save", {
+          message: err instanceof Error ? err.message : String(err)
+        });
+      });
+    }
+
+    res.json({
+      enabled: updated.enabled,
+      baseUrl: updated.baseUrl,
+      apiKeyConfigured: Boolean(updated.apiKey),
+      autoRequestEnabled: updated.autoRequestEnabled,
+      useServiceAccount: updated.useServiceAccount,
+      serviceAccountSeerrUserId: updated.serviceAccountSeerrUserId
+    });
+  });
+
+  /** Test Seerr connectivity with provided or stored credentials */
+  app.post("/api/settings/seerr/test", requireAuth, async (req, res) => {
+    const body = req.body as { baseUrl?: string; apiKey?: string };
+    const stored = db.getSeerrSettings();
+    const baseUrl = (body.baseUrl ?? stored.baseUrl ?? "").trim();
+    const apiKey = body.apiKey ?? stored.apiKey ?? "";
+
+    if (!baseUrl) {
+      res.status(400).json({ error: "Base URL is required." });
+      return;
+    }
+    if (!apiKey) {
+      res.status(400).json({ error: "API key is required." });
+      return;
+    }
+
+    try {
+      const seerr = services.buildSeerrIntegration(baseUrl, apiKey);
+      const result = await seerr.validate();
+      res.json({ ok: true, version: result.version, userCount: result.userCount });
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  /** List Seerr users for the mapping dropdown */
+  app.get("/api/settings/seerr/users", requireAuth, async (_req, res) => {
+    const stored = db.getSeerrSettings();
+    if (!stored.baseUrl || !stored.apiKey) {
+      res.status(400).json({ error: "Seerr is not configured." });
+      return;
+    }
+    try {
+      const seerr = services.buildSeerrIntegration(stored.baseUrl, stored.apiKey);
+      const users = await seerr.getUsers();
+      res.json(users);
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Seerr user links
+  // ---------------------------------------------------------------------------
+
+  /** Get Seerr link for a specific user */
+  app.get("/api/users/:id/seerr", requireAuth, (req, res) => {
+    const userId = Number(req.params.id);
+    const link = db.getSeerrUserLink(userId);
+    const globalAutoRequestEnabled = db.getSeerrSettings().autoRequestEnabled;
+    const response = link
+      ? {
+          ...link,
+          autoRequestEnabled: link.autoRequestEnabledOverride ?? globalAutoRequestEnabled
+        }
+      : {
+          userId,
+          manualSeerrUserId: null,
+          autoMatchedSeerrUserId: null,
+          effectiveSeerrUserId: null,
+          mappingStatus: "unlinked" as const,
+          autoRequestEnabledOverride: null,
+          autoRequestEnabled: globalAutoRequestEnabled
+        };
+    res.json(response);
+  });
+
+  /** Update Seerr link for a user (manual override or auto-request toggle) */
+  app.patch("/api/users/:id/seerr", requireAuth, (req, res) => {
+    const userId = Number(req.params.id);
+    const body = req.body as {
+      manualSeerrUserId?: number | null;
+      autoRequestEnabledOverride?: boolean | null;
+    };
+
+    // Verify user exists
+    const user = db.getUser(userId);
+    if (!user) {
+      res.status(404).json({ error: "User not found." });
+      return;
+    }
+
+    const updated = db.upsertSeerrUserLink({
+      userId,
+      ...(("manualSeerrUserId" in body) && { manualSeerrUserId: body.manualSeerrUserId ?? null }),
+      ...(("autoRequestEnabledOverride" in body) && {
+        autoRequestEnabledOverride:
+          body.autoRequestEnabledOverride === null ? null : Boolean(body.autoRequestEnabledOverride)
+      })
+    });
+    if (updated.effectiveSeerrUserId !== null) {
+      const cleared = db.deleteSkippedUnlinkedSeerrRequestStatesForUser(userId);
+      if (cleared > 0) {
+        logger.info("Cleared stale Seerr unlinked request states after user mapping save", {
+          userId,
+          displayName: user.displayName,
+          cleared
+        });
+      }
+    }
+    const globalAutoRequestEnabled = db.getSeerrSettings().autoRequestEnabled;
+    res.json({
+      ...updated,
+      autoRequestEnabled: updated.autoRequestEnabledOverride ?? globalAutoRequestEnabled
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Seerr request state
+  // ---------------------------------------------------------------------------
+
+  /** Get Seerr request state for a watchlist item across all users */
+  app.get("/api/watchlists/seerr-state", requireAuth, (req, res) => {
+    const plexItemId = req.query["plexItemId"];
+    if (typeof plexItemId !== "string" || !plexItemId) {
+      res.status(400).json({ error: "plexItemId is required." });
+      return;
+    }
+    res.json(db.listSeerrRequestStatesForItem(plexItemId));
+  });
+
+  /** Manually trigger a Seerr request for a watchlist item */
+  app.post("/api/watchlists/request", requireAuth, async (req, res) => {
+    const body = req.body as { userId?: number; plexItemId?: string };
+    if (typeof body.userId !== "number" || typeof body.plexItemId !== "string" || !body.plexItemId) {
+      res.status(400).json({ error: "userId and plexItemId are required." });
+      return;
+    }
+    try {
+      const result = await services.triggerManualSeerrRequest(body.userId, body.plexItemId);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   // ---------------------------------------------------------------------------

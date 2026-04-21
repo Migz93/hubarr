@@ -106,7 +106,7 @@ Read-only. Safe to run against a live instance.
 
 | Test | What it checks |
 |---|---|
-| All six tabs are visible | Navigates to `/settings`, asserts all six tab buttons (General, Plex, Collections, Logs, Jobs, About) are rendered |
+| All seven tabs are visible | Navigates to `/settings`, asserts all seven tab buttons (General, Plex, Collections, Seerr, Logs, Jobs, About) are rendered |
 | Clicking a tab updates the URL | Clicks Plex, Jobs, and About tabs in turn; asserts the URL gains the expected `?tab=` parameter |
 | General tab shows Track All Users, Startup Sync, and History Retention controls | Navigates to `/settings?tab=general`, waits for load, asserts all three setting labels are visible |
 | Jobs tab shows the jobs table | Navigates to `/settings?tab=jobs`, asserts the "Job Name" column header is visible |
@@ -169,3 +169,20 @@ jobs on the server.
 | Expanded history details keep polling while the tab is hidden when a run is active | Expands a stubbed running History row, switches to another tab, and verifies the hidden page keeps polling `/api/history/:runId` for updated details |
 | Expanded errors stay collapsed by default and grouped steps render readable labels | Opens a stubbed failed History run, verifies the errors section stays collapsed initially, and checks that repeated low-level steps render as grouped human-readable labels |
 | RSS runs show feed checks and descriptive item labels | Opens a stubbed RSS History run and verifies feed-check steps and found-item labels render instead of a generic empty-details state |
+
+---
+
+### `tests/playwright/seerr.spec.ts` — Seerr integration
+
+Read-only. Safe to run against a live instance whether or not Seerr is configured.
+Tests that depend on Seerr being enabled are skipped gracefully when the
+integration is off.
+
+| Test | What it checks |
+|---|---|
+| Seerr tab button is visible | Navigates to `/settings`, asserts the "Seerr" tab button is rendered |
+| Clicking the Seerr tab updates the URL | Clicks the Seerr tab and asserts the URL gains `?tab=seerr` |
+| Seerr tab loads without error and shows the connection form | Navigates to `/settings?tab=seerr`, asserts the "Seerr Integration" section, base URL field, and "Test Connection" button are visible |
+| Seerr tab shows the Behaviour section with request toggles | Navigates to `/settings?tab=seerr`, asserts the "Behaviour" divider and "Automatic Requests" and "Use Hubarr Service Account" toggles are visible |
+| Seerr action labels render correctly when stubbed into the history API | Stubs the History API with a run containing Seerr step entries and verifies the readable labels "Seerr request created", "Already in Seerr", and "Seerr request skipped" appear in the expanded details |
+| Edit modal Seerr section visibility matches the Seerr enabled state | Reads current settings to determine whether Seerr is enabled; opens the first user's edit modal and asserts that the Seerr tab is present (or absent) accordingly |

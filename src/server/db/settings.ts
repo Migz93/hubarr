@@ -12,7 +12,7 @@ import type {
   SessionUser
 } from "../../shared/types.js";
 
-export type SettingKey = "admin" | "plex" | "app" | "session_secret";
+export type SettingKey = "admin" | "plex" | "app" | "session_secret" | "seerr";
 
 export const defaultAppSettings: AppSettings = {
   reconciliationIntervalMinutes: 60,
@@ -277,6 +277,48 @@ export function updatePlexSettingsToken(db: Database.Database, token: string): v
   const settings = getPlexSettings(db);
   if (!settings) return;
   savePlexSettings(db, { ...settings, token });
+}
+
+// -------------------------------------------------------------------------
+// Seerr Settings
+// -------------------------------------------------------------------------
+
+export interface SeerrStoredSettings {
+  enabled: boolean;
+  baseUrl: string;
+  /** Admin API key — never sent to the client. */
+  apiKey: string;
+  autoRequestEnabled: boolean;
+  useServiceAccount: boolean;
+  serviceAccountSeerrUserId: number | null;
+}
+
+const defaultSeerrSettings: SeerrStoredSettings = {
+  enabled: false,
+  baseUrl: "",
+  apiKey: "",
+  autoRequestEnabled: false,
+  useServiceAccount: false,
+  serviceAccountSeerrUserId: null
+};
+
+export function getSeerrSettings(db: Database.Database): SeerrStoredSettings {
+  const stored = getSetting<SeerrStoredSettings>(db, "seerr");
+  return { ...defaultSeerrSettings, ...stored };
+}
+
+export function saveSeerrSettings(db: Database.Database, settings: SeerrStoredSettings): void {
+  setSetting(db, "seerr", settings);
+}
+
+export function updateSeerrSettings(
+  db: Database.Database,
+  patch: Partial<SeerrStoredSettings>
+): SeerrStoredSettings {
+  const current = getSeerrSettings(db);
+  const next: SeerrStoredSettings = { ...current, ...patch };
+  setSetting(db, "seerr", next);
+  return next;
 }
 
 export function getPlexSettingsView(db: Database.Database): PlexSettingsView | null {

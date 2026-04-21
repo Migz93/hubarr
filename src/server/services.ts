@@ -3,6 +3,8 @@ import type {
   CollectionSortOrder,
   PreloadPhase,
   PreloadProgressEvent,
+  SeerrRequestState,
+  SeerrUser,
   UserRecord,
   PlexSettingsInput,
   WatchlistItem
@@ -12,9 +14,19 @@ import { HubarrDatabase } from "./db/index.js";
 import { ImageCacheService } from "./image-cache.js";
 import { Logger } from "./logger.js";
 import { PlexIntegration, WATCHLIST_DATE_UNKNOWN_SENTINEL, type PlexLibraryItemMatch, type ResolvedWatchlistItem } from "./integrations/plex.js";
+import { SeerrIntegration, extractTmdbId } from "./integrations/seerr.js";
 import { RssCache, type RssFeedItem } from "./rss-cache.js";
 
 const PLEX_SYNC_CONCURRENCY = 3;
+
+type SeerrRequestSyncScope =
+  | { mode: "all"; triggeredBy: "manual" | "full" }
+  | { mode: "user"; userId: number; triggeredBy: "user" }
+  | { mode: "items"; userId: number; items: WatchlistItem[]; triggeredBy: "rss" };
+
+type SeerrRequestProcessingOptions = {
+  requireAutoRequest: boolean;
+};
 
 /**
  * Compare two watchlist items by release date for Plex collection ordering.
@@ -111,6 +123,7 @@ export class HubarrServices {
   private usersRssUrl: string | null = null;
   private usersRssPrimed = false;
   private readonly usersRssCache = new RssCache();
+  private seerrRequestSyncActiveRuns = 0;
   private onboardingPreloadSession: {
     events: PreloadProgressEvent[];
     listeners: Set<(event: PreloadProgressEvent) => void>;
@@ -138,12 +151,17 @@ export class HubarrServices {
 
   private updateRunProgressSummary(
     runId: number,
-    kind: "full" | "publish",
+    kind: "full" | "publish" | "seerr",
     completed: number,
     total: number
   ): void {
     if (kind === "publish") {
       this.db.updateSyncRunSummary(runId, `Collection sync: publishing collections (${completed}/${total} users).`);
+      return;
+    }
+
+    if (kind === "seerr") {
+      this.db.updateSyncRunSummary(runId, `Seerr request sync: processing users (${completed}/${total}).`);
       return;
     }
 
@@ -555,23 +573,14 @@ export class HubarrServices {
           if (incomingDate && incomingDate !== WATCHLIST_DATE_UNKNOWN_SENTINEL) return incomingDate;
           return WATCHLIST_DATE_UNKNOWN_SENTINEL;
         })(),
-        // item.matchedRatingKey comes from resolveWatchlistItems which always
-        // sets it explicitly (string or null). Using !== undefined lets a null
-        // (meaning "not in library right now") clear a stale stored key, while
-        // undefined (not yet resolved) falls back to whatever is stored.
-        matchedRatingKey: (() => {
-          if (item.matchedRatingKey !== undefined) {
-            if (item.matchedRatingKey === null && existing?.matchedRatingKey) {
-              this.logger.info("Clearing stale Plex match for watchlist item", {
-                title: item.title,
-                type: item.type,
-                staleRatingKey: existing.matchedRatingKey
-              });
-            }
-            return item.matchedRatingKey;
-          }
-          return existing?.matchedRatingKey ?? null;
-        })()
+        // Prefer a confirmed match from the current sync pass. A null result
+        // means the title search couldn't confirm the item — preserve the
+        // existing stored key rather than clearing it. The full library scan
+        // (runPlexAvailabilityScan) is the authoritative signal for deletion:
+        // it checks every GUID across the entire library and only clears when
+        // both the GUID and the stored ratingKey are absent. Collection publish
+        // also clears stale keys on 400/404 as a final safety net.
+        matchedRatingKey: item.matchedRatingKey ?? existing?.matchedRatingKey ?? null
       };
     });
   }
@@ -1309,6 +1318,20 @@ export class HubarrServices {
       });
     }
 
+    await this.runSeerrRequestSync({ mode: "all", triggeredBy: "full" }).then(() => {
+      this.db.addSyncRunItem(runId, "seerr.request.followup", "success", {
+        sourceRunKind: "full",
+        message: "Triggered Seerr request sync after full sync."
+      });
+    }).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn("Seerr request sync after full sync failed", { message });
+      this.db.addSyncRunItem(runId, "seerr.request.followup", "error", {
+        sourceRunKind: "full",
+        message
+      });
+    });
+
     // Publish collections immediately so the updated watchlist is live in Plex
     // without waiting for the next scheduled collection-publish job.
     await this.runPublishPass().then(() => {
@@ -1327,7 +1350,7 @@ export class HubarrServices {
       });
     });
 
-    return this.db.listSyncRuns(1)[0];
+    return this.db.listSyncRuns(20).find((run) => run.id === runId) ?? this.db.listSyncRuns(1)[0];
   }
 
   async runUserSync(userId: number) {
@@ -1372,6 +1395,20 @@ export class HubarrServices {
       const items = await this.syncUser(friend, runId, rssDateMap);
       this.db.completeSyncRun(runId, "success", `Manual sync finished for ${label}.`, null);
 
+      await this.runSeerrRequestSync({ mode: "user", userId: friend.id, triggeredBy: "user" }).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.warn("Seerr request sync after user sync failed", {
+          userId: friend.id,
+          displayName: friend.displayName,
+          message
+        });
+        this.db.addSyncRunItem(runId, "seerr.request.followup", "error", {
+          sourceRunKind: "user",
+          userId: friend.id,
+          message
+        }, friend.id);
+      });
+
       // Publish collections immediately so the result is live in Plex.
       await this.runPublishPass().catch((err) => {
         this.logger.warn("Collection publish after user sync failed", {
@@ -1380,7 +1417,7 @@ export class HubarrServices {
         });
       });
 
-      return { run: this.db.listSyncRuns(1)[0], items };
+      return { run: this.db.listSyncRuns(20).find((run) => run.id === runId) ?? this.db.listSyncRuns(1)[0], items };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error("Manual sync failed", { label, message });
@@ -1819,6 +1856,7 @@ export class HubarrServices {
     }
 
     let processedCount = 0;
+    const missingItems: WatchlistItem[] = [];
 
     for (const item of newItems) {
       const libraryId = item.type === "movie" ? selfLibraries.movieLibraryId : selfLibraries.showLibraryId;
@@ -1887,6 +1925,9 @@ export class HubarrServices {
 
       this.db.upsertWatchlistItem(selfUser.id, watchlistItem);
       processedCount++;
+      if (!matchedRatingKey) {
+        missingItems.push(watchlistItem);
+      }
 
       // Cache poster immediately for RSS-ingested items
       const plexSettings = this.db.getPlexSettings();
@@ -1920,6 +1961,22 @@ export class HubarrServices {
       }, selfUser.id);
     }
 
+    if (missingItems.length > 0) {
+      await this.runSeerrRequestSync({
+        mode: "items",
+        userId: selfUser.id,
+        items: missingItems,
+        triggeredBy: "rss"
+      }).catch((err) => {
+        this.logger.warn("Seerr request sync after self RSS items failed", {
+          userId: selfUser.id,
+          displayName: selfUser.displayName,
+          itemCount: missingItems.length,
+          message: err instanceof Error ? err.message : String(err)
+        });
+      });
+    }
+
     return processedCount;
   }
 
@@ -1934,6 +1991,7 @@ export class HubarrServices {
     trackedUsers: UserRecord[]
   ): Promise<number> {
     let processedCount = 0;
+    const missingItemsByUser = new Map<number, { user: UserRecord; items: WatchlistItem[] }>();
 
     for (const item of newItems) {
       const friend = item.author
@@ -2026,6 +2084,14 @@ export class HubarrServices {
 
       this.db.upsertWatchlistItem(friend.id, watchlistItem);
       processedCount++;
+      if (!matchedRatingKey) {
+        const existing = missingItemsByUser.get(friend.id);
+        if (existing) {
+          existing.items.push(watchlistItem);
+        } else {
+          missingItemsByUser.set(friend.id, { user: friend, items: [watchlistItem] });
+        }
+      }
 
       // Cache poster immediately for RSS-ingested items
       const plexSettings = this.db.getPlexSettings();
@@ -2062,6 +2128,22 @@ export class HubarrServices {
       }, friend.id);
     }
 
+    for (const { user, items } of missingItemsByUser.values()) {
+      await this.runSeerrRequestSync({
+        mode: "items",
+        userId: user.id,
+        items,
+        triggeredBy: "rss"
+      }).catch((err) => {
+        this.logger.warn("Seerr request sync after RSS items failed", {
+          userId: user.id,
+          displayName: user.displayName,
+          itemCount: items.length,
+          message: err instanceof Error ? err.message : String(err)
+        });
+      });
+    }
+
     return processedCount;
   }
 
@@ -2085,6 +2167,440 @@ export class HubarrServices {
       this.logger.warn("Isolation filter sync failed — collections are still published, but visibility isolation may be incomplete", { message });
       this.db.addSyncRunItem(runId, "isolation.filters", "error", { message });
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Seerr
+  // ---------------------------------------------------------------------------
+
+  getSeerrIntegration(): SeerrIntegration | null {
+    const settings = this.db.getSeerrSettings();
+    if (!settings.enabled || !settings.baseUrl || !settings.apiKey) return null;
+    return new SeerrIntegration(
+      { baseUrl: settings.baseUrl, apiKey: settings.apiKey },
+      this.logger
+    );
+  }
+
+  isSeerrRequestSyncRunning(): boolean {
+    return this.seerrRequestSyncActiveRuns > 0;
+  }
+
+  private getMissingWatchlistItemsForUser(userId: number): WatchlistItem[] {
+    return this.db.getWatchlistItems(userId).filter((item) => !item.matchedRatingKey);
+  }
+
+  private buildSeerrRequestWork(scope: SeerrRequestSyncScope): Array<{ user: UserRecord; items: WatchlistItem[] }> {
+    if (scope.mode === "all") {
+      const { trackedUsers } = this.getUserScopes();
+      return trackedUsers.map((user) => ({
+        user,
+        items: this.getMissingWatchlistItemsForUser(user.id)
+      })).filter((entry) => entry.items.length > 0);
+    }
+
+    const user = this.db.getUser(scope.userId);
+    if (!user) {
+      throw new Error("User not found.");
+    }
+
+    if (scope.mode === "items") {
+      return scope.items.length > 0 ? [{ user, items: scope.items.filter((item) => !item.matchedRatingKey) }] : [];
+    }
+
+    return [{
+      user,
+      items: this.getMissingWatchlistItemsForUser(user.id)
+    }].filter((entry) => entry.items.length > 0);
+  }
+
+  async runSeerrRequestSync(scope: SeerrRequestSyncScope = { mode: "all", triggeredBy: "manual" }): Promise<void> {
+    const runId = this.db.createSyncRun("seerr", "Seerr request sync started.");
+    const startedAt = Date.now();
+    this.seerrRequestSyncActiveRuns++;
+
+    this.logger.info("Seerr request sync started", {
+      mode: scope.mode,
+      triggeredBy: scope.triggeredBy
+    });
+
+    try {
+      const seerrSettings = this.db.getSeerrSettings();
+      if (!seerrSettings.enabled || !seerrSettings.baseUrl || !seerrSettings.apiKey) {
+        this.db.completeSyncRun(runId, "success", "Seerr request sync skipped: Seerr is not configured.", null);
+        this.db.saveJobRunState("seerr-request-sync", {
+          lastRunAt: new Date().toISOString(),
+          lastRunStatus: "success"
+        });
+        this.logger.info("Seerr request sync skipped — Seerr is not configured", {
+          mode: scope.mode,
+          triggeredBy: scope.triggeredBy
+        });
+        return;
+      }
+
+      const work = this.buildSeerrRequestWork(scope);
+      const requireAutoRequest = scope.mode !== "all";
+      const itemCount = work.reduce((sum, entry) => sum + entry.items.length, 0);
+      let processedUsers = 0;
+
+      this.logger.info("Seerr request sync work prepared", {
+        mode: scope.mode,
+        triggeredBy: scope.triggeredBy,
+        userCount: work.length,
+        itemCount,
+        requireAutoRequest
+      });
+
+      for (const entry of work) {
+        await this.processSeerrRequestsForUser(entry.user, entry.items, runId, { requireAutoRequest });
+        processedUsers++;
+        this.updateRunProgressSummary(runId, "seerr", processedUsers, work.length);
+      }
+
+      const summary = itemCount > 0
+        ? `Seerr request sync finished for ${work.length} user(s) and ${itemCount} missing item(s).`
+        : "Seerr request sync: 0 missing items.";
+      this.db.completeSyncRun(runId, "success", summary, null);
+      this.db.saveJobRunState("seerr-request-sync", {
+        lastRunAt: new Date().toISOString(),
+        lastRunStatus: "success"
+      });
+      this.logger.info("Seerr request sync complete", {
+        mode: scope.mode,
+        triggeredBy: scope.triggeredBy,
+        userCount: work.length,
+        itemCount,
+        durationMs: Date.now() - startedAt
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.db.completeSyncRun(runId, "error", "Seerr request sync failed.", message);
+      this.db.saveJobRunState("seerr-request-sync", {
+        lastRunAt: new Date().toISOString(),
+        lastRunStatus: "error"
+      });
+      this.logger.error("Seerr request sync failed", {
+        mode: scope.mode,
+        triggeredBy: scope.triggeredBy,
+        message
+      });
+      throw err;
+    } finally {
+      this.seerrRequestSyncActiveRuns = Math.max(0, this.seerrRequestSyncActiveRuns - 1);
+    }
+  }
+
+  /**
+   * Build a fresh SeerrIntegration from explicit credentials (used for
+   * settings test and initial service-account setup before the settings
+   * are saved).
+   */
+  buildSeerrIntegration(baseUrl: string, apiKey: string): SeerrIntegration {
+    return new SeerrIntegration({ baseUrl, apiKey }, this.logger);
+  }
+
+  /**
+   * Run auto-matching for all Hubarr users against the given Seerr user list.
+   * Updates auto_matched_seerr_user_id and recomputes effective IDs.
+   * Manual overrides are always preserved.
+   */
+  async syncSeerrUserMappings(seerrUsers: SeerrUser[]): Promise<void> {
+    const seerr = new SeerrIntegration(
+      { baseUrl: "", apiKey: "" },  // only autoMatchUser is needed, no HTTP calls
+      this.logger
+    );
+    const users = this.db.listUsers();
+
+    for (const user of users) {
+      const match = seerr.autoMatchUser(seerrUsers, user.username);
+      const existing = this.db.getSeerrUserLink(user.id);
+
+      // Only update auto-match; never overwrite a manual override
+      this.db.upsertSeerrUserLink({
+        userId: user.id,
+        autoMatchedSeerrUserId: match?.id ?? null,
+        manualSeerrUserId: existing?.manualSeerrUserId ?? null,
+        autoRequestEnabledOverride: existing?.autoRequestEnabledOverride ?? null
+      });
+
+      this.logger.info("Seerr user auto-match updated", {
+        userId: user.id,
+        displayName: user.displayName,
+        autoMatchedSeerrUserId: match?.id ?? null,
+        matchedVia: match ? (match.plexUsername?.toLowerCase() === user.username.toLowerCase() ? "plexUsername" : "username") : null
+      });
+    }
+  }
+
+  /**
+   * Process Seerr requests for a single user's missing watchlist items.
+   */
+  async processSeerrRequestsForUser(
+    friend: UserRecord,
+    missingItems: WatchlistItem[],
+    runId: number,
+    options: SeerrRequestProcessingOptions = { requireAutoRequest: false }
+  ): Promise<void> {
+    const seerrSettings = this.db.getSeerrSettings();
+
+    if (!seerrSettings.enabled || !seerrSettings.baseUrl || !seerrSettings.apiKey) return;
+
+    const link = this.db.getSeerrUserLink(friend.id);
+
+    // No Seerr configuration for this user at all — nothing to do
+    if (!link) return;
+
+    // Per-user Seerr auto-request can follow the global setting until explicitly overridden.
+    const autoRequest = link.autoRequestEnabledOverride ?? seerrSettings.autoRequestEnabled;
+
+    if (options.requireAutoRequest && !autoRequest) {
+      this.logger.debug("Seerr request sync skipped for user — auto-request is disabled", {
+        userId: friend.id,
+        displayName: friend.displayName,
+        globalAutoRequest: seerrSettings.autoRequestEnabled,
+        userOverride: link.autoRequestEnabledOverride,
+        itemCount: missingItems.length
+      });
+      return;
+    }
+
+    if (!link.effectiveSeerrUserId) {
+      // Only record skipped state when auto-request is on — otherwise it's noise
+      if (autoRequest) {
+        for (const item of missingItems) {
+          this.db.upsertSeerrRequestState({
+            userId: friend.id,
+            plexItemId: item.plexItemId,
+            outcome: "skipped_unlinked_user",
+            effectiveSeerrUserId: null,
+            executionSeerrUserId: null
+          });
+          this.db.addSyncRunItem(runId, "seerr.request.skipped", "success", {
+            userId: friend.id,
+            displayName: friend.displayName,
+            plexItemId: item.plexItemId,
+            title: item.title,
+            reason: "unlinked_user"
+          }, friend.id);
+        }
+        this.logger.warn("Seerr requests skipped — user has no Seerr mapping", {
+          userId: friend.id,
+          displayName: friend.displayName,
+          itemCount: missingItems.length
+        });
+      }
+      return;
+    }
+
+    const requesterSeerrUserId = link.effectiveSeerrUserId;
+    const executionSeerrUserId = seerrSettings.useServiceAccount && seerrSettings.serviceAccountSeerrUserId
+      ? seerrSettings.serviceAccountSeerrUserId
+      : requesterSeerrUserId;
+
+    const seerr = new SeerrIntegration(
+      { baseUrl: seerrSettings.baseUrl, apiKey: seerrSettings.apiKey },
+      this.logger
+    );
+
+    for (const item of missingItems) {
+      const tmdbId = extractTmdbId(item.guids ?? []);
+
+      if (!tmdbId) {
+        if (autoRequest) {
+          this.db.upsertSeerrRequestState({
+            userId: friend.id,
+            plexItemId: item.plexItemId,
+            outcome: "skipped_missing_ids",
+            effectiveSeerrUserId: requesterSeerrUserId,
+            executionSeerrUserId
+          });
+          this.db.addSyncRunItem(runId, "seerr.request.skipped", "success", {
+            userId: friend.id,
+            displayName: friend.displayName,
+            plexItemId: item.plexItemId,
+            title: item.title,
+            reason: "missing_tmdb_id",
+            guids: item.guids ?? []
+          }, friend.id);
+          this.logger.warn("Seerr request skipped — no TMDB ID in Plex GUIDs", {
+            userId: friend.id,
+            displayName: friend.displayName,
+            title: item.title,
+            guids: item.guids ?? []
+          });
+        }
+        continue;
+      }
+
+      // Always fetch live Seerr state for linked users with missing items —
+      // this keeps the cached state fresh regardless of whether auto-request is on.
+      const mediaInfo = item.type === "movie"
+        ? await seerr.getMovieStatus(tmdbId)
+        : await seerr.getTvStatus(tmdbId);
+
+      const evaluation = seerr.evaluateMediaInfo(mediaInfo, requesterSeerrUserId);
+
+      if (evaluation) {
+        // Item is already known to Seerr — update cached state and move on
+        this.db.upsertSeerrRequestState({
+          userId: friend.id,
+          plexItemId: item.plexItemId,
+          seerrRequestId: evaluation.seerrRequestId,
+          seerrMediaId: evaluation.seerrMediaId,
+          tmdbId,
+          outcome: evaluation.outcome,
+          effectiveSeerrUserId: requesterSeerrUserId,
+          executionSeerrUserId
+        });
+        this.db.addSyncRunItem(runId, "seerr.request.existing", "success", {
+          userId: friend.id,
+          displayName: friend.displayName,
+          plexItemId: item.plexItemId,
+          title: item.title,
+          type: item.type,
+          tmdbId,
+          outcome: evaluation.outcome,
+          seerrRequestId: evaluation.seerrRequestId,
+          seerrMediaId: evaluation.seerrMediaId
+        }, friend.id);
+        continue;
+      }
+
+      // Item is requestable in Seerr — clear any stale cached state
+      this.db.deleteSeerrRequestState(friend.id, item.plexItemId);
+
+      if (!autoRequest) continue;
+
+      // Auto-request is enabled — create the request
+      try {
+        const response = await seerr.createRequest(tmdbId, item.type, requesterSeerrUserId, executionSeerrUserId);
+
+        this.logger.info("Seerr request created", {
+          tmdbId, mediaType: item.type,
+          seerrRequestId: response.id,
+          requesterSeerrUserId, executionSeerrUserId
+        });
+
+        this.db.upsertSeerrRequestState({
+          userId: friend.id,
+          plexItemId: item.plexItemId,
+          seerrRequestId: response.id,
+          seerrMediaId: response.media?.id ?? null,
+          tmdbId,
+          outcome: "created",
+          effectiveSeerrUserId: requesterSeerrUserId,
+          executionSeerrUserId
+        });
+        this.db.addSyncRunItem(runId, "seerr.request.created", "success", {
+          userId: friend.id,
+          displayName: friend.displayName,
+          plexItemId: item.plexItemId,
+          title: item.title,
+          type: item.type,
+          tmdbId,
+          outcome: "created",
+          seerrRequestId: response.id,
+          seerrMediaId: response.media?.id ?? null
+        }, friend.id);
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        this.logger.error("Seerr request creation failed", { tmdbId, mediaType: item.type, error });
+        this.db.upsertSeerrRequestState({
+          userId: friend.id,
+          plexItemId: item.plexItemId,
+          tmdbId,
+          outcome: "failed",
+          lastError: error,
+          effectiveSeerrUserId: requesterSeerrUserId,
+          executionSeerrUserId
+        });
+        this.db.addSyncRunItem(runId, "seerr.request.failed", "error", {
+          userId: friend.id,
+          displayName: friend.displayName,
+          plexItemId: item.plexItemId,
+          title: item.title,
+          type: item.type,
+          tmdbId,
+          outcome: "failed",
+          error
+        }, friend.id);
+      }
+    }
+  }
+
+  /**
+   * Manually trigger a Seerr request for a single watchlist item for a given user.
+   * Enforces the same eligibility rules as automatic requests.
+   */
+  async triggerManualSeerrRequest(userId: number, plexItemId: string): Promise<{
+    outcome: string;
+    seerrRequestId: number | null;
+    error?: string;
+  }> {
+    const seerrSettings = this.db.getSeerrSettings();
+    if (!seerrSettings.enabled || !seerrSettings.baseUrl || !seerrSettings.apiKey) {
+      throw new Error("Seerr integration is not configured.");
+    }
+
+    const link = this.db.getSeerrUserLink(userId);
+    if (!link?.effectiveSeerrUserId) {
+      throw new Error("This user has no Seerr mapping. Set one in the Users page first.");
+    }
+
+    const items = this.db.getWatchlistItems(userId);
+    const item = items.find((i) => i.plexItemId === plexItemId);
+    if (!item) {
+      throw new Error("Watchlist item not found for this user.");
+    }
+
+    const tmdbId = extractTmdbId(item.guids ?? []);
+    if (!tmdbId) {
+      throw new Error("Cannot determine TMDB ID from this item's Plex metadata. No request submitted.");
+    }
+
+    const requesterSeerrUserId = link.effectiveSeerrUserId;
+    const executionSeerrUserId = seerrSettings.useServiceAccount && seerrSettings.serviceAccountSeerrUserId
+      ? seerrSettings.serviceAccountSeerrUserId
+      : requesterSeerrUserId;
+
+    const seerr = new SeerrIntegration(
+      { baseUrl: seerrSettings.baseUrl, apiKey: seerrSettings.apiKey },
+      this.logger
+    );
+
+    const result = await seerr.checkAndRequest(
+      tmdbId,
+      item.type,
+      requesterSeerrUserId,
+      executionSeerrUserId
+    );
+
+    this.db.upsertSeerrRequestState({
+      userId,
+      plexItemId,
+      seerrRequestId: result.seerrRequestId,
+      seerrMediaId: result.seerrMediaId,
+      tmdbId,
+      outcome: result.outcome,
+      lastError: result.error ?? null,
+      effectiveSeerrUserId: requesterSeerrUserId,
+      executionSeerrUserId
+    });
+
+    this.logger.info("Manual Seerr request processed", {
+      userId,
+      plexItemId,
+      title: item.title,
+      outcome: result.outcome,
+      seerrRequestId: result.seerrRequestId
+    });
+
+    return {
+      outcome: result.outcome,
+      seerrRequestId: result.seerrRequestId,
+      error: result.error
+    };
   }
 
   // ---------------------------------------------------------------------------

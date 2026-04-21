@@ -45,16 +45,15 @@ test.describe("Users page structure", () => {
     await expect(editButton).toBeVisible();
     await editButton.click();
 
-    // The modal should appear
-    const modalHeading = page.getByRole("heading", { name: /^Edit / });
-    await expect(modalHeading).toBeVisible();
+    // The modal should appear — confirm it's open by checking for the Cancel button
     const modal = page.locator("div.fixed.inset-0.z-50");
+    await expect(modal.getByRole("button", { name: "Cancel" })).toBeVisible();
 
-    // Scope the assertion to the modal so the section title does not collide
-    // with the nested field label text.
-    await expect(
-      modal.locator("div").filter({ hasText: /^Collection Ordering$/ }).first()
-    ).toBeVisible();
+    // Navigate to the Collection tab
+    await modal.getByRole("button", { name: "Collection", exact: true }).click();
+
+    // The Sort Order field should now be visible
+    await expect(modal.getByText("Sort Order", { exact: true })).toBeVisible();
 
     // The ordering dropdown should include watchlist date options
     const select = modal.getByRole("combobox").last();

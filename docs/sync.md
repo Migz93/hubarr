@@ -38,6 +38,7 @@ The most important data groups are:
 - sync run item details
 - persisted job last-run state
 - sessions
+- Seerr user links and request state (when Seerr integration is enabled)
 
 ### Key App Settings
 
@@ -54,6 +55,13 @@ The most important data groups are:
 - default movie library
 - default TV library
 - default hub visibility settings
+
+#### Seerr Integration
+
+- `enabled` toggle
+- `baseUrl` and `apiKey`
+- `autoRequestEnabled` (global)
+- `useServiceAccount` toggle and stored service account ID
 
 #### Jobs And Sync Timing
 

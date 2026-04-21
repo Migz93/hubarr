@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Film, Tv, X, Star, Clock, Tag } from "lucide-react";
 import { formatWatchlistDate } from "../lib/utils";
-import { apiGet } from "../lib/api";
+import { apiGet, apiPost } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
-import type { RichItemMetadata, WatchlistUser } from "../../shared/types";
+import type { RichItemMetadata, SeerrRequestState, SeerrSettingsView, UserRecord, WatchlistUser } from "../../shared/types";
 
 interface ModalItem {
   plexItemId: string;
@@ -22,15 +22,87 @@ function formatRuntime(ms: number): string {
   return h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
 }
 
+// Outcomes that mean the item is definitively handled in Seerr — suppress Request buttons for all other users.
+const TERMINAL_POSITIVE = new Set(["created", "already_requested", "already_available"]);
+
+// Priority order for picking the single "best" state that represents the item across all users.
+const OUTCOME_PRIORITY = ["created", "already_requested", "already_available", "failed", "skipped_unlinked_user", "skipped_missing_ids"];
+
+function getBestSeerrState(states: SeerrRequestState[]): SeerrRequestState | null {
+  for (const outcome of OUTCOME_PRIORITY) {
+    const found = states.find(s => s.outcome === outcome);
+    if (found) return found;
+  }
+  return null;
+}
+
+function buildSeerrUrl(baseUrl: string, type: "movie" | "show", tmdbId: number): string {
+  return `${baseUrl.replace(/\/$/, "")}/${type === "movie" ? "movie" : "tv"}/${tmdbId}`;
+}
+
+function SeerrIcon({ className = "w-3 h-3" }: { className?: string }) {
+  return <img src="/seerr-icon.svg" alt="" aria-hidden="true" className={className} />;
+}
+
+interface SeerrBadgeProps {
+  outcome: string;
+  url?: string | null;
+  isRequesting?: boolean;
+  onAction?: () => void;
+}
+
+function SeerrBadge({ outcome, url, isRequesting, onAction }: SeerrBadgeProps) {
+  const base = "inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap";
+
+  if (outcome === "created" || outcome === "already_requested" || outcome === "already_available") {
+    if (url) {
+      return (
+        <a href={url} target="_blank" rel="noopener noreferrer" title="View in Seerr" className={`${base} bg-success/10 text-success hover:bg-success/20`}>
+          <SeerrIcon />
+          Requested
+        </a>
+      );
+    }
+    return <span className={`${base} bg-success/10 text-success`}><SeerrIcon />Requested</span>;
+  }
+
+  if (outcome === "failed") {
+    return (
+      <button onClick={onAction} disabled={isRequesting} className={`${base} bg-error/10 text-error hover:bg-error/20 disabled:opacity-40`}>
+        <SeerrIcon />
+        {isRequesting ? "Retrying…" : "Retry"}
+      </button>
+    );
+  }
+
+  if (outcome === "__request__") {
+    return (
+      <button onClick={onAction} disabled={isRequesting} className={`${base} bg-error/10 text-error hover:bg-error/20 disabled:opacity-40`}>
+        <SeerrIcon />
+        {isRequesting ? "Requesting…" : "Request"}
+      </button>
+    );
+  }
+
+  return null;
+}
+
 export function WatchlistItemModal({
   item,
-  onClose
+  onClose,
+  seerrSettings
 }: {
   item: ModalItem;
   onClose: () => void;
+  seerrSettings?: SeerrSettingsView | null;
 }) {
   const [rich, setRich] = useState<RichItemMetadata | null>(null);
   const [enrichLoading, setEnrichLoading] = useState(true);
+  const [seerrStates, setSeerrStates] = useState<SeerrRequestState[]>([]);
+  const [seerrStateLoaded, setSeerrStateLoaded] = useState(false);
+  const [allUsers, setAllUsers] = useState<UserRecord[]>([]);
+  const [requestingFor, setRequestingFor] = useState<number | null>(null);
+  const [requestError, setRequestError] = useState<string | null>(null);
 
   useEffect(() => {
     setEnrichLoading(true);
@@ -40,7 +112,84 @@ export function WatchlistItemModal({
       .finally(() => setEnrichLoading(false));
   }, [item.plexItemId]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    setSeerrStates([]);
+    setSeerrStateLoaded(false);
+    setRequestError(null);
+
+    if (!seerrSettings?.enabled || item.plexAvailable) {
+      setSeerrStateLoaded(true);
+      return;
+    }
+
+    apiGet<SeerrRequestState[]>(`/api/watchlists/seerr-state?plexItemId=${encodeURIComponent(item.plexItemId)}`)
+      .then((states) => {
+        if (!cancelled) {
+          setSeerrStates(states);
+          setSeerrStateLoaded(true);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load Seerr request state", err);
+        if (!cancelled) {
+          setRequestError("Unable to load Seerr request state.");
+        }
+      });
+    // Fetch all users so we can identify non-watchlist requesters
+    apiGet<UserRecord[]>("/api/users")
+      .then((users) => {
+        if (!cancelled) {
+          setAllUsers(users);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load users for Seerr request state", err);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [item.plexItemId, seerrSettings?.enabled, item.plexAvailable]);
+
+  async function requestForUser(userId: number) {
+    setRequestingFor(userId);
+    setRequestError(null);
+    try {
+      await apiPost("/api/watchlists/request", { userId, plexItemId: item.plexItemId });
+      const updated = await apiGet<SeerrRequestState[]>(`/api/watchlists/seerr-state?plexItemId=${encodeURIComponent(item.plexItemId)}`);
+      setSeerrStates(updated);
+    } catch (err) {
+      setRequestError(err instanceof Error ? err.message : "Request failed.");
+    } finally {
+      setRequestingFor(null);
+    }
+  }
+
   const posterSrc = getPlexImageSrc(item.posterUrl);
+
+  // --- Seerr dedup logic ---
+  const canRequest = Boolean(seerrSettings?.enabled && !item.plexAvailable);
+  const seerrActionsReady = canRequest && seerrStateLoaded;
+  const bestState = seerrActionsReady ? getBestSeerrState(seerrStates) : null;
+  const hasGlobalTerminal = bestState !== null && TERMINAL_POSITIVE.has(bestState.outcome ?? "");
+
+  // URL to open the item in Seerr (only valid when we have a terminal positive state + tmdbId)
+  const itemSeerrUrl =
+    hasGlobalTerminal && seerrSettings?.baseUrl && bestState?.tmdbId
+      ? buildSeerrUrl(seerrSettings.baseUrl, item.type, bestState.tmdbId)
+      : null;
+
+  // Item is in Seerr/Radarr but was never requested by any specific user — show Unknown ghost row.
+  const isUnknownRequester = canRequest && hasGlobalTerminal && bestState !== null && bestState.seerrRequestId === null;
+
+  // If the "best" state belongs to a user not on this item's watchlist, find their info for a ghost row
+  const bestStateIsWatchlistUser = item.users.some(u => u.userId === bestState?.userId);
+  const externalRequester =
+    canRequest && hasGlobalTerminal && !isUnknownRequester && !bestStateIsWatchlistUser && bestState
+      ? (allUsers.find(u => u.id === bestState.userId) ?? null)
+      : null;
 
   return (
     <div
@@ -174,26 +323,98 @@ export function WatchlistItemModal({
               <div className="text-xs text-on-surface-variant mb-2">
                 On watchlist of {item.users.length} user{item.users.length !== 1 ? "s" : ""}
               </div>
-              <div className="space-y-2">
-                {item.users.map((user) => (
-                  <div key={user.userId} className="flex items-center gap-2.5">
-                    {getPlexImageSrc(user.avatarUrl) ? (
+              {requestError && (
+                <div className="mb-2 px-3 py-2 rounded-lg bg-error/10 text-error text-xs">
+                  {requestError}
+                </div>
+              )}
+              <div className="space-y-2.5">
+                {item.users.map((user) => {
+                  const userState = seerrStates.find(s => s.userId === user.userId);
+                  const isTheBestOwner = user.userId === bestState?.userId;
+                  const isRequesting = requestingFor === user.userId;
+
+                  // Determine which badge (if any) this user row shows
+                  let badgeOutcome: string | null = null;
+                  if (seerrActionsReady) {
+                    if (!isUnknownRequester && isTheBestOwner && bestState?.outcome) {
+                      // This user owns the canonical item state (and a specific person requested it)
+                      badgeOutcome = bestState.outcome;
+                    } else if (!hasGlobalTerminal) {
+                      // No globally-terminal state — show per-user actionable badges
+                      if (userState?.outcome === "failed") {
+                        badgeOutcome = "failed";
+                      } else if (!userState || userState.outcome === null) {
+                        badgeOutcome = "__request__";
+                      }
+                      // skipped_* → no badge (nothing the user can do)
+                    }
+                  }
+
+                  // Only the owner of a terminal-positive state gets the Seerr link
+                  const badgeUrl = isTheBestOwner && hasGlobalTerminal ? itemSeerrUrl : null;
+
+                  return (
+                    <div key={user.userId} className="flex items-center gap-2.5">
+                      {getPlexImageSrc(user.avatarUrl) ? (
+                        <img
+                          src={getPlexImageSrc(user.avatarUrl)!}
+                          alt={user.displayName}
+                          className="w-6 h-6 rounded-full object-cover flex-shrink-0"
+                        />
+                      ) : (
+                        <div className="w-6 h-6 rounded-full bg-surface-container-highest flex items-center justify-center flex-shrink-0">
+                          <span className="text-on-surface-variant text-xs">
+                            {user.displayName.charAt(0).toUpperCase()}
+                          </span>
+                        </div>
+                      )}
+                      <span className="text-on-surface text-sm flex-1 min-w-0 truncate">{user.displayName}</span>
+                      {badgeOutcome && (
+                        <SeerrBadge
+                          outcome={badgeOutcome}
+                          url={badgeUrl}
+                          isRequesting={isRequesting}
+                          onAction={() => void requestForUser(user.userId)}
+                        />
+                      )}
+                      <span className="text-on-surface-variant text-xs flex-shrink-0">{formatWatchlistDate(user.addedAt)}</span>
+                    </div>
+                  );
+                })}
+
+                {/* Ghost row: the terminal state belongs to someone not on this item's watchlist */}
+                {externalRequester && (
+                  <div className="flex items-center gap-2.5 border-t border-outline-variant/10 pt-2 mt-0.5">
+                    {getPlexImageSrc(externalRequester.avatarUrl) ? (
                       <img
-                        src={getPlexImageSrc(user.avatarUrl)!}
-                        alt={user.displayName}
-                        className="w-6 h-6 rounded-full object-cover flex-shrink-0"
+                        src={getPlexImageSrc(externalRequester.avatarUrl)!}
+                        alt={externalRequester.displayName}
+                        className="w-6 h-6 rounded-full object-cover flex-shrink-0 opacity-70"
                       />
                     ) : (
-                      <div className="w-6 h-6 rounded-full bg-surface-container-highest flex items-center justify-center flex-shrink-0">
+                      <div className="w-6 h-6 rounded-full bg-surface-container-highest flex items-center justify-center flex-shrink-0 opacity-70">
                         <span className="text-on-surface-variant text-xs">
-                          {user.displayName.charAt(0).toUpperCase()}
+                          {externalRequester.displayName.charAt(0).toUpperCase()}
                         </span>
                       </div>
                     )}
-                    <span className="text-on-surface text-sm flex-1">{user.displayName}</span>
-                    <span className="text-on-surface-variant text-xs">{formatWatchlistDate(user.addedAt)}</span>
+                    <span className="text-on-surface-variant text-sm flex-1 min-w-0 truncate">{externalRequester.displayName}</span>
+                    <SeerrBadge outcome={bestState!.outcome!} url={itemSeerrUrl} />
+                    <span className="text-on-surface-variant text-xs flex-shrink-0 italic">not on watchlist</span>
                   </div>
-                ))}
+                )}
+
+                {/* Ghost row: item is in Seerr/Radarr but was not requested by any specific user */}
+                {isUnknownRequester && (
+                  <div className="flex items-center gap-2.5 border-t border-outline-variant/10 pt-2 mt-0.5">
+                    <div className="w-6 h-6 rounded-full bg-surface-container-highest flex items-center justify-center flex-shrink-0 opacity-70">
+                      <span className="text-on-surface-variant text-xs">?</span>
+                    </div>
+                    <span className="text-on-surface-variant text-sm flex-1 min-w-0 truncate italic">Unknown</span>
+                    <SeerrBadge outcome={bestState!.outcome!} url={itemSeerrUrl} />
+                  </div>
+                )}
               </div>
             </div>
           </div>
