@@ -178,8 +178,8 @@ export class SeerrIntegration {
 
   async validate(): Promise<{ version: string; userCount: number }> {
     const status = await this.get<{ version: string }>("/status");
-    const users = await this.getUsers(1, 0);
-    return { version: status.version ?? "unknown", userCount: users.length };
+    const users = await this.get<SeerrUsersListResponse>("/user?take=1&skip=0");
+    return { version: status.version ?? "unknown", userCount: users.pageInfo?.count ?? users.results?.length ?? 0 };
   }
 
   // ---------------------------------------------------------------------------
@@ -299,12 +299,6 @@ export class SeerrIntegration {
       if (typeof value === "number") {
         notificationTypes[agent] = disableRequestEvents(value);
       }
-    }
-    if (typeof notificationTypes.email === "number") {
-      notificationTypes.email = disableRequestEvents(notificationTypes.email);
-    }
-    if (typeof notificationTypes.webpush === "number") {
-      notificationTypes.webpush = disableRequestEvents(notificationTypes.webpush);
     }
 
     await this.post<SeerrUserNotificationSettings>(`/user/${userId}/settings/notifications`, {
