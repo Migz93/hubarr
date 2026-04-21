@@ -19,7 +19,7 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<RecentlyAddedItem | null>(null);
   const { settings } = useSettings();
-  const seerrEnabled = Boolean(settings?.seerr.enabled);
+  const seerrEnabled = Boolean(settings?.seerr?.enabled);
 
   async function load(background = false) {
     setLoading((current) => current || !background);

@@ -565,6 +565,9 @@ function EditModal({
   const [seerrUsers, setSeerrUsers] = useState<SeerrUser[]>([]);
   const [manualSeerrUserId, setManualSeerrUserId] = useState<number | null>(null);
   const [autoRequestEnabledOverride, setAutoRequestEnabledOverride] = useState<boolean | null>(null);
+  // Only PATCH Seerr fields on save when the link preload succeeded — prevents wiping existing
+  // server-side mappings with local defaults if the fetch fails.
+  const [seerrLinkLoaded, setSeerrLinkLoaded] = useState(false);
   const seerrEnabled = settings.seerr.enabled;
 
   useEffect(() => {
@@ -574,11 +577,16 @@ function EditModal({
         setSeerrLink(link);
         setManualSeerrUserId(link.manualSeerrUserId);
         setAutoRequestEnabledOverride(link.autoRequestEnabledOverride);
+        setSeerrLinkLoaded(true);
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.error("Failed to load Seerr user link", { error: err, userId: user.id });
+      });
     apiGet<SeerrUser[]>("/api/settings/seerr/users")
       .then(setSeerrUsers)
-      .catch(() => {});
+      .catch((err) => {
+        console.error("Failed to load Seerr users list", { error: err });
+      });
   }, [user.id, seerrEnabled]);
 
   useEffect(() => {
@@ -612,7 +620,7 @@ function EditModal({
         collectionSortOrderOverride
       });
 
-      if (seerrEnabled) {
+      if (seerrEnabled && seerrLinkLoaded) {
         await apiPatch<SeerrUserLink>(`/api/users/${user.id}/seerr`, {
           manualSeerrUserId,
           autoRequestEnabledOverride

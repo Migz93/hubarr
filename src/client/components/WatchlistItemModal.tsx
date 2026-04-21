@@ -135,6 +135,8 @@ export function WatchlistItemModal({
         console.error("Failed to load Seerr request state", err);
         if (!cancelled) {
           setRequestError("Unable to load Seerr request state.");
+          setSeerrStates([]);
+          setSeerrStateLoaded(true);
         }
       });
     // Fetch all users so we can identify non-watchlist requesters
@@ -158,13 +160,19 @@ export function WatchlistItemModal({
     setRequestError(null);
     try {
       await apiPost("/api/watchlists/request", { userId, plexItemId: item.plexItemId });
+    } catch (err) {
+      setRequestError(err instanceof Error ? err.message : "Request failed.");
+      setRequestingFor(null);
+      return;
+    }
+    // Best-effort refresh — if this fails the request already succeeded, so don't surface an error.
+    try {
       const updated = await apiGet<SeerrRequestState[]>(`/api/watchlists/seerr-state?plexItemId=${encodeURIComponent(item.plexItemId)}`);
       setSeerrStates(updated);
     } catch (err) {
-      setRequestError(err instanceof Error ? err.message : "Request failed.");
-    } finally {
-      setRequestingFor(null);
+      console.error("Failed to refresh Seerr state after request", err);
     }
+    setRequestingFor(null);
   }
 
   const posterSrc = getPlexImageSrc(item.posterUrl);

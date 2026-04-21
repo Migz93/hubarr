@@ -319,6 +319,6 @@ naturally trend towards zero for most users.
 | `src/server/rss-cache.ts` | In-memory RSS diff cache — author-keyed deduplication, `prime()`, `diff()` |
 | `src/server/index.ts` | Job registrations for all three sync mechanisms |
 | `src/client/lib/utils.ts` | `formatWatchlistDate()`, `formatWatchlistDateShort()` — sentinel-aware display helpers |
-| `src/server/services.ts` → `processSeerrRequestsForUser()` | Called at the end of each `syncUser()` run; checks Seerr state for missing items and creates requests when auto-request is enabled. See [docs/seerr.md](seerr.md). |
+| `src/server/services.ts` → `processSeerrRequestsForUser()` | Called by `runSeerrRequestSync()` during the Seerr request-sync job; checks Seerr state for missing items and creates requests when auto-request is enabled. See [docs/seerr.md](seerr.md). |
 
 ---

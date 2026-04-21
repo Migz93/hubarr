@@ -155,7 +155,8 @@ export default function CollectionsConfigForm({
         <div className="pt-2 border-t border-outline-variant/10">
           <div className="text-sm font-medium text-on-surface mb-1">Default Hub Visibility</div>
           <div className="text-xs text-on-surface-variant mb-3">Select which Plex locations this collection appears in. Multiple allowed.</div>
-          <div className="grid grid-cols-3 w-fit gap-2">
+          {/* Computed-key toggle: each button flips its own boolean in visibilityDefaults */}
+          <div className="grid grid-cols-3 w-fit gap-2" role="group" aria-label="Default Hub Visibility options">
             {(
               [
                 { key: "recommended" as const, label: "Library Recommended" },
@@ -166,6 +167,7 @@ export default function CollectionsConfigForm({
               <button
                 key={key}
                 type="button"
+                aria-pressed={!!form.visibilityDefaults[key]}
                 onClick={() =>
                   setForm((current) => ({
                     ...current,

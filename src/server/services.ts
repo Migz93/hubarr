@@ -1318,22 +1318,8 @@ export class HubarrServices {
       });
     }
 
-    await this.runSeerrRequestSync({ mode: "all", triggeredBy: "full" }).then(() => {
-      this.db.addSyncRunItem(runId, "seerr.request.followup", "success", {
-        sourceRunKind: "full",
-        message: "Triggered Seerr request sync after full sync."
-      });
-    }).catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.warn("Seerr request sync after full sync failed", { message });
-      this.db.addSyncRunItem(runId, "seerr.request.followup", "error", {
-        sourceRunKind: "full",
-        message
-      });
-    });
-
-    // Publish collections immediately so the updated watchlist is live in Plex
-    // without waiting for the next scheduled collection-publish job.
+    // Publish pass runs first so stale matchedRatingKey values are cleared before
+    // Seerr sync evaluates which items are genuinely missing from Plex.
     await this.runPublishPass().then(() => {
       this.db.addSyncRunItem(runId, "collection.publish.followup", "success", {
         sourceRunKind: "full",
@@ -1345,6 +1331,20 @@ export class HubarrServices {
         message
       });
       this.db.addSyncRunItem(runId, "collection.publish.followup", "error", {
+        sourceRunKind: "full",
+        message
+      });
+    });
+
+    await this.runSeerrRequestSync({ mode: "all", triggeredBy: "full" }).then(() => {
+      this.db.addSyncRunItem(runId, "seerr.request.followup", "success", {
+        sourceRunKind: "full",
+        message: "Triggered Seerr request sync after full sync."
+      });
+    }).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn("Seerr request sync after full sync failed", { message });
+      this.db.addSyncRunItem(runId, "seerr.request.followup", "error", {
         sourceRunKind: "full",
         message
       });
@@ -1395,6 +1395,15 @@ export class HubarrServices {
       const items = await this.syncUser(friend, runId, rssDateMap);
       this.db.completeSyncRun(runId, "success", `Manual sync finished for ${label}.`, null);
 
+      // Publish pass runs first so stale matchedRatingKey values are cleared before
+      // Seerr sync evaluates which items are genuinely missing from Plex.
+      await this.runPublishPass().catch((err) => {
+        this.logger.warn("Collection publish after user sync failed", {
+          userId: friend.id,
+          message: err instanceof Error ? err.message : String(err)
+        });
+      });
+
       await this.runSeerrRequestSync({ mode: "user", userId: friend.id, triggeredBy: "user" }).catch((err) => {
         const message = err instanceof Error ? err.message : String(err);
         this.logger.warn("Seerr request sync after user sync failed", {
@@ -1407,14 +1416,6 @@ export class HubarrServices {
           userId: friend.id,
           message
         }, friend.id);
-      });
-
-      // Publish collections immediately so the result is live in Plex.
-      await this.runPublishPass().catch((err) => {
-        this.logger.warn("Collection publish after user sync failed", {
-          userId: friend.id,
-          message: err instanceof Error ? err.message : String(err)
-        });
       });
 
       return { run: this.db.listSyncRuns(20).find((run) => run.id === runId) ?? this.db.listSyncRuns(1)[0], items };
@@ -2552,6 +2553,10 @@ export class HubarrServices {
     const item = items.find((i) => i.plexItemId === plexItemId);
     if (!item) {
       throw new Error("Watchlist item not found for this user.");
+    }
+
+    if (item.matchedRatingKey) {
+      throw new Error("This item is already available in Plex. No request submitted.");
     }
 
     const tmdbId = extractTmdbId(item.guids ?? []);

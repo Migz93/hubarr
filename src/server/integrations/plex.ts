@@ -1102,7 +1102,7 @@ export class PlexIntegration {
     // is present. This prevents a failed search from being mistaken for a
     // genuine absence and clearing a valid stored match.
     if (!response.MediaContainer?.Metadata?.length) {
-      const dashNormalised = searchTitle.replace(/[\u2013\u2014\u2012\u2015]/g, "-");
+      const dashNormalised = searchTitle.replace(/[\u2010\u2011\u2012\u2013\u2014\u2015]/g, "-");
       if (dashNormalised !== searchTitle) {
         const dashParams = new URLSearchParams({
           type: String(typeParam),

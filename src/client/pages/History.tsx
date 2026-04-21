@@ -116,7 +116,7 @@ export default function History() {
       <div className="flex flex-wrap gap-2 mb-4 items-center">
         {/* Kind filter */}
         <div className="flex rounded-lg overflow-hidden border border-outline-variant/30">
-          {(["all", "full", "rss", "user", "publish", "seerr"] as KindFilter[]).map((k) => (
+          {VALID_KINDS.map((k) => (
             <button
               key={k}
               onClick={() => setParam("type", k, true)}

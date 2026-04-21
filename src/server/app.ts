@@ -1312,9 +1312,32 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   app.patch("/api/users/:id/seerr", requireAuth, (req, res) => {
     const userId = Number(req.params.id);
     const body = req.body as {
-      manualSeerrUserId?: number | null;
-      autoRequestEnabledOverride?: boolean | null;
+      manualSeerrUserId?: unknown;
+      autoRequestEnabledOverride?: unknown;
     };
+
+    // Validate autoRequestEnabledOverride — must be boolean or null, not a string/number coercible value
+    if ("autoRequestEnabledOverride" in body) {
+      const v = body.autoRequestEnabledOverride;
+      if (v !== null && v !== true && v !== false) {
+        res.status(400).json({ error: "autoRequestEnabledOverride must be true, false, or null." });
+        return;
+      }
+    }
+
+    // Normalise manualSeerrUserId — the client sends -1 as a sentinel for "no user selected";
+    // any non-positive number is treated as null.
+    let manualSeerrUserId: number | null | undefined = undefined;
+    if ("manualSeerrUserId" in body) {
+      const v = body.manualSeerrUserId;
+      if (v === null || v === undefined) {
+        manualSeerrUserId = null;
+      } else if (typeof v === "number" && v > 0) {
+        manualSeerrUserId = v;
+      } else {
+        manualSeerrUserId = null;
+      }
+    }
 
     // Verify user exists
     const user = db.getUser(userId);
@@ -1325,10 +1348,9 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
     const updated = db.upsertSeerrUserLink({
       userId,
-      ...(("manualSeerrUserId" in body) && { manualSeerrUserId: body.manualSeerrUserId ?? null }),
-      ...(("autoRequestEnabledOverride" in body) && {
-        autoRequestEnabledOverride:
-          body.autoRequestEnabledOverride === null ? null : Boolean(body.autoRequestEnabledOverride)
+      ...("manualSeerrUserId" in body && { manualSeerrUserId: manualSeerrUserId ?? null }),
+      ...("autoRequestEnabledOverride" in body && {
+        autoRequestEnabledOverride: (body.autoRequestEnabledOverride as boolean | null) ?? null
       })
     });
     if (updated.effectiveSeerrUserId !== null) {

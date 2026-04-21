@@ -63,7 +63,7 @@ export default function Watchlists() {
   const [selectedItem, setSelectedItem] = useState<WatchlistGroupedItem | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { settings } = useSettings();
-  const seerrEnabled = Boolean(settings?.seerr.enabled);
+  const seerrEnabled = Boolean(settings?.seerr?.enabled);
 
   async function load(background = false) {
     setLoading((current) => current || !background);

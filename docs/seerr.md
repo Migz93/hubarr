@@ -124,7 +124,7 @@ Seerr job after the watchlist/RSS source has persisted the missing items. Seerr
 job failures are recorded on the Seerr run and do not fail the parent RSS,
 GraphQL, or user sync.
 
-```
+```text
 for each missing item:
   ├── skip if user has no seerr_user_links row at all
   ├── if no effectiveSeerrUserId AND autoRequest enabled → record skipped_unlinked_user
@@ -226,6 +226,7 @@ audit log.
 | User type | `3` (LOCAL) |
 | Avatar | `https://raw.githubusercontent.com/Migz93/hubarr/refs/heads/main/public/logo.png` |
 | Permissions bitmask | `202_137_656` |
+| Disabled notification types | Request Pending Approval, Request Automatically Approved, Request Processing Failed, Request Available |
 
 The permissions bitmask includes:
 `MANAGE_USERS | MANAGE_REQUESTS | REQUEST | REQUEST_ADVANCED | REQUEST_VIEW | REQUEST_MOVIE | REQUEST_TV | RECENT_VIEW | WATCHLIST_VIEW`
@@ -234,8 +235,11 @@ The permissions bitmask includes:
 
 1. **Enable service account** — `createOrReconcileServiceAccount()` finds or
    creates the account, then always calls `PUT /user/{id}` to enforce the
-   correct permissions. This means re-saving settings acts as a manual
-   permission repair trigger if the account's permissions were changed in Seerr.
+   correct permissions. It then calls
+   `POST /user/{id}/settings/notifications` to untick the request lifecycle
+   notifications that would otherwise fire for Hubarr's automated request flow.
+   This means re-saving settings acts as a manual repair trigger if the
+   account's permissions or notification preferences were changed in Seerr.
 2. **Disable service account** — `deleteServiceAccount()` deletes the account
    from Seerr and clears `serviceAccountSeerrUserId` from Hubarr settings.
 
@@ -270,7 +274,7 @@ The watchlist item modal shows Seerr badges on user rows and, when needed,
 additional ghost rows. The "best" state across all users is selected using this
 priority:
 
-```
+```text
 created > already_requested > already_available > failed > skipped_*
 ```
 

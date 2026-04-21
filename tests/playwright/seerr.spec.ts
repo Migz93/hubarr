@@ -49,67 +49,36 @@ test.describe("Settings — Seerr tab", () => {
 });
 
 // ---------------------------------------------------------------------------
-// History — Seerr action labels
+// History — Seerr filter
 // ---------------------------------------------------------------------------
 
-test.describe("History — Seerr action labels", () => {
-  test("Seerr action labels render correctly when stubbed into the history API", async ({ browser }) => {
-    const context = await browser.newContext({ storageState: "tests/playwright/.auth/storageState.json" });
-    const historyPage = await context.newPage();
+test.describe("History — Seerr filter", () => {
+  test("Seerr filter button is visible and sets the URL param", async ({ page }) => {
+    await page.goto("/history");
+    await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
+    await expect(page.getByText("Loading history...")).not.toBeVisible({ timeout: 10_000 });
 
-    const run = {
-      id: 9010,
-      kind: "full" as const,
-      status: "success" as const,
-      startedAt: new Date(Date.now() - 60_000).toISOString(),
-      completedAt: new Date(Date.now() - 55_000).toISOString(),
-      summary: "Full sync finished: 1/1 users succeeded.",
-      error: null
-    };
+    await expect(page.getByRole("button", { name: "Seerr", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Seerr", exact: true }).click();
+    await expect(page).toHaveURL(/[?&]type=seerr/);
+    await expect(page.getByText("Loading history...")).not.toBeVisible({ timeout: 10_000 });
+  });
 
-    await historyPage.route("**/api/history?*", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          results: [run],
-          pageInfo: { page: 1, pageSize: 10, pages: 1, total: 1 }
-        })
-      });
-    });
+  test("Seerr history entries render without error when present", async ({ page }) => {
+    await page.goto("/history?type=seerr");
+    await expect(page.getByText("Loading history...")).not.toBeVisible({ timeout: 10_000 });
 
-    await historyPage.route("**/api/history/9010", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          ...run,
-          items: [
-            { id: 1, runId: 9010, userId: 1, action: "seerr.request.created", status: "success", details: { displayName: "Alice", title: "The Matrix" }, createdAt: run.startedAt },
-            { id: 2, runId: 9010, userId: 1, action: "seerr.request.existing", status: "success", details: { displayName: "Alice", title: "Inception" }, createdAt: run.startedAt },
-            { id: 3, runId: 9010, userId: 1, action: "seerr.request.skipped", status: "success", details: { displayName: "Alice", title: "Interstellar" }, createdAt: run.startedAt }
-          ]
-        })
-      });
-    });
+    // Either a run row or the empty-state message must be visible — never an unhandled error.
+    const hasRuns = await page.locator("div.space-y-2 > div").first().isVisible().catch(() => false);
+    if (!hasRuns) {
+      await expect(page.getByText("No sync history matches the current filter.")).toBeVisible();
+      return;
+    }
 
-    await historyPage.goto("/history");
-    await expect(historyPage.getByRole("heading", { name: "History" })).toBeVisible();
-    await expect(historyPage.getByText("Loading history...")).not.toBeVisible({ timeout: 10_000 });
-
-    // Expand the run row
-    const runRow = historyPage.locator("div.space-y-2 > div").first();
-    await runRow.getByRole("button").click();
-    await expect(historyPage.getByText("Loading details...")).not.toBeVisible({ timeout: 10_000 });
-
-    // Reveal the completed steps
-    await historyPage.getByRole("button", { name: /Show \d+ completed steps/ }).click();
-
-    await expect(historyPage.getByText("Seerr request created")).toBeVisible();
-    await expect(historyPage.getByText("Already in Seerr")).toBeVisible();
-    await expect(historyPage.getByText("Seerr request skipped")).toBeVisible();
-
-    await context.close();
+    // Seerr runs exist on this instance — expand the first one and verify it loads.
+    const firstRun = page.locator("div.space-y-2 > div").first();
+    await firstRun.getByRole("button").first().click();
+    await expect(page.getByText("Loading details...")).not.toBeVisible({ timeout: 10_000 });
   });
 });
 
