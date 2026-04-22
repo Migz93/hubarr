@@ -312,12 +312,12 @@ function WatchlistPoster({
         )}
         {/* Gradient overlay — fades in on hover */}
         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
-          style={{ background: "linear-gradient(180deg, rgba(45,55,72,0.2) 0%, rgba(45,55,72,0.95) 100%)" }} />
+          style={{ background: "linear-gradient(180deg, var(--overlay-poster-transparent) 0%, var(--overlay-poster) 100%)" }} />
         {/* Availability icon — always visible, top-right */}
         <div className="absolute top-1.5 right-1.5">
           {item.plexAvailable ? (
             <div className="relative">
-              <div className="absolute inset-[3px] rounded-full bg-[#0a3d1f]" />
+              <div className="absolute inset-[3px] rounded-full bg-success/20" />
               <CheckCircle size={18} className="relative text-success drop-shadow-[0_0_4px_rgba(0,0,0,1)]" />
             </div>
           ) : seerrEnabled && item.seerrRequested ? (
@@ -326,7 +326,7 @@ function WatchlistPoster({
             </div>
           ) : (
             <div className="relative">
-              <div className="absolute inset-[3px] rounded-full bg-[#3d0a0a]" />
+              <div className="absolute inset-[3px] rounded-full bg-error/20" />
               <XCircle size={18} className="relative text-error drop-shadow-[0_0_4px_rgba(0,0,0,1)]" />
             </div>
           )}

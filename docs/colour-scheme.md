@@ -1,6 +1,6 @@
 # Colour Scheme
 
-Hubarr uses a fixed dark-mode palette of 14 colours defined as CSS custom properties in `src/client/index.css` under the Tailwind v4 `@theme` block. All colour usage in components should reference these variables via Tailwind utility classes (`bg-*`, `text-*`, `border-*`) — no raw hex values in component code.
+Hubarr uses a fixed dark-mode palette of 14 colours defined as CSS custom properties in `src/client/index.css` under the Tailwind v4 `@theme` block. Components should reference these variables via Tailwind utility classes (`bg-*`, `text-*`, `border-*`) for normal colour usage. The one exception is overlays and gradients — these may use the shared CSS custom properties defined in `:root` in `src/client/index.css` (e.g. `var(--overlay-glass)`) where a raw opacity value is required and a Tailwind utility class is not practical. Raw hex values in component code are not permitted.
 
 ## The Palette
 
