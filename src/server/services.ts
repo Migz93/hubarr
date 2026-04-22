@@ -1159,7 +1159,7 @@ export class HubarrServices {
         collectionName,
         matchedItems: matchedRatingKeys.length
       });
-      const collectionRatingKey = await plex.ensureCollection(collectionName, mediaType, libraryId);
+      const collectionRatingKey = await plex.ensureCollection(collectionName, friend.username, mediaType, libraryId);
       this.logger.info("Collection resolved", {
         userId: friend.id,
         mediaType,
@@ -1218,7 +1218,7 @@ export class HubarrServices {
         matchedItems: cleanedKeys.length
       });
 
-      const labelName = plex.createCollectionLabel(friend.displayName);
+      const labelName = plex.createCollectionLabel(friend.username);
       await plex.applyLabelToCollection(collectionRatingKey, labelName);
       this.logger.info("Collection label applied", {
         userId: friend.id,
