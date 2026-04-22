@@ -1281,11 +1281,43 @@ export class PlexIntegration {
     return { staleKeys };
   }
 
-  async ensureCollection(title: string, mediaType: MediaType, libraryId: string) {
-    const existing = (await this.getCollections(libraryId)).find((collection) => collection.title === title);
-    if (existing) {
-      return existing.ratingKey;
+  async updateCollectionTitle(ratingKey: string, title: string): Promise<void> {
+    const params = new URLSearchParams({
+      type: "18",
+      id: ratingKey,
+      title: title,
+      "title.locked": "1"
+    });
+    await this.requestServer(`/library/metadata/${ratingKey}?${params.toString()}`, { method: "PUT" });
+  }
+
+  async ensureCollection(title: string, username: string, mediaType: MediaType, libraryId: string) {
+    const collections = await this.getCollections(libraryId);
+
+    // Fast path: collection already has the expected title
+    const byTitle = collections.find((c) => c.title === title);
+    if (byTitle) {
+      return byTitle.ratingKey;
     }
+
+    // Label-first: scan all collections for the stable hubarr label for this user.
+    // This finds a collection that exists under an old/different name and renames it
+    // rather than creating a duplicate.
+    const label = this.createCollectionLabel(username);
+    for (const collection of collections) {
+      const labels = await this.getCollectionLabels(collection.ratingKey);
+      if (labels.some((l) => l.toLowerCase() === label.toLowerCase())) {
+        this.logger.info("Found existing collection by label, renaming to current expected title", {
+          ratingKey: collection.ratingKey,
+          oldTitle: collection.title,
+          newTitle: title,
+          label
+        });
+        await this.updateCollectionTitle(collection.ratingKey, title);
+        return collection.ratingKey;
+      }
+    }
+
     return this.createCollection(title, mediaType, libraryId);
   }
 
@@ -1866,7 +1898,7 @@ export class PlexIntegration {
     const sharedUsers = await this.getSharedUsers();
 
     // Build one label per user (same label applies to both movie and TV collections)
-    const allLabels = enabledUsers.map((u) => this.createCollectionLabel(u.displayName));
+    const allLabels = enabledUsers.map((u) => this.createCollectionLabel(u.username));
 
     // Index enabled users by their Plex username for matching with shared users.
     // The XML invitedId and GraphQL plexUserId are different ID formats, but
@@ -1892,7 +1924,7 @@ export class PlexIntegration {
 
       // Labels to exclude: all labels EXCEPT this user's own
       const excludedLabels = matchedUser
-        ? allLabels.filter((l) => l !== this.createCollectionLabel(matchedUser.displayName))
+        ? allLabels.filter((l) => l !== this.createCollectionLabel(matchedUser.username))
         : allLabels;
 
       // Strip old Hubarr labels then re-apply the current set
