@@ -1296,13 +1296,32 @@ export class PlexIntegration {
     const collections = await this.getCollections(libraryId);
     const label = this.createCollectionLabel(username);
 
-    // Fetch all collection labels in parallel so we can check for both title
-    // matches and label matches in one pass without serialising N round-trips.
-    const withLabels = await Promise.all(
+    // Fetch all collection labels in parallel. Use allSettled so a single
+    // failing label fetch (network blip, permission issue) is logged and skipped
+    // rather than aborting the entire reconciliation.
+    const settled = await Promise.allSettled(
       collections.map(async (c) => ({ ...c, labels: await this.getCollectionLabels(c.ratingKey) }))
     );
+    const withLabels = settled
+      .map((result, i) => {
+        if (result.status === "fulfilled") return result.value;
+        this.logger.warn("Failed to fetch labels for collection, skipping in reconciliation", {
+          ratingKey: collections[i].ratingKey,
+          title: collections[i].title,
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason)
+        });
+        return null;
+      })
+      .filter((c): c is { ratingKey: string; title: string; labels: string[] } => c !== null);
 
-    const byTitle = withLabels.find((c) => c.title === title);
+    // Only accept a title match that already carries this user's label or has no
+    // hubarr:* label at all — this avoids accidentally claiming another user's
+    // same-named collection.
+    const byTitle = withLabels.find(
+      (c) => c.title === title &&
+             (c.labels.some((l) => l.toLowerCase() === label.toLowerCase()) ||
+              !c.labels.some((l) => l.toLowerCase().startsWith("hubarr:")))
+    );
     // Label matches on collections other than the title match are duplicates to reconcile.
     const labelMatches = withLabels.filter(
       (c) => c.ratingKey !== byTitle?.ratingKey &&
