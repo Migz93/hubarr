@@ -845,6 +845,10 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         const valid: CollectionSortOrder[] = ["date-desc", "date-asc", "title", "watchlist-date-desc", "watchlist-date-asc"];
         if (valid.includes(body.collections.collectionSortOrder as CollectionSortOrder)) {
           patch.collectionSortOrder = body.collections.collectionSortOrder as CollectionSortOrder;
+        } else {
+          logger.warn("Invalid collectionSortOrder value rejected", { value: body.collections.collectionSortOrder, allowed: valid });
+          res.status(400).json({ error: "Invalid collectionSortOrder.", allowed: valid });
+          return;
         }
       }
       if ("movieLibraryId" in body.collections) {
