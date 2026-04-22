@@ -179,13 +179,13 @@ export default function CollectionsConfigForm({
                 }
                 className={`flex flex-col items-center gap-1 rounded-xl py-3 px-3 border text-xs font-medium transition-all ${
                   form.visibilityDefaults[key]
-                    ? "bg-primary/10 border-primary/30 text-primary"
-                    : "bg-surface-container-low border-outline-variant/20 text-on-surface-variant"
+                    ? "bg-primary-dim border-primary-dim text-on-surface"
+                    : "bg-background-container-low border-outline-variant/20 text-on-surface-variant"
                 }`}
               >
                 <div className={`w-3 h-3 rounded-full border-2 mb-0.5 flex-shrink-0 transition-all ${
                   form.visibilityDefaults[key]
-                    ? "bg-primary border-primary"
+                    ? "bg-on-surface border-on-surface"
                     : "border-outline-variant"
                 }`} />
                 {label.split(" ").map((word, i) => (

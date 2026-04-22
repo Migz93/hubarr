@@ -31,10 +31,10 @@ export default function Layout({ user, onLogout }: LayoutProps) {
 
       <div className="md:ml-64 min-h-screen">
         {/* Mobile top bar */}
-        <div className="md:hidden flex items-center gap-3 px-4 py-3 bg-surface-container-low border-b border-outline-variant/20 sticky top-0 z-20">
+        <div className="md:hidden flex items-center gap-3 px-4 py-3 bg-background-container-low border-b border-outline-variant/20 sticky top-0 z-20">
           <button
             onClick={() => setMobileOpen((o) => !o)}
-            className="p-1.5 rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-colors"
+            className="p-1.5 rounded-lg text-on-surface-variant hover:bg-background-container-high hover:text-on-surface transition-colors"
           >
             <Menu size={20} />
           </button>

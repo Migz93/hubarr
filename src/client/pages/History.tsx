@@ -122,8 +122,8 @@ export default function History() {
               onClick={() => setParam("type", k, true)}
               className={`px-3 py-1.5 text-xs font-medium transition-colors ${
                 kind === k
-                  ? "bg-primary/15 text-primary"
-                  : "bg-surface-container text-on-surface-variant hover:text-on-surface"
+                  ? "bg-primary-dim text-on-surface"
+                  : "bg-background-container text-on-surface-variant hover:text-on-surface"
               }`}
             >
               {k === "all" ? "All types" : KIND_LABELS[k] ?? k}
@@ -139,8 +139,8 @@ export default function History() {
               onClick={() => setParam("status", s, true)}
               className={`px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
                 status === s
-                  ? "bg-primary/15 text-primary"
-                  : "bg-surface-container text-on-surface-variant hover:text-on-surface"
+                  ? "bg-primary-dim text-on-surface"
+                  : "bg-background-container text-on-surface-variant hover:text-on-surface"
               }`}
             >
               {s === "all" ? "All status" : titleCaseStatus(s)}
@@ -152,7 +152,7 @@ export default function History() {
         <select
           value={pageSize}
           onChange={(e) => setParam("pageSize", e.target.value, true)}
-          className="ml-auto px-3 py-1.5 rounded-lg bg-surface-container border border-outline-variant/30 text-xs text-on-surface focus:outline-none"
+          className="ml-auto px-3 py-1.5 rounded-lg bg-background-container border border-outline-variant/30 text-xs text-on-surface focus:outline-none"
         >
           {[10, 25, 50, 100].map((n) => (
             <option key={n} value={n}>{n} / page</option>
@@ -177,7 +177,7 @@ export default function History() {
           ))}
         </div>
       ) : (
-        <div className="bg-surface-container rounded-2xl border border-outline-variant/20 flex items-center justify-center py-16 text-center">
+        <div className="bg-background-container rounded-2xl border border-outline-variant/20 flex items-center justify-center py-16 text-center">
           <p className="text-on-surface-variant text-sm max-w-xs">
             No sync history matches the current filter.
           </p>
@@ -194,7 +194,7 @@ export default function History() {
             <button
               disabled={page <= 1}
               onClick={() => setParam("page", String(page - 1))}
-              className="p-1.5 rounded-lg bg-surface-container disabled:opacity-40 hover:bg-surface-container-high transition-colors"
+              className="p-1.5 rounded-lg bg-background-container disabled:opacity-40 hover:bg-background-container-high transition-colors"
             >
               <ChevronLeft size={14} />
             </button>
@@ -202,7 +202,7 @@ export default function History() {
             <button
               disabled={page >= pageInfo.pages}
               onClick={() => setParam("page", String(page + 1))}
-              className="p-1.5 rounded-lg bg-surface-container disabled:opacity-40 hover:bg-surface-container-high transition-colors"
+              className="p-1.5 rounded-lg bg-background-container disabled:opacity-40 hover:bg-background-container-high transition-colors"
             >
               <ChevronRight size={14} />
             </button>
@@ -594,7 +594,7 @@ function RunRow({ run }: { run: SyncRun }) {
     },
     idle: {
       icon: <AlertCircle size={18} className="text-on-surface-variant" />,
-      badge: "text-on-surface-variant bg-surface-container-high border-outline-variant/20"
+      badge: "text-on-surface-variant bg-background-container-high border-outline-variant/20"
     }
   };
 
@@ -602,10 +602,10 @@ function RunRow({ run }: { run: SyncRun }) {
   const durationText = formatRunDuration(liveRun, now);
 
   return (
-    <div className="bg-surface-container rounded-xl border border-outline-variant/20 overflow-hidden">
+    <div className="bg-background-container rounded-xl border border-outline-variant/20 overflow-hidden">
       <button
         onClick={handleExpand}
-        className="w-full flex items-center gap-4 p-4 text-left hover:bg-surface-container-high/50 transition-colors"
+        className="w-full flex items-center gap-4 p-4 text-left hover:bg-background-container-high/50 transition-colors"
       >
         {config.icon}
         <div className="flex-1 min-w-0">
@@ -631,7 +631,7 @@ function RunRow({ run }: { run: SyncRun }) {
       </button>
 
       {expanded && (
-        <div className="border-t border-outline-variant/20 bg-surface-container-low">
+        <div className="border-t border-outline-variant/20 bg-background-container-low">
           {/* Run metadata */}
           <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs px-4 py-3">
             <div>
@@ -827,7 +827,7 @@ function MatchFailureRow({ item }: { item: SyncRunItem }) {
             ) : (
               <div className="space-y-1">
                 {candidates.map((c, i) => (
-                  <div key={i} className="bg-surface-container rounded px-2 py-1 space-y-0.5">
+                  <div key={i} className="bg-background-container rounded px-2 py-1 space-y-0.5">
                     <div className="flex items-baseline gap-2">
                       <span className="text-on-surface font-medium">{c.title}</span>
                       {c.year && <span className="text-on-surface-variant/60">({c.year})</span>}
@@ -879,7 +879,7 @@ function StepsCollapsible({ items }: { items: HistoryStep[] }) {
       {open && (
         <div className="mt-2 space-y-1">
           {items.map((item) => (
-            <div key={item.id} className="flex items-center gap-2 text-xs px-2 py-1 rounded-lg bg-surface-container/50">
+            <div key={item.id} className="flex items-center gap-2 text-xs px-2 py-1 rounded-lg bg-background-container/50">
               <CheckCircle size={12} className="text-success flex-shrink-0" />
               <span className="text-on-surface-variant">{item.label}</span>
               {item.meta && (

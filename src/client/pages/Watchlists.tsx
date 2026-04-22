@@ -197,7 +197,7 @@ export default function Watchlists() {
               <button
                 disabled={page <= 1}
                 onClick={() => setParam({ page: String(page - 1) })}
-                className="p-2 rounded-lg border border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high disabled:opacity-40 transition-colors"
+                className="p-2 rounded-lg border border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:bg-background-container-high disabled:opacity-40 transition-colors"
               >
                 <ChevronLeft size={18} />
               </button>
@@ -207,7 +207,7 @@ export default function Watchlists() {
               <button
                 disabled={page >= totalPages}
                 onClick={() => setParam({ page: String(page + 1) })}
-                className="p-2 rounded-lg border border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high disabled:opacity-40 transition-colors"
+                className="p-2 rounded-lg border border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:bg-background-container-high disabled:opacity-40 transition-colors"
               >
                 <ChevronRight size={18} />
               </button>
@@ -215,7 +215,7 @@ export default function Watchlists() {
           )}
         </>
       ) : (
-        <div className="bg-surface-container rounded-2xl border border-outline-variant/20 flex items-center justify-center py-16 text-center">
+        <div className="bg-background-container rounded-2xl border border-outline-variant/20 flex items-center justify-center py-16 text-center">
           <p className="text-on-surface-variant text-sm max-w-xs">
             No watchlist items found. Run a sync to populate watchlists.
           </p>
@@ -248,8 +248,8 @@ function FilterChip({
       onClick={onClick}
       className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-colors border ${
         active
-          ? "bg-primary/10 text-primary border-primary/30"
-          : "bg-surface-container border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:border-outline-variant/40"
+          ? "bg-primary-dim text-on-surface border-primary-dim"
+          : "bg-background-container border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:border-outline-variant/40"
       }`}
     >
       {getPlexImageSrc(avatarUrl) && (
@@ -261,7 +261,7 @@ function FilterChip({
       )}
       {label}
       {count !== undefined && (
-        <span className={`text-xs ${active ? "text-primary/70" : "text-on-surface-variant/60"}`}>
+        <span className={`text-xs ${active ? "text-on-surface/70" : "text-on-surface-variant/60"}`}>
           {count}
         </span>
       )}
@@ -291,7 +291,7 @@ function WatchlistPoster({
 
   return (
     <button onClick={onClick} className="group text-left w-full">
-      <div className="relative aspect-[2/3] rounded-xl overflow-hidden bg-surface-container-high transition-transform duration-300 group-hover:scale-105">
+      <div className="relative aspect-[2/3] rounded-xl overflow-hidden bg-background-container-high transition-transform duration-300 group-hover:scale-105">
         {posterSrc ? (
           <img
             src={posterSrc}
@@ -321,7 +321,7 @@ function WatchlistPoster({
               <CheckCircle size={18} className="relative text-success drop-shadow-[0_0_4px_rgba(0,0,0,1)]" />
             </div>
           ) : seerrEnabled && item.seerrRequested ? (
-            <div className="relative w-[18px] h-[18px] rounded-full bg-surface-container-highest border border-outline-variant/40 flex items-center justify-center drop-shadow-[0_0_4px_rgba(0,0,0,1)]">
+            <div className="relative w-[18px] h-[18px] rounded-full bg-background-container-highest border border-outline-variant/40 flex items-center justify-center drop-shadow-[0_0_4px_rgba(0,0,0,1)]">
               <img src="/seerr-icon.svg" alt="Requested in Seerr" className="w-3 h-3" />
             </div>
           ) : (

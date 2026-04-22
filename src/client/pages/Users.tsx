@@ -135,7 +135,7 @@ export default function Users() {
         <h1 className="font-headline font-bold text-2xl text-on-surface">Users</h1>
         <button
           onClick={() => void refreshUsers()}
-          className="flex items-center gap-2 bg-surface-container-high hover:bg-surface-bright text-on-surface text-sm font-medium rounded-xl px-3 py-2.5 transition-colors border border-outline-variant/20"
+          className="flex items-center gap-2 bg-background-container-high hover:bg-background-bright text-on-surface text-sm font-medium rounded-xl px-3 py-2.5 transition-colors border border-outline-variant/20"
         >
           <RefreshCw size={15} className={refreshInProgress ? "animate-spin" : ""} />
           {refreshInProgress ? "Refreshing..." : "Refresh Users"}
@@ -152,13 +152,13 @@ export default function Users() {
         <div className="flex items-center gap-2 mb-4">
           <button
             onClick={() => void bulkSetEnabled(true)}
-            className="bg-primary hover:bg-primary-dim text-on-primary text-sm font-semibold rounded-xl px-4 py-2 transition-colors"
+            className="bg-primary-dim hover:bg-primary text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors"
           >
             Enable Selected
           </button>
           <button
             onClick={() => void bulkSetEnabled(false)}
-            className="bg-surface-container-high hover:bg-surface-bright text-on-surface text-sm font-medium rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
+            className="bg-background-container-high hover:bg-background-bright text-on-surface text-sm font-medium rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
           >
             Disable Selected
           </button>
@@ -271,7 +271,7 @@ function Avatar({ avatarUrl, displayName, size }: { avatarUrl: string | null; di
     );
   }
   return (
-    <div className={`${size} rounded-full bg-surface-container-highest flex items-center justify-center`}>
+    <div className={`${size} rounded-full bg-background-container-highest flex items-center justify-center`}>
       <span className="text-on-surface-variant text-lg font-medium">
         {displayName.charAt(0).toUpperCase()}
       </span>
@@ -303,8 +303,8 @@ function UserCard({
 
   return (
     <div
-      className={`relative bg-surface-container rounded-2xl border flex flex-col items-center p-4 gap-2 transition-colors ${
-        selected ? "border-primary/50 bg-surface-container-high" : "border-outline-variant/20"
+      className={`relative bg-background-container rounded-2xl border flex flex-col items-center p-4 gap-2 transition-colors ${
+        selected ? "border-primary/50 bg-background-container-high" : "border-outline-variant/20"
       } ${!user.enabled ? "opacity-60" : ""}`}
     >
       <input
@@ -316,7 +316,7 @@ function UserCard({
 
       <button
         onClick={onEdit}
-        className="absolute top-3 right-3 p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors border border-outline-variant/20"
+        className="absolute top-3 right-3 p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-background-container-high transition-colors border border-outline-variant/20"
         title="Edit user"
       >
         <Edit2 size={14} />
@@ -333,7 +333,7 @@ function UserCard({
             {displayName}
           </p>
           {user.isSelf && (
-            <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded font-medium flex-shrink-0">
+            <span className="text-xs bg-primary-dim text-on-surface px-1.5 py-0.5 rounded font-medium flex-shrink-0">
               You
             </span>
           )}
@@ -347,14 +347,14 @@ function UserCard({
         {user.watchlistItemCount > 0 ? (
           <button
             onClick={onOpenWatchlist}
-            className="flex items-center gap-1 bg-surface-container-high hover:bg-surface-bright text-on-surface text-xs font-medium rounded-lg px-2.5 py-1.5 transition-colors border border-outline-variant/20"
+            className="flex items-center gap-1 bg-background-container-high hover:bg-background-bright text-on-surface text-xs font-medium rounded-lg px-2.5 py-1.5 transition-colors border border-outline-variant/20"
           >
             {user.watchlistItemCount} Watchlist {user.watchlistItemCount === 1 ? "Item" : "Items"}
           </button>
         ) : (
           <button
             onClick={onShowNoData}
-            className="flex items-center gap-1 bg-surface-container-high hover:bg-surface-bright text-on-surface-variant text-xs font-medium rounded-lg px-2.5 py-1.5 transition-colors border border-outline-variant/20"
+            className="flex items-center gap-1 bg-background-container-high hover:bg-background-bright text-on-surface-variant text-xs font-medium rounded-lg px-2.5 py-1.5 transition-colors border border-outline-variant/20"
           >
             No Watchlist Data
           </button>
@@ -363,7 +363,7 @@ function UserCard({
           <button
             disabled={syncing}
             onClick={onSync}
-            className="flex items-center gap-1 bg-surface-container-high hover:bg-surface-bright disabled:opacity-50 text-on-surface text-xs font-medium rounded-lg px-2.5 py-1.5 transition-colors border border-outline-variant/20"
+            className="flex items-center gap-1 bg-background-container-high hover:bg-background-bright disabled:opacity-50 text-on-surface text-xs font-medium rounded-lg px-2.5 py-1.5 transition-colors border border-outline-variant/20"
           >
             <Play size={11} className={syncing ? "animate-pulse" : ""} />
             {syncing ? "Syncing…" : "Sync Watchlist"}
@@ -404,7 +404,7 @@ function WatchlistInfoModal({
       onClick={onClose}
     >
       <div
-        className="bg-surface-container rounded-2xl p-6 w-full max-w-md border border-outline-variant/20 shadow-xl"
+        className="bg-background-container rounded-2xl p-6 w-full max-w-md border border-outline-variant/20 shadow-xl"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
@@ -413,7 +413,7 @@ function WatchlistInfoModal({
           </h3>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high"
+            className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-background-container-high"
           >
             <X size={18} />
           </button>
@@ -426,7 +426,7 @@ function WatchlistInfoModal({
         <div className="mt-6">
           <button
             onClick={onClose}
-            className="w-full bg-primary hover:bg-primary-dim text-on-primary text-sm font-semibold rounded-xl py-2.5 transition-colors"
+            className="w-full bg-primary-dim hover:bg-primary text-on-surface text-sm font-semibold rounded-xl py-2.5 transition-colors"
           >
             Close
           </button>
@@ -460,7 +460,7 @@ function InfoBadge({ label, message, className }: { label: string; message: stri
         {label}
       </button>
       {open && (
-        <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 w-48 bg-surface-container-highest border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-surface shadow-lg z-10 text-center">
+        <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 w-48 bg-background-container-highest border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-surface shadow-lg z-10 text-center">
           {message}
         </div>
       )}
@@ -470,7 +470,7 @@ function InfoBadge({ label, message, className }: { label: string; message: stri
 
 function ManagedUserCard({ user }: { user: ManagedUserRecord }) {
   return (
-    <div className="relative bg-surface-container rounded-2xl border border-outline-variant/20 flex flex-col items-center p-4 gap-2 opacity-80">
+    <div className="relative bg-background-container rounded-2xl border border-outline-variant/20 flex flex-col items-center p-4 gap-2 opacity-80">
       <Avatar avatarUrl={user.avatarUrl} displayName={user.displayName} size="w-16 h-16" />
 
       <div className="w-full text-center px-1">
@@ -679,7 +679,7 @@ function EditModal({
       onClick={onClose}
     >
       <div
-        className="bg-surface-container rounded-2xl w-full max-w-md border border-outline-variant/20 shadow-xl flex flex-col"
+        className="bg-background-container rounded-2xl w-full max-w-md border border-outline-variant/20 shadow-xl flex flex-col"
         onClick={(event) => event.stopPropagation()}
       >
         {/* Header */}
@@ -691,7 +691,7 @@ function EditModal({
                 {user.username}
               </span>
               {user.isSelf && (
-                <span className="text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded-md font-medium flex-shrink-0">
+                <span className="text-xs bg-primary-dim text-on-surface px-1.5 py-0.5 rounded-md font-medium flex-shrink-0">
                   You
                 </span>
               )}
@@ -709,7 +709,7 @@ function EditModal({
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors flex-shrink-0"
+            className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-background-container-high transition-colors flex-shrink-0"
             aria-label="Close"
           >
             <X size={18} />
@@ -718,14 +718,14 @@ function EditModal({
 
         {/* Tab bar */}
         <div className="px-5 pb-3">
-          <div className="flex p-1 bg-surface-container-high rounded-xl gap-1">
+          <div className="flex p-1 bg-background-container-high rounded-xl gap-1">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`flex-1 text-sm font-medium rounded-lg py-2 transition-all ${
                   activeTab === tab.id
-                    ? "bg-surface-container text-on-surface shadow-sm"
+                    ? "bg-background-container text-on-surface shadow-sm"
                     : "text-on-surface-variant hover:text-on-surface"
                 }`}
               >
@@ -750,7 +750,7 @@ function EditModal({
                   value={displayNameOverride}
                   onChange={(event) => setDisplayNameOverride(event.target.value)}
                   placeholder="Leave blank to use Plex username"
-                  className="w-full bg-surface-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-on-surface text-sm placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+                  className="w-full bg-background-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-on-surface text-sm placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary/50"
                 />
               </Field>
             </div>
@@ -781,7 +781,7 @@ function EditModal({
                   value={collectionNameOverride}
                   onChange={(event) => setCollectionNameOverride(event.target.value)}
                   placeholder={defaultName}
-                  className="w-full bg-surface-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-on-surface text-sm placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+                  className="w-full bg-background-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-on-surface text-sm placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary/50"
                 />
               </Field>
 
@@ -833,13 +833,13 @@ function EditModal({
                       }
                       className={`flex flex-col items-center gap-1 rounded-xl py-3 px-3 border text-xs font-medium transition-all ${
                         effectiveVisibility[key]
-                          ? "bg-primary/10 border-primary/30 text-primary"
-                          : "bg-surface-container-low border-outline-variant/20 text-on-surface-variant"
+                          ? "bg-primary-dim border-primary-dim text-on-surface"
+                          : "bg-background-container-low border-outline-variant/20 text-on-surface-variant"
                       }`}
                     >
                       <div className={`w-3 h-3 rounded-full border-2 mb-0.5 transition-all ${
                         effectiveVisibility[key]
-                          ? "bg-primary border-primary"
+                          ? "bg-on-surface border-on-surface"
                           : "border-outline-variant"
                       }`} />
                       {label.split(" ").map((word, i) => (
@@ -856,7 +856,7 @@ function EditModal({
           {activeTab === "seerr" && seerrEnabled && (
             <div className="space-y-4">
               {!seerrLinkLoaded && !seerrLinkLoadError && (
-                <div className="rounded-lg border border-outline-variant/20 bg-surface-container-low px-3 py-3 text-sm text-on-surface-variant">
+                <div className="rounded-lg border border-outline-variant/20 bg-background-container-low px-3 py-3 text-sm text-on-surface-variant">
                   Loading Seerr user mapping...
                 </div>
               )}
@@ -931,14 +931,14 @@ function EditModal({
         <div className="flex gap-3 px-5 py-4 mt-2 border-t border-outline-variant/15">
           <button
             onClick={onClose}
-            className="flex-1 bg-surface-container-high hover:bg-surface-bright text-on-surface text-sm font-medium rounded-xl py-2.5 transition-colors border border-outline-variant/20"
+            className="flex-1 bg-background-container-high hover:bg-background-bright text-on-surface text-sm font-medium rounded-xl py-2.5 transition-colors border border-outline-variant/20"
           >
             Cancel
           </button>
           <button
             disabled={saving}
             onClick={() => void save()}
-            className="flex-1 bg-primary hover:bg-primary-dim disabled:opacity-50 text-on-primary text-sm font-semibold rounded-xl py-2.5 transition-colors"
+            className="flex-1 bg-primary-dim hover:bg-primary disabled:opacity-50 text-on-surface text-sm font-semibold rounded-xl py-2.5 transition-colors"
           >
             {saving ? "Saving..." : "Save Changes"}
           </button>

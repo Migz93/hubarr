@@ -14,7 +14,7 @@ export function SectionCard({
 }) {
   return (
     <div
-      className={`bg-surface-container rounded-2xl border border-outline-variant/20 p-5 ${
+      className={`bg-background-container rounded-2xl border border-outline-variant/20 p-5 ${
         wide ? "w-full" : ""
       }`}
     >
@@ -64,7 +64,7 @@ export function TextInput({
       value={value}
       onChange={(event) => onChange(event.target.value)}
       placeholder={placeholder}
-      className="w-full bg-surface-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-on-surface text-sm placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+      className="w-full bg-background-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-on-surface text-sm placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary/50"
     />
   );
 }
@@ -82,7 +82,7 @@ export function SelectInput({
     <select
       value={value}
       onChange={(event) => onChange(event.target.value)}
-      className="w-full bg-surface-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-on-surface text-sm focus:outline-none focus:border-primary/50"
+      className="w-full bg-background-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-on-surface text-sm focus:outline-none focus:border-primary/50"
     >
       {children}
     </select>
@@ -113,12 +113,12 @@ export function ToggleField({
         />
         <div
           className={`w-10 h-6 rounded-full transition-colors ${
-            checked ? "bg-primary" : "bg-outline-variant"
+            checked ? "bg-primary-dim" : "bg-outline-variant"
           }`}
         />
         <div
           className={`absolute top-1 w-4 h-4 rounded-full transition-all ${
-            checked ? "bg-white translate-x-5" : "bg-on-surface-variant translate-x-1"
+            checked ? "bg-on-surface translate-x-5" : "bg-on-surface-variant translate-x-1"
           }`}
         />
       </div>
@@ -156,7 +156,7 @@ export function SaveBar({
     <button
       disabled={saving}
       onClick={onSave}
-      className="flex items-center gap-2 bg-primary hover:bg-primary-dim disabled:opacity-50 text-on-primary text-sm font-semibold rounded-xl px-4 py-2 transition-colors"
+      className="flex items-center gap-2 bg-primary-dim hover:bg-primary disabled:opacity-50 text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors"
     >
       {saving ? "Saving..." : label}
       {!saving && <ChevronRight size={15} />}
@@ -168,7 +168,7 @@ export function SaveBar({
       <div className="flex items-center justify-between pt-2">
         <button
           onClick={onBack}
-          className="flex items-center gap-1 bg-surface-container-high hover:bg-surface-bright text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
+          className="flex items-center gap-1 bg-background-container-high hover:bg-background-bright text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
         >
           <ChevronLeft size={15} />
           Back

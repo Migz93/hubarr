@@ -92,7 +92,7 @@ export default function Dashboard() {
         <button
           disabled={syncing}
           onClick={() => void runFullSync()}
-          className="flex items-center gap-2 bg-surface-container-high hover:bg-surface-bright disabled:opacity-50 text-on-surface text-sm font-medium rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
+          className="flex items-center gap-2 bg-background-container-high hover:bg-background-bright disabled:opacity-50 text-on-surface text-sm font-medium rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
         >
           <RefreshCw size={15} className={syncing ? "animate-spin" : ""} />
           {syncing ? "Syncing..." : "Run Sync"}
@@ -120,7 +120,7 @@ export default function Dashboard() {
           {/* Recent sync activity */}
           <Link
             to="/history"
-            className="sm:w-80 flex-shrink-0 bg-surface-container rounded-xl border border-outline-variant/20 px-4 py-2.5 hover:bg-surface-container-high transition-colors group"
+            className="sm:w-80 flex-shrink-0 bg-background-container rounded-xl border border-outline-variant/20 px-4 py-2.5 hover:bg-background-container-high transition-colors group"
           >
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-medium text-on-surface-variant uppercase tracking-wide">Recent Syncs</span>
@@ -157,7 +157,7 @@ export default function Dashboard() {
             ))}
           </div>
         ) : (
-          <div className="bg-surface-container rounded-2xl border border-outline-variant/20 flex items-center justify-center py-10">
+          <div className="bg-background-container rounded-2xl border border-outline-variant/20 flex items-center justify-center py-10">
             <p className="text-on-surface-variant text-sm">No items recently added. Run a sync to populate watchlists.</p>
           </div>
         )}
@@ -184,7 +184,7 @@ function StatChip({
   return (
     <Link
       to={to}
-      className="flex-1 flex flex-col items-center justify-center gap-0.5 bg-surface-container hover:bg-surface-container-high rounded-xl px-4 py-2.5 border border-outline-variant/20 transition-colors text-center"
+      className="flex-1 flex flex-col items-center justify-center gap-0.5 bg-background-container hover:bg-background-container-high rounded-xl px-4 py-2.5 border border-outline-variant/20 transition-colors text-center"
     >
       <div className="flex items-center gap-1.5 text-primary">
         {icon}
@@ -276,7 +276,7 @@ function PosterCard({
 
   return (
     <button onClick={onClick} className="group text-left w-full">
-      <div className="relative aspect-[2/3] rounded-lg overflow-hidden bg-surface-container-high transition-transform duration-300 group-hover:scale-105">
+      <div className="relative aspect-[2/3] rounded-lg overflow-hidden bg-background-container-high transition-transform duration-300 group-hover:scale-105">
         {posterSrc ? (
           <img
             src={posterSrc}
@@ -306,7 +306,7 @@ function PosterCard({
               <CheckCircle size={18} className="relative text-success drop-shadow-[0_0_4px_rgba(0,0,0,1)]" />
             </div>
           ) : seerrEnabled && item.seerrRequested ? (
-            <div className="relative w-[18px] h-[18px] rounded-full bg-surface-container-highest border border-outline-variant/40 flex items-center justify-center drop-shadow-[0_0_4px_rgba(0,0,0,1)]">
+            <div className="relative w-[18px] h-[18px] rounded-full bg-background-container-highest border border-outline-variant/40 flex items-center justify-center drop-shadow-[0_0_4px_rgba(0,0,0,1)]">
               <img src="/seerr-icon.svg" alt="Requested in Seerr" className="w-3 h-3" />
             </div>
           ) : (
