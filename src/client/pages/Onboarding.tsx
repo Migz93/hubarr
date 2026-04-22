@@ -136,6 +136,7 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
           <PlexConfigForm
             initialConfig={setupStatus?.plex ?? null}
             saveUrl="/api/setup/plex/save"
+            testUrl="/api/setup/plex/test"
             saveLabel="Continue to Collections"
             onBack={() => setStep("general")}
             onSaved={async () => {

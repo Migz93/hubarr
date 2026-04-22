@@ -106,6 +106,7 @@ export default function Settings() {
             <PlexConfigForm
               initialConfig={settings.plex}
               saveUrl="/api/settings/plex/save"
+              testUrl="/api/settings/plex/test"
               saveLabel="Save Plex"
               onSaved={async () => {
                 await loadSettings();
@@ -289,7 +290,7 @@ function GeneralTab({
           </div>
 
           <div className="pt-1">
-            <SaveBar saving={saving} success={success} error={error} onSave={() => void save()} />
+            <SaveBar saving={saving} success={success} error={error} onSave={() => void save()} label="Save General" />
           </div>
         </div>
       </div>

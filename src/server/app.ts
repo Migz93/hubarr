@@ -204,6 +204,23 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     };
   }
 
+  async function handlePlexConnectionTest(payload: PlexConfigPayload, res: Response) {
+    const owner = db.getPlexOwner();
+    if (!owner) {
+      res.status(400).json({ ok: false, error: "No Plex account configured. Please sign in with Plex first." });
+      return;
+    }
+    try {
+      const input = buildPlexInputFromPayload(owner.plexToken, payload);
+      const result = await services.validatePlexSettings(input);
+      logger.info("Plex connection test succeeded", { serverUrl: input.serverUrl, libraryCount: result.libraries.length });
+      res.json({ ok: true, serverUrl: input.serverUrl, libraryCount: result.libraries.length });
+    } catch (err) {
+      logger.warn("Plex connection test failed", { error: err instanceof Error ? err.message : String(err) });
+      res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
   async function validateAndSavePlexConfiguration(payload: PlexConfigPayload) {
     const owner = db.getPlexOwner();
     if (!owner) {
@@ -413,6 +430,11 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       logger.warn("Plex setup configuration save failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
+  });
+
+  /** Test Plex connectivity during onboarding with the provided configuration without saving */
+  app.post("/api/setup/plex/test", requireAuth, async (req, res) => {
+    await handlePlexConnectionTest(req.body as PlexConfigPayload, res);
   });
 
   app.get("/api/setup/status", requireAuth, (_req, res) => {
@@ -898,6 +920,11 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       logger.warn("Plex settings save failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
+  });
+
+  /** Test Plex connectivity with the provided configuration without saving */
+  app.post("/api/settings/plex/test", requireAuth, async (req, res) => {
+    await handlePlexConnectionTest(req.body as PlexConfigPayload, res);
   });
 
   app.use("/api/settings/logs", logsRateLimiter);

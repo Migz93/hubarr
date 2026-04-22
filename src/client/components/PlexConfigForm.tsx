@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import { ChevronRight, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { apiGet, apiPost } from "../lib/api";
 import type { PlexConfigPayload, PlexConnectionOption, PlexLibrary, PlexSettingsView } from "../../shared/types";
-import { Field, SaveBar, SectionCard, SelectInput, TextInput, ToggleField } from "./FormControls";
+import { Field, SectionCard, SelectInput, TextInput, ToggleField } from "./FormControls";
 
 interface PlexConfigResponse {
   plex: PlexSettingsView | null;
@@ -12,12 +12,14 @@ interface PlexConfigResponse {
 export default function PlexConfigForm({
   initialConfig,
   saveUrl,
+  testUrl,
   onSaved,
   onBack,
   saveLabel = "Save Plex"
 }: {
   initialConfig: PlexSettingsView | null;
   saveUrl: string;
+  testUrl: string;
   onSaved?: (result: PlexConfigResponse) => void | Promise<void>;
   onBack?: () => void;
   saveLabel?: string;
@@ -34,6 +36,8 @@ export default function PlexConfigForm({
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   const groupedServers = useMemo(() => {
     return availableServers.map((option) => ({
@@ -42,6 +46,17 @@ export default function PlexConfigForm({
       option
     }));
   }, [availableServers]);
+
+  const trimmedHostname = hostname.trim();
+  const parsedPort = parseInt(port, 10);
+  const portValid = Number.isInteger(parsedPort) && parsedPort >= 1 && parsedPort <= 65535;
+  const manualConfigValid = trimmedHostname.length > 0 && portValid;
+
+  function buildPayload(): PlexConfigPayload {
+    return selectedServerUri && selectedMachineIdentifier
+      ? { mode: "preset", serverUrl: selectedServerUri, machineIdentifier: selectedMachineIdentifier }
+      : { mode: "manual", hostname: trimmedHostname, port: parsedPort, useSsl };
+  }
 
   function switchToManual() {
     setSelectedServerUri("");
@@ -61,26 +76,38 @@ export default function PlexConfigForm({
     }
   }
 
+  async function testConnection() {
+    const payload = buildPayload();
+    console.debug("Plex connection test started", { testUrl, payload });
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await apiPost<{ ok: boolean; serverUrl?: string; libraryCount?: number; error?: string }>(
+        testUrl,
+        payload
+      );
+      if (result.ok) {
+        console.debug("Plex connection test succeeded", { ok: true, serverUrl: result.serverUrl, libraryCount: result.libraryCount });
+        const count = result.libraryCount ?? 0;
+        setTestResult({ ok: true, message: `Test Succeeded — ${count} ${count === 1 ? "library" : "libraries"} found` });
+      } else {
+        console.warn("Plex connection test returned non-ok", { ok: false, error: result.error });
+        setTestResult({ ok: false, message: result.error ?? "Connection failed" });
+      }
+    } catch (caught) {
+      console.warn("Plex connection test threw", { error: caught instanceof Error ? caught.message : String(caught) });
+      setTestResult({ ok: false, message: caught instanceof Error ? caught.message : String(caught) });
+    } finally {
+      setTesting(false);
+    }
+  }
+
   async function save() {
     setSaving(true);
     setSuccess(false);
     setError(null);
     try {
-      const payload: PlexConfigPayload =
-        selectedServerUri && selectedMachineIdentifier
-          ? {
-              mode: "preset",
-              serverUrl: selectedServerUri,
-              machineIdentifier: selectedMachineIdentifier
-            }
-          : {
-              mode: "manual",
-              hostname,
-              port: Number(port),
-              useSsl
-            };
-
-      const result = await apiPost<PlexConfigResponse>(saveUrl, payload);
+      const result = await apiPost<PlexConfigResponse>(saveUrl, buildPayload());
       setSuccess(true);
       await onSaved?.(result);
     } catch (caught) {
@@ -167,21 +194,46 @@ export default function PlexConfigForm({
         setUseSsl(value);
       }} />
 
-      <SaveBar
-        saving={saving}
-        success={success}
-        error={error}
-        onSave={() => void save()}
-        onBack={onBack}
-        label={saveLabel}
-      />
-
-      {success && onSaved && (
-        <div className="text-xs text-on-surface-variant flex items-center gap-1">
-          <ChevronRight size={12} />
-          Plex configuration saved successfully.
+      <div className="flex items-center justify-between gap-3 pt-2 border-t border-outline-variant/15">
+        <div className="flex items-center gap-3 flex-wrap">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="flex items-center gap-1 bg-surface-container-high hover:bg-surface-bright text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
+            >
+              <ChevronLeft size={15} />
+              Back
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void testConnection()}
+            disabled={testing || (!selectedServerUri && !manualConfigValid)}
+            className="bg-surface-container-high hover:bg-surface-bright disabled:opacity-50 text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
+          >
+            {testing ? "Testing..." : "Test Connection"}
+          </button>
+          {testResult && (
+            <span className={`text-xs font-medium ${testResult.ok ? "text-success" : "text-error"}`}>
+              {testResult.message}
+            </span>
+          )}
         </div>
-      )}
+        <div className="flex items-center gap-3">
+          {success && <span className="text-success text-sm">Saved</span>}
+          {error && <span className="text-error text-sm">{error}</span>}
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => void save()}
+            className="flex items-center gap-2 bg-primary hover:bg-primary-dim disabled:opacity-50 text-on-primary text-sm font-semibold rounded-xl px-4 py-2 transition-colors"
+          >
+            {saving ? "Saving..." : saveLabel}
+            {!saving && <ChevronRight size={15} />}
+          </button>
+        </div>
+      </div>
     </SectionCard>
   );
 }
