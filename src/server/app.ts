@@ -415,6 +415,24 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     }
   });
 
+  /** Test Plex connectivity during onboarding with the provided configuration without saving */
+  app.post("/api/setup/plex/test", requireAuth, async (req, res) => {
+    const owner = db.getPlexOwner();
+    if (!owner) {
+      res.status(400).json({ ok: false, error: "No Plex account configured. Please sign in with Plex first." });
+      return;
+    }
+    try {
+      const input = buildPlexInputFromPayload(owner.plexToken, req.body as PlexConfigPayload);
+      const result = await services.validatePlexSettings(input);
+      logger.info("Plex connection test succeeded (setup)", { serverUrl: input.serverUrl, libraryCount: result.libraries.length });
+      res.json({ ok: true, serverUrl: input.serverUrl, libraryCount: result.libraries.length });
+    } catch (err) {
+      logger.warn("Plex connection test failed (setup)", { error: err instanceof Error ? err.message : String(err) });
+      res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   app.get("/api/setup/status", requireAuth, (_req, res) => {
     const appSettings = db.getAppSettings();
     const payload: SetupStatusResponse = {
@@ -897,6 +915,24 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     } catch (error) {
       logger.warn("Plex settings save failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  /** Test Plex connectivity with the provided configuration without saving */
+  app.post("/api/settings/plex/test", requireAuth, async (req, res) => {
+    const owner = db.getPlexOwner();
+    if (!owner) {
+      res.status(400).json({ ok: false, error: "No Plex account configured. Please sign in with Plex first." });
+      return;
+    }
+    try {
+      const input = buildPlexInputFromPayload(owner.plexToken, req.body as PlexConfigPayload);
+      const result = await services.validatePlexSettings(input);
+      logger.info("Plex connection test succeeded", { serverUrl: input.serverUrl, libraryCount: result.libraries.length });
+      res.json({ ok: true, serverUrl: input.serverUrl, libraryCount: result.libraries.length });
+    } catch (err) {
+      logger.warn("Plex connection test failed", { error: err instanceof Error ? err.message : String(err) });
+      res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
     }
   });
 

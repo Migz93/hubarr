@@ -183,10 +183,12 @@ export function SaveBar({
   }
 
   return (
-    <div className="flex items-center gap-3 pt-2">
+    <div className="flex items-center justify-between gap-3 pt-2 border-t border-outline-variant/15">
+      <div className="flex items-center gap-3">
+        {success && <span className="text-success text-sm">Saved</span>}
+        {error && <span className="text-error text-sm">{error}</span>}
+      </div>
       {saveButton}
-      {success && <span className="text-success text-sm">Saved</span>}
-      {error && <span className="text-error text-sm">{error}</span>}
     </div>
   );
 }
