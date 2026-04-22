@@ -552,7 +552,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       const body = req.body as Record<string, unknown>;
       const allowedUserPatchFields = new Set([
         "enabled",
-        "collectionName",
+        "collectionNameOverride",
         "movieLibraryId",
         "showLibraryId",
         "visibilityOverride",
@@ -621,12 +621,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         }
         updatePayload.displayNameOverride = body.displayNameOverride as string | null;
       }
-      if ("collectionName" in body) {
-        if (body.collectionName !== null && typeof body.collectionName !== "string") {
-          res.status(400).json({ error: "collectionName must be a string or null." });
+      if ("collectionNameOverride" in body) {
+        if (body.collectionNameOverride !== null && typeof body.collectionNameOverride !== "string") {
+          res.status(400).json({ error: "collectionNameOverride must be a string or null." });
           return;
         }
-        updatePayload.collectionNameOverride = body.collectionName as string | null;
+        updatePayload.collectionNameOverride = body.collectionNameOverride as string | null;
       }
       if ("collectionSortOrderOverride" in body) {
         updatePayload.collectionSortOrderOverride = (body.collectionSortOrderOverride ?? null) as CollectionSortOrder | null;
