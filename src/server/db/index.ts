@@ -12,6 +12,8 @@ import type {
   PlexSettingsView,
   SessionUser,
   SyncRun,
+  SeerrRequestState,
+  SeerrUserLink,
   UserRecord,
   WatchlistItem,
   WatchlistPageResponse,
@@ -24,6 +26,9 @@ import * as imageCacheRepo from "./image-cache.js";
 import type { ImageCacheRow } from "./image-cache.js";
 import { runMigrations } from "./migrations.js";
 import * as settingsRepo from "./settings.js";
+import type { SeerrStoredSettings } from "./settings.js";
+import * as seerrRepo from "./seerr.js";
+import type { UpsertSeerrUserLinkInput, UpsertSeerrRequestStateInput } from "./seerr.js";
 import * as syncRepo from "./sync.js";
 import * as usersRepo from "./users.js";
 import * as watchlistRepo from "./watchlist.js";
@@ -246,7 +251,7 @@ export class HubarrDatabase {
   getWatchlistGrouped(options: {
     userId?: number;
     mediaType?: "movie" | "show";
-    availability?: "available" | "missing";
+    availability?: "available" | "missing" | "requested";
     sortBy?: WatchlistSortBy;
     page: number;
     pageSize: number;
@@ -391,5 +396,73 @@ export class HubarrDatabase {
 
   buildDashboard(): DashboardResponse {
     return syncRepo.buildDashboard(this.db);
+  }
+
+  // -------------------------------------------------------------------------
+  // Seerr settings
+  // -------------------------------------------------------------------------
+
+  getSeerrSettings(): SeerrStoredSettings {
+    return settingsRepo.getSeerrSettings(this.db);
+  }
+
+  saveSeerrSettings(settings: SeerrStoredSettings): void {
+    settingsRepo.saveSeerrSettings(this.db, settings);
+  }
+
+  updateSeerrSettings(patch: Partial<SeerrStoredSettings>): SeerrStoredSettings {
+    return settingsRepo.updateSeerrSettings(this.db, patch);
+  }
+
+  // -------------------------------------------------------------------------
+  // Seerr user links
+  // -------------------------------------------------------------------------
+
+  getSeerrUserLink(userId: number): SeerrUserLink | null {
+    return seerrRepo.getSeerrUserLink(this.db, userId);
+  }
+
+  listSeerrUserLinks(): SeerrUserLink[] {
+    return seerrRepo.listSeerrUserLinks(this.db);
+  }
+
+  upsertSeerrUserLink(input: UpsertSeerrUserLinkInput): SeerrUserLink {
+    return seerrRepo.upsertSeerrUserLink(this.db, input);
+  }
+
+  deleteSeerrUserLink(userId: number): void {
+    seerrRepo.deleteSeerrUserLink(this.db, userId);
+  }
+
+  // -------------------------------------------------------------------------
+  // Seerr request state
+  // -------------------------------------------------------------------------
+
+  getSeerrRequestState(userId: number, plexItemId: string): SeerrRequestState | null {
+    return seerrRepo.getSeerrRequestState(this.db, userId, plexItemId);
+  }
+
+  listSeerrRequestStatesForItem(plexItemId: string): SeerrRequestState[] {
+    return seerrRepo.listSeerrRequestStatesForItem(this.db, plexItemId);
+  }
+
+  listSeerrRequestStatesForUser(userId: number): SeerrRequestState[] {
+    return seerrRepo.listSeerrRequestStatesForUser(this.db, userId);
+  }
+
+  deleteSkippedUnlinkedSeerrRequestStatesForUser(userId: number): number {
+    return seerrRepo.deleteSkippedUnlinkedRequestStatesForUser(this.db, userId);
+  }
+
+  listSeerrRequestedPlexItemIds(plexItemIds: string[]): Set<string> {
+    return seerrRepo.listSeerrRequestedPlexItemIds(this.db, plexItemIds);
+  }
+
+  upsertSeerrRequestState(input: UpsertSeerrRequestStateInput): SeerrRequestState {
+    return seerrRepo.upsertSeerrRequestState(this.db, input);
+  }
+
+  deleteSeerrRequestState(userId: number, plexItemId: string): void {
+    seerrRepo.deleteSeerrRequestState(this.db, userId, plexItemId);
   }
 }

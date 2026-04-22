@@ -8,7 +8,7 @@ It tracks the owner's Plex watchlist and selected friends' watchlists, stores
 that watchlist state locally, matches items against Plex libraries, and keeps
 per-user Plex collections and hub rows up to date.
 
-Hubarr does not request or download media.
+When Seerr integration is enabled, Hubarr can also submit missing watchlist items as Seerr requests on behalf of the matching user.
 
 ---
 
@@ -93,6 +93,10 @@ Hubarr's frontend uses page-level polling for views that need to reflect
 background sync and scheduler changes while they are open. Polling pauses when
 the tab is hidden, avoids overlapping requests, and uses faster intervals while
 the page is showing active work.
+
+### Seerr integration
+
+When enabled, Hubarr connects to a Seerr instance and turns missing watchlist items into Seerr requests. Each user can be linked to a Seerr account — matched automatically by username or mapped manually. Requests are attributed to the watchlist owner, with an optional Hubarr service account handling execution. See [docs/seerr.md](seerr.md) for full details.
 
 ### Visibility isolation
 

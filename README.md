@@ -31,6 +31,7 @@ It keeps your own Plex watchlist and selected friends' watchlists in sync with P
 - Separate per-user movie and TV collections with shared naming
 - Configurable publishing to Library Recommended, Home, and Friends Home
 - Per-user collection naming, visibility, and target library controls
+- Optional Seerr integration for manually or automatically sending missing watchlist items to a Seerr instance as requests
 
 ## How It Works
 

@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { apiGet, apiPost } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
+import { useSettings } from "../lib/useSettings";
 import { formatRelativeTime, formatWatchlistDateShort } from "../lib/utils";
 import { WatchlistItemModal } from "../components/WatchlistItemModal";
 import type { DashboardResponse, RecentlyAddedItem, SyncRun } from "../../shared/types";
@@ -17,6 +18,8 @@ export default function Dashboard() {
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<RecentlyAddedItem | null>(null);
+  const { settings } = useSettings();
+  const seerrEnabled = Boolean(settings?.seerr?.enabled);
 
   async function load(background = false) {
     setLoading((current) => current || !background);
@@ -148,6 +151,7 @@ export default function Dashboard() {
               <PosterCard
                 key={item.plexItemId}
                 item={item}
+                seerrEnabled={seerrEnabled}
                 onClick={() => setSelectedItem(item)}
               />
             ))}
@@ -159,7 +163,7 @@ export default function Dashboard() {
         )}
       </div>
       {selectedItem && (
-        <WatchlistItemModal item={selectedItem} onClose={() => setSelectedItem(null)} />
+        <WatchlistItemModal item={selectedItem} onClose={() => setSelectedItem(null)} seerrSettings={settings?.seerr} />
       )}
       </div>
     </div>
@@ -195,7 +199,8 @@ const KIND_LABELS: Record<string, string> = {
   full: "GraphQL",
   rss: "RSS",
   user: "Manual",
-  publish: "Collection"
+  publish: "Collection",
+  seerr: "Seerr"
 };
 
 function formatCompactSummary(run: SyncRun): string {
@@ -258,9 +263,11 @@ function CompactSyncRow({ run }: { run: SyncRun }) {
 
 function PosterCard({
   item,
+  seerrEnabled,
   onClick
 }: {
   item: RecentlyAddedItem;
+  seerrEnabled: boolean;
   onClick: () => void;
 }) {
   const posterSrc = getPlexImageSrc(item.posterUrl);
@@ -297,6 +304,10 @@ function PosterCard({
             <div className="relative">
               <div className="absolute inset-[3px] rounded-full bg-[#0a3d1f]" />
               <CheckCircle size={18} className="relative text-success drop-shadow-[0_0_4px_rgba(0,0,0,1)]" />
+            </div>
+          ) : seerrEnabled && item.seerrRequested ? (
+            <div className="relative w-[18px] h-[18px] rounded-full bg-surface-container-highest border border-outline-variant/40 flex items-center justify-center drop-shadow-[0_0_4px_rgba(0,0,0,1)]">
+              <img src="/seerr-icon.svg" alt="Requested in Seerr" className="w-3 h-3" />
             </div>
           ) : (
             <div className="relative">

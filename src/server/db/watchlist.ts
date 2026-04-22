@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 import type { WatchlistGroupedItem, WatchlistItem, WatchlistPageResponse, WatchlistSortBy } from "../../shared/types.js";
 import { mergeRawPayloadGuids } from "./guid-dedupe.js";
 import { getDiscoverKeyForPlexItemId, upsertMediaItemIdentifiers } from "./identifiers.js";
+import { listSeerrRequestedPlexItemIds } from "./seerr.js";
 import { getAppSettings } from "./settings.js";
 import type { Logger } from "../logger.js";
 
@@ -26,6 +27,7 @@ type BaseWatchlistItemGroup = {
   addedAt: string;
   matchedRatingKey: string | null;
   plexAvailable: boolean;
+  seerrRequested: boolean;
   memberItemIds: Set<string>;
   userAddedAt: Map<number, string>;
 };
@@ -204,6 +206,7 @@ function buildMergedWatchlistGroups(
       addedAt: row.addedAt,
       matchedRatingKey: row.matchedRatingKey,
       plexAvailable: Boolean(row.matchedRatingKey),
+      seerrRequested: false,
       memberItemIds: new Set([row.plexItemId]),
       userAddedAt: new Map([[row.userId, row.addedAt]])
     });
@@ -239,6 +242,7 @@ function buildMergedWatchlistGroups(
         addedAt: item.addedAt,
         matchedRatingKey: item.matchedRatingKey,
         plexAvailable: item.plexAvailable,
+        seerrRequested: item.seerrRequested,
         memberItemIds: new Set(item.memberItemIds),
         userAddedAt: new Map(item.userAddedAt)
       });
@@ -259,6 +263,7 @@ function buildMergedWatchlistGroups(
       existing.matchedRatingKey = item.matchedRatingKey;
     }
     existing.plexAvailable = existing.plexAvailable || item.plexAvailable;
+    existing.seerrRequested = existing.seerrRequested || item.seerrRequested;
 
     for (const memberItemId of item.memberItemIds) {
       existing.memberItemIds.add(memberItemId);
@@ -386,7 +391,7 @@ export function getWatchlistGrouped(
   options: {
     userId?: number;
     mediaType?: "movie" | "show";
-    availability?: "available" | "missing";
+    availability?: "available" | "missing" | "requested";
     sortBy?: WatchlistSortBy;
     page: number;
     pageSize: number;
@@ -423,7 +428,13 @@ export function getWatchlistGrouped(
   logger?.debug("Building watchlist facets with filters", { allowSelectedDisabledOnly, userId });
 
   const itemRows = loadWatchlistItemSummaries(db, whereClause, whereParams);
+  const seerrRequestedItemIds = listSeerrRequestedPlexItemIds(db, itemRows.map((row) => row.plexItemId));
   const allItems = buildMergedWatchlistGroups(itemRows);
+  for (const item of allItems) {
+    item.seerrRequested = Array.from(item.memberItemIds).some((memberItemId) =>
+      seerrRequestedItemIds.has(memberItemId.trim().toLowerCase())
+    );
+  }
 
   const enabledUsers = db
     .prepare(`
@@ -462,7 +473,8 @@ export function getWatchlistGrouped(
   );
   const availabilityCounts = {
     available: availabilityFacetItems.filter((item) => item.plexAvailable).length,
-    missing: availabilityFacetItems.filter((item) => !item.plexAvailable).length
+    missing: availabilityFacetItems.filter((item) => !item.plexAvailable && !item.seerrRequested).length,
+    requested: availabilityFacetItems.filter((item) => !item.plexAvailable && item.seerrRequested).length
   };
 
   logger?.info("Computed watchlist facet counts", { totalItems: allItems.length, mediaCounts, availabilityCounts });
@@ -477,7 +489,10 @@ export function getWatchlistGrouped(
     if (availability === "available" && !item.plexAvailable) {
       return false;
     }
-    if (availability === "missing" && item.plexAvailable) {
+    if (availability === "missing" && (item.plexAvailable || item.seerrRequested)) {
+      return false;
+    }
+    if (availability === "requested" && (!item.seerrRequested || item.plexAvailable)) {
       return false;
     }
     return true;
@@ -543,6 +558,7 @@ export function getWatchlistGrouped(
       userCount: item.userAddedAt.size,
       users,
       plexAvailable: item.plexAvailable,
+      seerrRequested: item.seerrRequested,
       matchedRatingKey: item.matchedRatingKey
     };
   });
@@ -555,6 +571,7 @@ export function getWatchlistGrouped(
     filters: {
       userId: userId ?? null,
       mediaType: mediaType ?? "all",
+      availability: availability ?? "all",
       sortBy
     },
     facets: {

@@ -6,20 +6,21 @@ import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { formatDateTime, formatRelativeTime } from "../lib/utils";
 import type { HistoryPageResponse, SearchCandidate, SyncRun, SyncRunDetail, SyncRunItem } from "../../shared/types";
 
-type KindFilter = "all" | "full" | "rss" | "user" | "publish";
+type KindFilter = "all" | "full" | "rss" | "user" | "publish" | "seerr";
 type StatusFilter = "all" | "success" | "error" | "running";
 
 const KIND_LABELS: Record<string, string> = {
   full: "GraphQL",
   rss: "RSS",
   user: "Manual",
-  publish: "Collection"
+  publish: "Collection",
+  seerr: "Seerr"
 };
 
-// Strip the leading "RSS sync:" / "Full sync:" / "Manual sync" prefix from a summary
+// Strip the leading sync-kind prefix from a summary
 // string since the row header already shows the sync type.
 function stripKindPrefix(summary: string): string {
-  return summary.replace(/^(RSS sync|Full sync|Manual sync|Collection publish|Collection sync)[:\s]*/i, "").trim();
+  return summary.replace(/^(RSS sync|Full sync|Manual sync|Collection publish|Collection sync|Seerr request sync)[:\s]*/i, "").trim();
 }
 
 function capitalizeSentence(text: string): string {
@@ -38,10 +39,14 @@ const ACTION_LABELS: Record<string, string> = {
   "isolation.filters": "Isolation filters",
   "sync.user": "User sync",
   "rss.feed.check.self": "Self RSS feed check",
-  "rss.feed.check.friends": "Friends RSS feed check"
+  "rss.feed.check.friends": "Friends RSS feed check",
+  "seerr.request.created": "Seerr request created",
+  "seerr.request.existing": "Already in Seerr",
+  "seerr.request.skipped": "Seerr request skipped",
+  "seerr.request.failed": "Seerr request failed"
 };
 
-const VALID_KINDS: KindFilter[] = ["all", "full", "rss", "user", "publish"];
+const VALID_KINDS: KindFilter[] = ["all", "full", "rss", "user", "publish", "seerr"];
 const VALID_STATUSES: StatusFilter[] = ["all", "success", "error", "running"];
 const VALID_PAGE_SIZES = [10, 25, 50, 100];
 const HISTORY_FAST_REFRESH_MS = 2_500;
@@ -111,7 +116,7 @@ export default function History() {
       <div className="flex flex-wrap gap-2 mb-4 items-center">
         {/* Kind filter */}
         <div className="flex rounded-lg overflow-hidden border border-outline-variant/30">
-          {(["all", "full", "rss", "user", "publish"] as KindFilter[]).map((k) => (
+          {VALID_KINDS.map((k) => (
             <button
               key={k}
               onClick={() => setParam("type", k, true)}

@@ -169,6 +169,7 @@ export interface WatchlistGroupedItem {
   userCount: number;
   users: WatchlistUser[];
   plexAvailable: boolean;
+  seerrRequested: boolean;
   matchedRatingKey: string | null;
 }
 
@@ -180,6 +181,7 @@ export interface WatchlistPageResponse {
   filters: {
     userId: number | null;
     mediaType: "all" | MediaType;
+    availability: "all" | "available" | "missing" | "requested";
     sortBy: WatchlistSortBy;
   };
   facets: {
@@ -198,6 +200,7 @@ export interface WatchlistPageResponse {
     availability: {
       available: number;
       missing: number;
+      requested: number;
     };
   };
   selectedUser: {
@@ -223,7 +226,7 @@ export interface PlexCollectionRecord {
 
 export interface SyncRun {
   id: number;
-  kind: "full" | "user" | "rss" | "publish";
+  kind: "full" | "user" | "rss" | "publish" | "seerr";
   status: SyncStatus;
   startedAt: string;
   completedAt: string | null;
@@ -240,6 +243,7 @@ export interface RecentlyAddedItem {
   users: WatchlistUser[];
   addedAt: string;
   plexAvailable: boolean;
+  seerrRequested: boolean;
 }
 
 export interface DashboardStats {
@@ -352,6 +356,7 @@ export interface JobInfo {
   name: string;
   intervalDescription: string;
   nextRunAt: string | null;
+  nextRunLabel?: string;
   lastRunAt: string | null;
   lastRunStatus: "success" | "error" | null;
   isRunning: boolean;
@@ -387,6 +392,7 @@ export interface SettingsResponse {
     showLibraryId: string | null;
     visibilityDefaults: VisibilityConfig;
   };
+  seerr: SeerrSettingsView;
 }
 
 export interface PlexConnectionOption {
@@ -408,4 +414,74 @@ export interface PlexConfigPayload {
   hostname?: string;
   port?: number;
   useSsl?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Seerr integration
+// ---------------------------------------------------------------------------
+
+export type SeerrMappingStatus = "manual" | "auto" | "unlinked" | "ambiguous" | "missing";
+
+export type SeerrRequestOutcome =
+  | "created"
+  | "already_requested"
+  | "already_available"
+  | "added_directly"
+  | "skipped_unlinked_user"
+  | "skipped_missing_ids"
+  | "failed";
+
+/** Seerr user as returned by the Seerr API and stored for mapping UI. */
+export interface SeerrUser {
+  id: number;
+  email: string;
+  username: string | null;
+  displayName: string | null;
+  plexUsername: string | null;
+}
+
+/** Per-user Seerr mapping record as seen by the client. */
+export interface SeerrUserLink {
+  userId: number;
+  manualSeerrUserId: number | null;
+  autoMatchedSeerrUserId: number | null;
+  effectiveSeerrUserId: number | null;
+  mappingStatus: SeerrMappingStatus;
+  autoRequestEnabledOverride: boolean | null;
+  autoRequestEnabled: boolean;
+}
+
+/** Per-user per-item Seerr request state. */
+export interface SeerrRequestState {
+  id: number;
+  userId: number;
+  plexItemId: string;
+  seerrRequestId: number | null;
+  seerrMediaId: number | null;
+  tmdbId: number | null;
+  lastAttemptedAt: string | null;
+  outcome: SeerrRequestOutcome | null;
+  lastError: string | null;
+  effectiveSeerrUserId: number | null;
+  executionSeerrUserId: number | null;
+  updatedAt: string;
+}
+
+/** Seerr settings sent to the client (API key never exposed). */
+export interface SeerrSettingsView {
+  enabled: boolean;
+  baseUrl: string;
+  apiKeyConfigured: boolean;
+  autoRequestEnabled: boolean;
+  useServiceAccount: boolean;
+  serviceAccountSeerrUserId: number | null;
+}
+
+/** Payload accepted by PATCH /api/settings/seerr */
+export interface SeerrSettingsPatch {
+  enabled?: boolean;
+  baseUrl?: string;
+  apiKey?: string;
+  autoRequestEnabled?: boolean;
+  useServiceAccount?: boolean;
 }

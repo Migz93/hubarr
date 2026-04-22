@@ -6,10 +6,10 @@ import { test, expect } from "@playwright/test";
  * Read-only. Safe to run against a live instance.
  */
 
-const TABS = ["General", "Plex", "Collections", "Logs", "Jobs", "About"] as const;
+const TABS = ["General", "Plex", "Collections", "Seerr", "Logs", "Jobs", "About"] as const;
 
 test.describe("Settings tabs", () => {
-  test("All six tabs are visible", async ({ page }) => {
+  test("All seven tabs are visible", async ({ page }) => {
     await page.goto("/settings");
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
 

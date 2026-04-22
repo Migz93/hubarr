@@ -315,9 +315,10 @@ naturally trend towards zero for most users.
 | `src/server/services.ts` | `syncUser()`, `runFullSync()`, `runUserSync()`, `syncActivityCache()`, `buildAllRssDateMaps()`, `pollRss()`, `processSelfRssNewItems()`, `processRssNewItems()`, `runPublishPass()` |
 | `src/server/db/watchlist.ts` | Watchlist and activity cache DB helpers |
 | `src/server/db/identifiers.ts` | Explicit media/user identifier catalog and alias-based lookup helpers |
-| `src/server/db/migrations.ts` | Schema — `watchlist_cache` (v1), `watchlist_activity_cache` (v5) |
+| `src/server/db/migrations.ts` | Schema — `watchlist_cache` (v1), `watchlist_activity_cache` (v5), `seerr_user_links` and `seerr_request_state` (v10) |
 | `src/server/rss-cache.ts` | In-memory RSS diff cache — author-keyed deduplication, `prime()`, `diff()` |
 | `src/server/index.ts` | Job registrations for all three sync mechanisms |
 | `src/client/lib/utils.ts` | `formatWatchlistDate()`, `formatWatchlistDateShort()` — sentinel-aware display helpers |
+| `src/server/services.ts` → `processSeerrRequestsForUser()` | Called by `runSeerrRequestSync()` during the Seerr request-sync job; checks Seerr state for missing items and creates requests when auto-request is enabled. See [docs/seerr.md](seerr.md). |
 
 ---

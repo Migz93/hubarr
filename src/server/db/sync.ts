@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import type { DashboardResponse, RecentlyAddedItem, SyncRun } from "../../shared/types.js";
 import type { Logger } from "../logger.js";
 import { buildGuidMergePlan, mergeRawPayloadGuids } from "./guid-dedupe.js";
+import { listSeerrRequestedPlexItemIds } from "./seerr.js";
 import { calculateHistoryRetentionEvents, getAppSettings } from "./settings.js";
 
 // -------------------------------------------------------------------------
@@ -205,6 +206,7 @@ export function buildDashboard(db: Database.Database): DashboardResponse {
       ORDER BY w.added_at DESC
     `)
     .all() as RecentRow[];
+  const seerrRequestedItemIds = listSeerrRequestedPlexItemIds(db, recentRows.map((row) => row.plexItemId));
 
   // Group by plexItemId so the same movie watchlisted by multiple users
   // appears once, showing all users and the most recent watchlist date.
@@ -230,6 +232,7 @@ export function buildDashboard(db: Database.Database): DashboardResponse {
       }
       if (row.addedAt > existing.addedAt) existing.addedAt = row.addedAt;
       existing.plexAvailable = existing.plexAvailable || Boolean(row.matchedRatingKey);
+      existing.seerrRequested = existing.seerrRequested || seerrRequestedItemIds.has(row.plexItemId.trim().toLowerCase());
     } else {
       grouped.set(row.plexItemId, {
         plexItemId: row.plexItemId,
@@ -239,7 +242,8 @@ export function buildDashboard(db: Database.Database): DashboardResponse {
         posterUrl: row.posterUrl,
         addedAt: row.addedAt,
         users: [userEntry],
-        plexAvailable: Boolean(row.matchedRatingKey)
+        plexAvailable: Boolean(row.matchedRatingKey),
+        seerrRequested: seerrRequestedItemIds.has(row.plexItemId.trim().toLowerCase())
       });
     }
   }
@@ -259,6 +263,7 @@ export function buildDashboard(db: Database.Database): DashboardResponse {
 
     if (source.addedAt > target.addedAt) target.addedAt = source.addedAt;
     target.plexAvailable = target.plexAvailable || source.plexAvailable;
+    target.seerrRequested = target.seerrRequested || source.seerrRequested;
     grouped.delete(sourceId);
   }
 
