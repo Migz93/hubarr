@@ -373,12 +373,10 @@ export function getWatchlistItems(db: Database.Database, userId?: number): Watch
       const parsed = JSON.parse(rawPayload) as Partial<WatchlistItem>;
       return {
         ...row,
-        // guids and releaseDate are stored only in raw_payload — they are wide/variable-length
-        // arrays not needed for SQL filtering. discoverKey is now a dedicated column but
-        // we fall back to raw_payload for any rows written before migration v7.
+        // guids and releaseDate are stored only in raw_payload — wide/variable-length data not needed for SQL filtering.
         guids: Array.isArray(parsed.guids) ? parsed.guids : undefined,
-        discoverKey: row.discoverKey ?? (typeof parsed.discoverKey === "string" ? parsed.discoverKey : undefined),
-        releaseDate: typeof parsed.releaseDate === "string" ? parsed.releaseDate : (row.releaseDate ?? null)
+        discoverKey: row.discoverKey,
+        releaseDate: typeof parsed.releaseDate === "string" ? parsed.releaseDate : null
       };
     } catch {
       return row;

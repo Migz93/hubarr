@@ -455,26 +455,6 @@ export class PlexIntegration {
     return url;
   }
 
-  private normalizeGuids(guids: unknown): string[] {
-    if (!Array.isArray(guids)) {
-      return [];
-    }
-
-    return guids
-      .map((guid) => {
-        if (typeof guid === "string") {
-          return guid;
-        }
-        if (guid && typeof guid === "object" && "id" in guid && typeof guid.id === "string") {
-          return guid.id;
-        }
-        return null;
-      })
-      .filter((guid): guid is string => Boolean(guid))
-      .map((guid) => guid.toLowerCase().trim())
-      .filter(Boolean);
-  }
-
   private normalizeAddedAt(value: unknown): string {
     if (typeof value === "number" && Number.isFinite(value)) {
       return new Date(value > 10_000_000_000 ? value : value * 1000).toISOString();

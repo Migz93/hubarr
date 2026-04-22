@@ -842,12 +842,13 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         patch.collectionNamePattern = body.collections.collectionNamePattern;
       }
       if (body.collections.collectionSortOrder !== undefined) {
-        // Accept new date-* values and normalize legacy year-* values on ingest.
-        const legacyMap: Record<string, string> = { "year-desc": "date-desc", "year-asc": "date-asc" };
-        const normalized = legacyMap[body.collections.collectionSortOrder] ?? body.collections.collectionSortOrder;
         const valid: CollectionSortOrder[] = ["date-desc", "date-asc", "title", "watchlist-date-desc", "watchlist-date-asc"];
-        if (valid.includes(normalized as CollectionSortOrder)) {
-          patch.collectionSortOrder = normalized as CollectionSortOrder;
+        if (valid.includes(body.collections.collectionSortOrder as CollectionSortOrder)) {
+          patch.collectionSortOrder = body.collections.collectionSortOrder as CollectionSortOrder;
+        } else {
+          logger.warn("Invalid collectionSortOrder value rejected", { value: body.collections.collectionSortOrder, allowed: valid });
+          res.status(400).json({ error: "Invalid collectionSortOrder.", allowed: valid });
+          return;
         }
       }
       if ("movieLibraryId" in body.collections) {
