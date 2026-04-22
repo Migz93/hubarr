@@ -47,10 +47,15 @@ export default function PlexConfigForm({
     }));
   }, [availableServers]);
 
+  const trimmedHostname = hostname.trim();
+  const parsedPort = parseInt(port, 10);
+  const portValid = Number.isInteger(parsedPort) && parsedPort >= 1 && parsedPort <= 65535;
+  const manualConfigValid = trimmedHostname.length > 0 && portValid;
+
   function buildPayload(): PlexConfigPayload {
     return selectedServerUri && selectedMachineIdentifier
       ? { mode: "preset", serverUrl: selectedServerUri, machineIdentifier: selectedMachineIdentifier }
-      : { mode: "manual", hostname, port: Number(port), useSsl };
+      : { mode: "manual", hostname: trimmedHostname, port: parsedPort, useSsl };
   }
 
   function switchToManual() {
@@ -72,20 +77,25 @@ export default function PlexConfigForm({
   }
 
   async function testConnection() {
+    const payload = buildPayload();
+    console.debug("Plex connection test started", { testUrl, payload });
     setTesting(true);
     setTestResult(null);
     try {
       const result = await apiPost<{ ok: boolean; serverUrl?: string; libraryCount?: number; error?: string }>(
         testUrl,
-        buildPayload()
+        payload
       );
       if (result.ok) {
+        console.debug("Plex connection test succeeded", { ok: true, serverUrl: result.serverUrl, libraryCount: result.libraryCount });
         const count = result.libraryCount ?? 0;
         setTestResult({ ok: true, message: `Test Succeeded — ${count} ${count === 1 ? "library" : "libraries"} found` });
       } else {
+        console.warn("Plex connection test returned non-ok", { ok: false, error: result.error });
         setTestResult({ ok: false, message: result.error ?? "Connection failed" });
       }
     } catch (caught) {
+      console.warn("Plex connection test threw", { error: caught instanceof Error ? caught.message : String(caught) });
       setTestResult({ ok: false, message: caught instanceof Error ? caught.message : String(caught) });
     } finally {
       setTesting(false);
@@ -106,8 +116,6 @@ export default function PlexConfigForm({
       setSaving(false);
     }
   }
-
-  const hasHostname = Boolean(hostname);
 
   return (
     <SectionCard
@@ -201,7 +209,7 @@ export default function PlexConfigForm({
           <button
             type="button"
             onClick={() => void testConnection()}
-            disabled={testing || (!selectedServerUri && !hasHostname)}
+            disabled={testing || (!selectedServerUri && !manualConfigValid)}
             className="bg-surface-container-high hover:bg-surface-bright disabled:opacity-50 text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
           >
             {testing ? "Testing..." : "Test Connection"}
