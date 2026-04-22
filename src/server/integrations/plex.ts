@@ -1301,24 +1301,43 @@ export class PlexIntegration {
     }
 
     // Label-first: scan all collections for the stable hubarr label for this user.
-    // This finds a collection that exists under an old/different name and renames it
-    // rather than creating a duplicate.
+    // This finds collections that exist under an old/different name and renames the
+    // canonical one rather than creating a duplicate. Any additional matches are genuine
+    // duplicates and are deleted.
     const label = this.createCollectionLabel(username);
+    const labelMatches: Array<{ ratingKey: string; title: string }> = [];
     for (const collection of collections) {
       const labels = await this.getCollectionLabels(collection.ratingKey);
       if (labels.some((l) => l.toLowerCase() === label.toLowerCase())) {
-        this.logger.info("Found existing collection by label, renaming to current expected title", {
-          ratingKey: collection.ratingKey,
-          oldTitle: collection.title,
-          newTitle: title,
-          label
-        });
-        await this.updateCollectionTitle(collection.ratingKey, title);
-        return collection.ratingKey;
+        labelMatches.push(collection);
       }
     }
 
-    return this.createCollection(title, mediaType, libraryId);
+    if (labelMatches.length === 0) {
+      return this.createCollection(title, mediaType, libraryId);
+    }
+
+    const [canonical, ...extras] = labelMatches;
+    this.logger.info("Found existing collection by label, renaming to current expected title", {
+      ratingKey: canonical.ratingKey,
+      oldTitle: canonical.title,
+      newTitle: title,
+      label
+    });
+    await this.updateCollectionTitle(canonical.ratingKey, title);
+
+    if (extras.length > 0) {
+      this.logger.warn("Found duplicate Hubarr-labelled collections for user, removing extras", {
+        canonicalRatingKey: canonical.ratingKey,
+        duplicates: extras.map((c) => ({ ratingKey: c.ratingKey, title: c.title })),
+        label
+      });
+      for (const extra of extras) {
+        await this.deleteCollection(extra.ratingKey);
+      }
+    }
+
+    return canonical.ratingKey;
   }
 
   async deleteCollection(collectionRatingKey: string): Promise<void> {
