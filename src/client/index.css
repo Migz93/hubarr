@@ -32,6 +32,9 @@
   --overlay-poster: rgba(13, 14, 18, 0.95);
   /* Derived from --color-background (#0d0e12) at 0% opacity */
   --overlay-poster-transparent: rgba(13, 14, 18, 0);
+  /* Opaque dark halos for availability icons on poster cards */
+  --poster-halo-success: #0a3d1f;
+  --poster-halo-error: #3d0a0a;
 }
 
 @layer base {

@@ -317,7 +317,7 @@ function WatchlistPoster({
         <div className="absolute top-1.5 right-1.5">
           {item.plexAvailable ? (
             <div className="relative">
-              <div className="absolute inset-[3px] rounded-full bg-success/20" />
+              <div className="absolute inset-[3px] rounded-full bg-[var(--poster-halo-success)]" />
               <CheckCircle size={18} className="relative text-success drop-shadow-[0_0_4px_rgba(0,0,0,1)]" />
             </div>
           ) : seerrEnabled && item.seerrRequested ? (
@@ -326,7 +326,7 @@ function WatchlistPoster({
             </div>
           ) : (
             <div className="relative">
-              <div className="absolute inset-[3px] rounded-full bg-error/20" />
+              <div className="absolute inset-[3px] rounded-full bg-[var(--poster-halo-error)]" />
               <XCircle size={18} className="relative text-error drop-shadow-[0_0_4px_rgba(0,0,0,1)]" />
             </div>
           )}
