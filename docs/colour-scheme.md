@@ -45,7 +45,7 @@ Two steps of the brand red. Use `primary-dim` for resting interactive states and
 |---|---|---|
 | `success` | `#22c55e` | Success states, completed actions, positive indicators |
 | `warning` | `#f59e0b` | Warnings, non-critical notices, restart-required badges |
-| `error` | `#f06060` | Errors, validation failures, destructive action indicators |
+| `error` | `#f07070` | Errors, validation failures, destructive action indicators |
 
 ## Contrast
 

@@ -261,7 +261,7 @@ function FilterChip({
       )}
       {label}
       {count !== undefined && (
-        <span className={`text-xs ${active ? "text-on-surface/70" : "text-on-surface-variant/60"}`}>
+        <span className={`text-xs ${active ? "text-on-surface" : "text-on-surface-variant/60"}`}>
           {count}
         </span>
       )}

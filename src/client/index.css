@@ -22,7 +22,16 @@
 
   --color-success: #22c55e;
   --color-warning: #f59e0b;
-  --color-error: #f06060;
+  --color-error: #f07070;
+}
+
+:root {
+  /* Derived from --color-background-container (#18191e) at 60% opacity */
+  --overlay-glass: rgba(24, 25, 30, 0.6);
+  /* Derived from --color-background (#0d0e12) at 95% opacity */
+  --overlay-poster: rgba(13, 14, 18, 0.95);
+  /* Derived from --color-background (#0d0e12) at 0% opacity */
+  --overlay-poster-transparent: rgba(13, 14, 18, 0);
 }
 
 @layer base {
@@ -40,12 +49,12 @@
 }
 
 .glass-panel {
-  background: rgba(24, 25, 30, 0.6);
+  background: var(--overlay-glass);
   backdrop-filter: blur(20px);
 }
 
 .poster-gradient {
-  background: linear-gradient(to top, rgba(13, 14, 18, 0.95) 0%, rgba(13, 14, 18, 0) 60%);
+  background: linear-gradient(to top, var(--overlay-poster) 0%, var(--overlay-poster-transparent) 60%);
 }
 
 .no-scrollbar::-webkit-scrollbar {
