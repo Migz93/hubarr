@@ -49,7 +49,7 @@ export class HubarrDatabase {
     // to prevent stale rows left in a `running` state during startup.
     syncRepo.reconcileStaleRuns(this.db, logger);
     settingsRepo.seedDefaultSettings(this.db);
-    this.sessionSecret = settingsRepo.resolveSessionSecret(this.db, config.dataDir);
+    this.sessionSecret = settingsRepo.resolveSessionSecret(this.db);
   }
 
   getSessionSecret(): string {

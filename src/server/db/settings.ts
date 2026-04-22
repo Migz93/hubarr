@@ -1,6 +1,4 @@
 import crypto from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
 import type Database from "better-sqlite3";
 import type {
   AppSettings,
@@ -39,16 +37,6 @@ export const defaultAppSettings: AppSettings = {
   onboardingComplete: false
 };
 
-/**
- * Normalize legacy collection sort order values to the current date-based names.
- * Existing installs may have "year-desc" or "year-asc" stored in settings.
- */
-function normalizeSortOrder(value: string): AppSettings["collectionSortOrder"] {
-  if (value === "year-desc") return "date-desc";
-  if (value === "year-asc") return "date-asc";
-  if (value === "date-desc" || value === "date-asc" || value === "title" || value === "watchlist-date-desc" || value === "watchlist-date-asc") return value;
-  return "date-desc";
-}
 
 export function getSetting<T>(db: Database.Database, key: SettingKey): T | null {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as
@@ -73,31 +61,13 @@ export function seedDefaultSettings(db: Database.Database): void {
   }
 }
 
-/**
- * Resolve the session signing secret from the database.
- *
- * On the first run after migrating from the file-based approach, any existing
- * .session_secret file is read into the database and then deleted so that
- * existing sessions remain valid. If no secret exists anywhere a new one is
- * generated and persisted.
- */
-export function resolveSessionSecret(db: Database.Database, dataDir: string): string {
+export function resolveSessionSecret(db: Database.Database): string {
   const stored = getSetting<string>(db, "session_secret");
   if (stored) {
     return stored;
   }
 
-  // One-time migration: pull the value out of the legacy file if it exists.
-  const legacyFile = path.join(dataDir, ".session_secret");
-  let secret: string;
-  try {
-    secret = fs.readFileSync(legacyFile, "utf8").trim();
-    fs.unlinkSync(legacyFile);
-  } catch {
-    // File didn't exist — generate a fresh secret.
-    secret = crypto.randomBytes(48).toString("hex");
-  }
-
+  const secret = crypto.randomBytes(48).toString("hex");
   setSetting(db, "session_secret", secret);
   return secret;
 }
@@ -119,18 +89,10 @@ export function getBootstrapStatus(db: Database.Database, hasActiveSession: bool
       appSettings.defaultShowLibraryId
   );
 
-  // Backwards-compat: existing installs that were fully configured before the
-  // onboardingComplete flag was introduced won't have the field in stored
-  // settings. For these we derive onboardingComplete from configurationValid so
-  // they aren't forced through the wizard again.
-  const stored = getSetting<AppSettings>(db, "app");
-  const hasFlag = stored !== null && "onboardingComplete" in stored;
-  const onboardingComplete = hasFlag ? appSettings.onboardingComplete : configurationValid;
-
   return {
     hasOwner: Boolean(getSetting<PlexOwnerRecord>(db, "admin")),
     configurationValid,
-    onboardingComplete,
+    onboardingComplete: appSettings.onboardingComplete,
     hasActiveSession
   };
 }
@@ -231,12 +193,7 @@ export function deleteAllSessions(db: Database.Database): void {
 
 export function getAppSettings(db: Database.Database): AppSettings {
   const stored = getSetting<AppSettings>(db, "app");
-  const merged = { ...defaultAppSettings, ...stored };
-  // Normalize on every read so existing installs that stored the old "year-desc" /
-  // "year-asc" values automatically upgrade to "date-desc" / "date-asc" without
-  // requiring a schema migration or a manual settings save.
-  merged.collectionSortOrder = normalizeSortOrder(merged.collectionSortOrder);
-  return merged;
+  return { ...defaultAppSettings, ...stored };
 }
 
 export function updateAppSettings(db: Database.Database, patch: Partial<AppSettings>): AppSettings {
