@@ -1282,6 +1282,7 @@ export class PlexIntegration {
   }
 
   async updateCollectionTitle(ratingKey: string, title: string): Promise<void> {
+    this.logger.info("Updating Plex collection title", { ratingKey, title });
     const params = new URLSearchParams({
       type: "18",
       id: ratingKey,
@@ -1293,38 +1294,38 @@ export class PlexIntegration {
 
   async ensureCollection(title: string, username: string, mediaType: MediaType, libraryId: string) {
     const collections = await this.getCollections(libraryId);
-
-    // Fast path: collection already has the expected title
-    const byTitle = collections.find((c) => c.title === title);
-    if (byTitle) {
-      return byTitle.ratingKey;
-    }
-
-    // Label-first: scan all collections for the stable hubarr label for this user.
-    // This finds collections that exist under an old/different name and renames the
-    // canonical one rather than creating a duplicate. Any additional matches are genuine
-    // duplicates and are deleted.
     const label = this.createCollectionLabel(username);
-    const labelMatches: Array<{ ratingKey: string; title: string }> = [];
-    for (const collection of collections) {
-      const labels = await this.getCollectionLabels(collection.ratingKey);
-      if (labels.some((l) => l.toLowerCase() === label.toLowerCase())) {
-        labelMatches.push(collection);
-      }
-    }
 
-    if (labelMatches.length === 0) {
+    // Fetch all collection labels in parallel so we can check for both title
+    // matches and label matches in one pass without serialising N round-trips.
+    const withLabels = await Promise.all(
+      collections.map(async (c) => ({ ...c, labels: await this.getCollectionLabels(c.ratingKey) }))
+    );
+
+    const byTitle = withLabels.find((c) => c.title === title);
+    // Label matches on collections other than the title match are duplicates to reconcile.
+    const labelMatches = withLabels.filter(
+      (c) => c.ratingKey !== byTitle?.ratingKey &&
+             c.labels.some((l) => l.toLowerCase() === label.toLowerCase())
+    );
+
+    // Canonical: title match wins; otherwise first label match.
+    const canonical = byTitle ?? labelMatches[0];
+    const extras = byTitle ? labelMatches : labelMatches.slice(1);
+
+    if (!canonical) {
       return this.createCollection(title, mediaType, libraryId);
     }
 
-    const [canonical, ...extras] = labelMatches;
-    this.logger.info("Found existing collection by label, renaming to current expected title", {
-      ratingKey: canonical.ratingKey,
-      oldTitle: canonical.title,
-      newTitle: title,
-      label
-    });
-    await this.updateCollectionTitle(canonical.ratingKey, title);
+    if (canonical.title !== title) {
+      this.logger.info("Found existing collection by label, renaming to current expected title", {
+        ratingKey: canonical.ratingKey,
+        oldTitle: canonical.title,
+        newTitle: title,
+        label
+      });
+      await this.updateCollectionTitle(canonical.ratingKey, title);
+    }
 
     if (extras.length > 0) {
       this.logger.warn("Found duplicate Hubarr-labelled collections for user, removing extras", {
