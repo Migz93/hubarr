@@ -1328,30 +1328,15 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       }
 
       if (!body.useServiceAccount) {
-        const baseUrl = patch.baseUrl ?? current.baseUrl;
-        const apiKey = patch.apiKey ?? current.apiKey;
-
-        if (current.useServiceAccount && current.serviceAccountSeerrUserId !== null) {
-          if (!baseUrl || !apiKey) {
-            res.status(400).json({ error: "Base URL and API key are required to disable service account mode cleanly." });
-            return;
-          }
-
-          try {
-            const seerr = services.buildSeerrIntegration(baseUrl, apiKey);
-            await seerr.deleteServiceAccount();
-            logger.info("Seerr service account deleted on settings save", {
-              seerrUserId: current.serviceAccountSeerrUserId
-            });
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            logger.error("Failed to delete Seerr service account", { message });
-            res.status(400).json({ error: `Could not delete Seerr service account: ${message}` });
-            return;
-          }
+        // Disabling service account mode — stop using the account but do not delete it from Seerr.
+        // Deleting causes Seerr user IDs to increment each time the option is toggled, which is
+        // surprising and hard to recover from. The account will be found and reused by email if
+        // the option is enabled again later.
+        if (current.useServiceAccount) {
+          logger.info("Seerr service account usage disabled — account retained in Seerr", {
+            seerrUserId: current.serviceAccountSeerrUserId
+          });
         }
-
-        // Disabling service account mode — clear the stored user ID after cleanup
         patch.serviceAccountSeerrUserId = null;
       }
     }

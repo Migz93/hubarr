@@ -326,25 +326,6 @@ export class SeerrIntegration {
     });
   }
 
-  /**
-   * Delete the Hubarr service account from Seerr if it exists.
-   * This is used when service account mode is disabled in Hubarr settings.
-   */
-  async deleteServiceAccount(users: SeerrUser[] = []): Promise<void> {
-    const seerrUsers = users.length > 0 ? users : await this.getUsers();
-    const existing = seerrUsers.find(
-      (u) => u.email.toLowerCase() === SEERR_SERVICE_ACCOUNT_EMAIL.toLowerCase()
-    );
-
-    if (!existing) {
-      this.logger.info("Seerr service account delete skipped — account not found");
-      return;
-    }
-
-    await this.delete(`/user/${existing.id}`);
-    this.logger.info("Seerr service account deleted", { seerrUserId: existing.id });
-  }
-
   // ---------------------------------------------------------------------------
   // Media status inspection
   // ---------------------------------------------------------------------------
