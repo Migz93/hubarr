@@ -98,16 +98,6 @@ function compareGroupedItems(
       if (titleCmp !== 0) return titleCmp;
       break;
     }
-    case "year-desc": {
-      const yearCmp = (right.year ?? 0) - (left.year ?? 0);
-      if (yearCmp !== 0) return yearCmp;
-      break;
-    }
-    case "year-asc": {
-      const yearCmp = (left.year ?? 0) - (right.year ?? 0);
-      if (yearCmp !== 0) return yearCmp;
-      break;
-    }
     default: {
       const addedCmp = new Date(right.addedAt).getTime() - new Date(left.addedAt).getTime();
       if (addedCmp !== 0) return addedCmp;

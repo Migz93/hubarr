@@ -37,7 +37,6 @@ export const defaultAppSettings: AppSettings = {
   onboardingComplete: false
 };
 
-
 export function getSetting<T>(db: Database.Database, key: SettingKey): T | null {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as
     | { value: string }
@@ -63,10 +62,7 @@ export function seedDefaultSettings(db: Database.Database): void {
 
 export function resolveSessionSecret(db: Database.Database): string {
   const stored = getSetting<string>(db, "session_secret");
-  if (stored) {
-    return stored;
-  }
-
+  if (stored) return stored;
   const secret = crypto.randomBytes(48).toString("hex");
   setSetting(db, "session_secret", secret);
   return secret;

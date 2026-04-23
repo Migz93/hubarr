@@ -45,10 +45,12 @@ Hubarr uses SQLite `PRAGMA user_version` for schema migrations.
 - `runMigrations(db)` runs on startup, applies any migration whose version is higher than the current `user_version`, and advances `user_version` after each successful migration
 - Each migration runs inside a transaction so a failure should leave the database unchanged
 
+**V2 baseline:** the schema was flattened at the V2 release. Migration version 1 is a single `CREATE TABLE` block that defines every table and index in its final form. A fresh install runs it once and is immediately at the correct state — there are no intermediate ALTER TABLE steps or sequential migrations to follow.
+
 When changing the schema in the future:
 
 1. Add a new migration entry with the next integer version
-2. Write the schema change in that migration's `up(db)` function
+2. Write the schema change in that migration's `up(db)` function (ALTER TABLE, CREATE TABLE, etc.)
 3. Do not edit older migrations that may already have shipped
 4. Keep default-setting seeding separate from schema migrations
 
