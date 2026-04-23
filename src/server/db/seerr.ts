@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import type { SeerrMappingStatus, SeerrRequestOutcome, SeerrRequestState, SeerrUserLink } from "../../shared/types.js";
+import { normalizeIdentifierValue } from "./identifiers.js";
 import { getSeerrSettings } from "./settings.js";
 
 // ---------------------------------------------------------------------------
@@ -157,10 +158,6 @@ function rowToRequestState(row: SeerrRequestStateRow): SeerrRequestState {
     executionSeerrUserId: row.execution_seerr_user_id,
     updatedAt: row.updated_at
   };
-}
-
-function normalizeIdentifierValue(value: string): string {
-  return value.trim().toLowerCase();
 }
 
 function findEquivalentSeerrRequestStateId(

@@ -4,7 +4,7 @@ import type { WatchlistItem } from "../../shared/types.js";
 type MediaIdentifierType = "plex_guid" | "discover_key" | "imdb" | "tmdb" | "tvdb" | "guid";
 type UserIdentifierType = "plex_user" | "plex_numeric" | "plex_uuid";
 
-function normalizeIdentifierValue(value: string): string {
+export function normalizeIdentifierValue(value: string): string {
   return value.trim().toLowerCase();
 }
 

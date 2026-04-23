@@ -696,8 +696,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     const sortByParam = req.query["sortBy"];
     const sortBy =
       sortByParam === "added-desc" || sortByParam === "added-asc" ||
-      sortByParam === "title-asc" || sortByParam === "title-desc" ||
-      sortByParam === "year-desc" || sortByParam === "year-asc"
+      sortByParam === "title-asc" || sortByParam === "title-desc"
         ? sortByParam
         : "added-desc";
     const page = req.query["page"] ? Math.max(1, Number(req.query["page"])) : 1;
