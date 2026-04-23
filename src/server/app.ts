@@ -46,6 +46,19 @@ function parseCookies(rawCookie = "") {
     }, new Map());
 }
 
+function parsePositiveIntegerQuery(value: unknown): number | undefined {
+  if (typeof value !== "string" || value.trim() === "") {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
 function signedValue(secret: string, value: string) {
   return crypto.createHmac("sha256", secret).update(value).digest("hex");
 }
@@ -682,7 +695,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   // ---------------------------------------------------------------------------
 
   app.get("/api/watchlists", requireAuth, (req, res) => {
-    const userId = req.query["userId"] ? Number(req.query["userId"]) : undefined;
+    const userId = parsePositiveIntegerQuery(req.query["userId"]);
     const mediaTypeParam = req.query["mediaType"];
     const mediaType =
       mediaTypeParam === "movie" || mediaTypeParam === "show"
@@ -699,8 +712,8 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       sortByParam === "title-asc" || sortByParam === "title-desc"
         ? sortByParam
         : "added-desc";
-    const page = req.query["page"] ? Math.max(1, Number(req.query["page"])) : 1;
-    const pageSize = req.query["pageSize"] ? Math.min(200, Math.max(1, Number(req.query["pageSize"]))) : 50;
+    const page = parsePositiveIntegerQuery(req.query["page"]) ?? 1;
+    const pageSize = Math.min(200, parsePositiveIntegerQuery(req.query["pageSize"]) ?? 50);
     res.json(db.getWatchlistGrouped({ userId, mediaType, availability, sortBy, page, pageSize }));
   });
 
