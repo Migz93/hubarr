@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { RefreshCw } from "lucide-react";
 import { apiGet, apiPost } from "./lib/api";
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
@@ -18,6 +19,22 @@ interface AppState {
 }
 
 export default function App() {
+  const location = useLocation();
+
+  // Keep the Plex popup on a lightweight same-origin page so mobile browsers
+  // treat the auth window as a user-opened tab before it navigates to plex.tv.
+  if (location.pathname === "/login/plex/loading") {
+    return <PlexPopupLoading />;
+  }
+
+  if (location.pathname === "/login/plex/done") {
+    return <PlexPopupDone />;
+  }
+
+  return <MainApp />;
+}
+
+function MainApp() {
   const navigate = useNavigate();
   const [state, setState] = useState<AppState>({
     bootstrap: null,
@@ -31,13 +48,20 @@ export default function App() {
         apiGet<BootstrapStatus>("/api/bootstrap/status"),
         apiGet<{ authenticated: boolean; user: SessionUser | null }>("/api/auth/session")
       ]);
+
       setState({
         bootstrap,
         user: session.authenticated ? session.user : null,
         loading: false
       });
+
+      return {
+        bootstrap,
+        session
+      };
     } catch {
       setState((s) => ({ ...s, loading: false }));
+      return null;
     }
   }
 
@@ -46,9 +70,12 @@ export default function App() {
   }, []);
 
   async function onAuthenticated() {
-    await loadState();
-    const updated = await apiGet<BootstrapStatus>("/api/bootstrap/status");
-    if (!updated.setupComplete) {
+    const nextState = await loadState();
+    if (!nextState) {
+      return;
+    }
+
+    if (!nextState.bootstrap.onboardingComplete) {
       navigate("/onboarding");
     } else {
       navigate("/dashboard");
@@ -73,7 +100,7 @@ export default function App() {
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
-            <span className="text-on-primary font-headline font-bold">H</span>
+            <span className="text-on-surface font-headline font-bold">H</span>
           </div>
           <div className="text-on-surface-variant text-sm">Loading Hubarr...</div>
         </div>
@@ -87,7 +114,7 @@ export default function App() {
       <Routes>
         <Route
           path="/onboarding"
-          element={<Onboarding onComplete={onSetupComplete} />}
+          element={<Onboarding authenticated={false} onComplete={onSetupComplete} />}
         />
         <Route path="*" element={<Navigate to="/onboarding" replace />} />
       </Routes>
@@ -107,13 +134,13 @@ export default function App() {
     );
   }
 
-  // Logged in but setup not complete — show onboarding
-  if (bootstrap && !bootstrap.setupComplete) {
+  // Logged in but onboarding not complete — show onboarding
+  if (bootstrap && !bootstrap.onboardingComplete) {
     return (
       <Routes>
         <Route
           path="/onboarding"
-          element={<Onboarding onComplete={onSetupComplete} />}
+          element={<Onboarding authenticated onComplete={onSetupComplete} />}
         />
         <Route path="*" element={<Navigate to="/onboarding" replace />} />
       </Routes>
@@ -132,5 +159,33 @@ export default function App() {
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>
+  );
+}
+
+function PlexPopupLoading() {
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <RefreshCw size={28} className="animate-spin text-primary" aria-label="Loading" />
+    </div>
+  );
+}
+
+function PlexPopupDone() {
+  useEffect(() => {
+    window.close();
+
+    const retryId = window.setTimeout(() => {
+      window.close();
+    }, 250);
+
+    return () => {
+      window.clearTimeout(retryId);
+    };
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <p className="text-on-surface-variant text-sm">Authentication complete. You can close this tab.</p>
+    </div>
   );
 }

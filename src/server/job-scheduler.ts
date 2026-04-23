@@ -1,9 +1,12 @@
+import type { Logger } from "./logger.js";
+
 type ScheduledJob = {
   id: string;
   enabled: boolean;
   nextRunAt: string | null;
   lastRunAt: string | null;
   lastRunStatus: "success" | "error" | null;
+  activeRuns: number;
   timeout: ReturnType<typeof setTimeout> | null;
   schedule:
     | {
@@ -20,6 +23,7 @@ type ScheduledJob = {
 
 export class JobScheduler {
   private readonly jobs = new Map<string, ScheduledJob>();
+  private logger?: Logger;
   private loadPersistedState?: (id: string) => {
     lastRunAt: string | null;
     lastRunStatus: "success" | "error" | null;
@@ -28,6 +32,11 @@ export class JobScheduler {
     id: string,
     state: { lastRunAt: string | null; lastRunStatus: "success" | "error" | null }
   ) => void;
+
+  setLogger(logger: Logger): void {
+    this.logger = logger;
+    this.logger.debug("Job scheduler logger attached");
+  }
 
   setPersistence(options: {
     load: (id: string) => {
@@ -41,6 +50,7 @@ export class JobScheduler {
   }) {
     this.loadPersistedState = options.load;
     this.savePersistedState = options.save;
+    this.logger?.debug("Job scheduler persistence configured");
   }
 
   registerRecurringJob(options: {
@@ -55,6 +65,7 @@ export class JobScheduler {
       nextRunAt: null,
       lastRunAt: null,
       lastRunStatus: null,
+      activeRuns: 0,
       timeout: null,
       schedule: {
         type: "interval",
@@ -65,6 +76,11 @@ export class JobScheduler {
 
     this.hydrateState(job);
     this.jobs.set(job.id, job);
+    this.logger?.debug("Registered recurring job", {
+      id: job.id,
+      enabled: job.enabled,
+      intervalMs: options.intervalMs
+    });
     this.reschedule(job);
   }
 
@@ -81,6 +97,7 @@ export class JobScheduler {
       nextRunAt: null,
       lastRunAt: null,
       lastRunStatus: null,
+      activeRuns: 0,
       timeout: null,
       schedule: {
         type: "daily",
@@ -92,12 +109,19 @@ export class JobScheduler {
 
     this.hydrateState(job);
     this.jobs.set(job.id, job);
+    this.logger?.debug("Registered daily job", {
+      id: job.id,
+      enabled: job.enabled,
+      hour: options.hour,
+      minute: options.minute ?? 0
+    });
     this.reschedule(job);
   }
 
   updateJob(id: string, patch: { intervalMs?: number; enabled?: boolean }) {
     const job = this.jobs.get(id);
     if (!job) {
+      this.logger?.warn("Cannot update unknown job", { id });
       return;
     }
 
@@ -111,6 +135,13 @@ export class JobScheduler {
       job.enabled = patch.enabled;
     }
 
+    this.logger?.info("Job configuration updated", {
+      id: job.id,
+      enabled: job.enabled,
+      ...(job.schedule.type === "interval"
+        ? { intervalMs: job.schedule.intervalMs }
+        : { hour: job.schedule.hour, minute: job.schedule.minute })
+    });
     this.reschedule(job);
   }
 
@@ -126,12 +157,18 @@ export class JobScheduler {
     return this.jobs.get(id)?.lastRunStatus ?? null;
   }
 
+  isRunning(id: string) {
+    return (this.jobs.get(id)?.activeRuns ?? 0) > 0;
+  }
+
   runNow(id: string) {
     const job = this.jobs.get(id);
     if (!job) {
+      this.logger?.warn("Cannot trigger unknown job", { id });
       return false;
     }
 
+    this.logger?.info("Job triggered manually", { id });
     void this.execute(job, false);
     return true;
   }
@@ -139,9 +176,11 @@ export class JobScheduler {
   async runNowAndWait(id: string) {
     const job = this.jobs.get(id);
     if (!job) {
+      this.logger?.warn("Cannot trigger unknown job", { id });
       return null;
     }
 
+    this.logger?.info("Job triggered manually and awaiting completion", { id });
     return this.execute(job, false);
   }
 
@@ -153,11 +192,19 @@ export class JobScheduler {
 
     if (!job.enabled) {
       job.nextRunAt = null;
+      this.logger?.debug("Job disabled; next run cleared", { id: job.id });
       return;
     }
 
     const nextRunAt = this.computeNextRunAt(job);
     job.nextRunAt = nextRunAt.toISOString();
+    this.logger?.debug("Job scheduled", {
+      id: job.id,
+      nextRunAt: job.nextRunAt,
+      ...(job.schedule.type === "interval"
+        ? { intervalMs: job.schedule.intervalMs }
+        : { hour: job.schedule.hour, minute: job.schedule.minute })
+    });
     job.timeout = setTimeout(() => {
       void this.execute(job, true);
     }, Math.max(0, nextRunAt.getTime() - Date.now()));
@@ -168,17 +215,29 @@ export class JobScheduler {
       this.reschedule(job);
     }
 
+    job.activeRuns += 1;
+    this.logger?.debug("Job started", { id: job.id, scheduled });
     try {
       await job.task();
       job.lastRunAt = new Date().toISOString();
       job.lastRunStatus = "success";
       this.persistState(job);
+      this.logger?.debug("Job completed", { id: job.id });
       return true;
-    } catch {
-      job.lastRunAt = new Date().toISOString();
+    } catch (err) {
+      // Do not advance lastRunAt on failure — it serves as the incremental
+      // fetch cursor for jobs like activity-cache-fetch and must not skip
+      // the failed window on the next run.
       job.lastRunStatus = "error";
       this.persistState(job);
+      this.logger?.error("Job failed", {
+        id: job.id,
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : String(err)
+      });
       return false;
+    } finally {
+      job.activeRuns = Math.max(0, job.activeRuns - 1);
     }
   }
 
@@ -190,6 +249,11 @@ export class JobScheduler {
 
     job.lastRunAt = state.lastRunAt;
     job.lastRunStatus = state.lastRunStatus;
+    this.logger?.debug("Hydrated persisted job state", {
+      id: job.id,
+      lastRunAt: job.lastRunAt,
+      lastRunStatus: job.lastRunStatus
+    });
   }
 
   private persistState(job: ScheduledJob) {

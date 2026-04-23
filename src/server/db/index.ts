@@ -4,6 +4,7 @@ import type {
   AppSettings,
   BootstrapStatus,
   DashboardResponse,
+  ManagedUserRecord,
   OnboardingStep,
   PlexCollectionRecord,
   PlexOwnerRecord,
@@ -11,6 +12,8 @@ import type {
   PlexSettingsView,
   SessionUser,
   SyncRun,
+  SeerrRequestState,
+  SeerrUserLink,
   UserRecord,
   WatchlistItem,
   WatchlistPageResponse,
@@ -18,21 +21,39 @@ import type {
 } from "../../shared/types.js";
 import type { RuntimeConfig } from "../config.js";
 import * as collectionsRepo from "./collections.js";
+import * as identifiersRepo from "./identifiers.js";
+import * as imageCacheRepo from "./image-cache.js";
+import type { ImageCacheRow } from "./image-cache.js";
 import { runMigrations } from "./migrations.js";
 import * as settingsRepo from "./settings.js";
+import type { SeerrStoredSettings } from "./settings.js";
+import * as seerrRepo from "./seerr.js";
+import type { UpsertSeerrUserLinkInput, UpsertSeerrRequestStateInput } from "./seerr.js";
 import * as syncRepo from "./sync.js";
 import * as usersRepo from "./users.js";
 import * as watchlistRepo from "./watchlist.js";
+import type { Logger } from "../logger.js";
 
 export class HubarrDatabase {
   private readonly db: Database.Database;
+  private readonly sessionSecret: string;
+  private readonly logger?: Logger;
 
-  constructor(config: RuntimeConfig) {
+  constructor(config: RuntimeConfig, logger?: Logger) {
     this.db = new Database(path.join(config.dataDir, "hubarr.db"));
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
-    runMigrations(this.db);
+    this.logger = logger;
+    runMigrations(this.db, logger);
+    // reconcileStaleRuns must run after migrations and before any job scheduling/registration
+    // to prevent stale rows left in a `running` state during startup.
+    syncRepo.reconcileStaleRuns(this.db, logger);
     settingsRepo.seedDefaultSettings(this.db);
+    this.sessionSecret = settingsRepo.resolveSessionSecret(this.db);
+  }
+
+  getSessionSecret(): string {
+    return this.sessionSecret;
   }
 
   // -------------------------------------------------------------------------
@@ -140,6 +161,25 @@ export class HubarrDatabase {
     return usersRepo.listUsers(this.db);
   }
 
+  listDisabledUserIds(): number[] {
+    return usersRepo.listDisabledUserIds(this.db);
+  }
+
+  upsertManagedUsers(
+    users: Array<{
+      plexUserId: string;
+      displayName: string;
+      avatarUrl: string | null;
+      hasRestrictionProfile: boolean;
+    }>
+  ): ManagedUserRecord[] {
+    return usersRepo.upsertManagedUsers(this.db, users);
+  }
+
+  listManagedUsers(): ManagedUserRecord[] {
+    return usersRepo.listManagedUsers(this.db);
+  }
+
   getUser(id: number): UserRecord | null {
     return usersRepo.getUser(this.db, id);
   }
@@ -149,10 +189,10 @@ export class HubarrDatabase {
     patch: Partial<
       Pick<
         UserRecord,
-        "enabled" | "movieLibraryId" | "showLibraryId" | "visibilityOverride" | "displayNameOverride" | "collectionNameOverride"
+        "enabled" | "movieLibraryId" | "showLibraryId" | "visibilityOverride" | "displayNameOverride" | "collectionNameOverride" | "collectionSortOrderOverride"
       >
     >
-  ): UserRecord | null {
+  ): UserRecord {
     return usersRepo.updateUser(this.db, id, patch);
   }
 
@@ -168,6 +208,10 @@ export class HubarrDatabase {
     usersRepo.markUserSyncResult(this.db, userId, error);
   }
 
+  upsertUserIdentifierAlias(userId: number, identifierValue: string): void {
+    identifiersRepo.upsertUserIdentifierAlias(this.db, userId, identifierValue);
+  }
+
   // -------------------------------------------------------------------------
   // Watchlist
   // -------------------------------------------------------------------------
@@ -178,6 +222,22 @@ export class HubarrDatabase {
 
   upsertWatchlistItem(userId: number, item: WatchlistItem): void {
     watchlistRepo.upsertWatchlistItem(this.db, userId, item);
+  }
+
+  clearMatchedRatingKey(userId: number, plexItemId: string): void {
+    watchlistRepo.clearMatchedRatingKey(this.db, userId, plexItemId);
+  }
+
+  clearMatchedRatingKeyByValue(ratingKey: string): void {
+    watchlistRepo.clearMatchedRatingKeyByValue(this.db, ratingKey);
+  }
+
+  upsertMediaItemIdentifiers(item: Pick<WatchlistItem, "plexItemId" | "type" | "guids" | "discoverKey">): void {
+    identifiersRepo.upsertMediaItemIdentifiers(this.db, item);
+  }
+
+  batchUpsertMediaItemIdentifiers(items: Array<Pick<WatchlistItem, "plexItemId" | "type" | "guids" | "discoverKey">>): void {
+    identifiersRepo.batchUpsertMediaItemIdentifiers(this.db, items);
   }
 
   replaceWatchlistItems(userId: number, items: WatchlistItem[]): void {
@@ -191,16 +251,78 @@ export class HubarrDatabase {
   getWatchlistGrouped(options: {
     userId?: number;
     mediaType?: "movie" | "show";
-    availability?: "available" | "missing";
+    availability?: "available" | "missing" | "requested";
     sortBy?: WatchlistSortBy;
     page: number;
     pageSize: number;
   }): WatchlistPageResponse {
-    return watchlistRepo.getWatchlistGrouped(this.db, options);
+    return watchlistRepo.getWatchlistGrouped(this.db, options, this.logger);
   }
 
   computeWatchlistHash(userId: number, mediaType: "movie" | "show"): string {
     return watchlistRepo.computeWatchlistHash(this.db, userId, mediaType);
+  }
+
+  upsertActivityCacheEntries(
+    entries: Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }>
+  ): void {
+    watchlistRepo.upsertActivityCacheEntries(this.db, entries);
+  }
+
+  getActivityCacheDate(plexItemId: string, plexUserId: string): string | null {
+    return watchlistRepo.getActivityCacheDate(this.db, plexItemId, plexUserId);
+  }
+
+  getActivityCacheDateForUserItem(userId: number, plexItemId: string): string | null {
+    return identifiersRepo.getActivityCacheDateForUserItem(this.db, userId, plexItemId);
+  }
+
+  getActivityCacheDatesForUser(userId: number): Map<string, string> {
+    return identifiersRepo.getActivityCacheDatesForUser(this.db, userId);
+  }
+
+  clearActivityCache(): number {
+    return watchlistRepo.clearActivityCache(this.db);
+  }
+
+  deleteWatchlistItemsForUsers(userIds: number[]): number {
+    return watchlistRepo.deleteWatchlistItemsForUsers(this.db, userIds);
+  }
+
+  // -------------------------------------------------------------------------
+  // Image Cache
+  // -------------------------------------------------------------------------
+
+  getImageCacheEntry(cacheKey: string): ImageCacheRow | null {
+    return imageCacheRepo.getImageCacheEntry(this.db, cacheKey);
+  }
+
+  upsertImageCacheEntry(entry: Parameters<typeof imageCacheRepo.upsertImageCacheEntry>[1]): void {
+    imageCacheRepo.upsertImageCacheEntry(this.db, entry);
+  }
+
+  markImageCacheRefreshAttempt(cacheKey: string, attemptedAt: string): void {
+    imageCacheRepo.markImageCacheRefreshAttempt(this.db, cacheKey, attemptedAt);
+  }
+
+  markImageCacheRefreshSuccess(cacheKey: string, opts: Parameters<typeof imageCacheRepo.markImageCacheRefreshSuccess>[2]): void {
+    imageCacheRepo.markImageCacheRefreshSuccess(this.db, cacheKey, opts);
+  }
+
+  markImageCacheRefreshFailure(cacheKey: string, opts: { attemptedAt: string; error: string }): void {
+    imageCacheRepo.markImageCacheRefreshFailure(this.db, cacheKey, opts);
+  }
+
+  listAllImageCacheWebPaths(): string[] {
+    return imageCacheRepo.listAllImageCacheWebPaths(this.db);
+  }
+
+  deleteOrphanedPosterCacheEntries(): number {
+    return imageCacheRepo.deleteOrphanedPosterCacheEntries(this.db);
+  }
+
+  clearImageCacheTable(): void {
+    imageCacheRepo.clearImageCacheTable(this.db);
   }
 
   // -------------------------------------------------------------------------
@@ -243,6 +365,10 @@ export class HubarrDatabase {
     syncRepo.completeSyncRun(this.db, id, status, summary, error);
   }
 
+  updateSyncRunSummary(id: number, summary: string): void {
+    syncRepo.updateSyncRunSummary(this.db, id, summary);
+  }
+
   addSyncRunItem(runId: number, action: string, status: SyncRun["status"], details: unknown, userId?: number): void {
     syncRepo.addSyncRunItem(this.db, runId, action, status, details, userId);
   }
@@ -270,5 +396,73 @@ export class HubarrDatabase {
 
   buildDashboard(): DashboardResponse {
     return syncRepo.buildDashboard(this.db);
+  }
+
+  // -------------------------------------------------------------------------
+  // Seerr settings
+  // -------------------------------------------------------------------------
+
+  getSeerrSettings(): SeerrStoredSettings {
+    return settingsRepo.getSeerrSettings(this.db);
+  }
+
+  saveSeerrSettings(settings: SeerrStoredSettings): void {
+    settingsRepo.saveSeerrSettings(this.db, settings);
+  }
+
+  updateSeerrSettings(patch: Partial<SeerrStoredSettings>): SeerrStoredSettings {
+    return settingsRepo.updateSeerrSettings(this.db, patch);
+  }
+
+  // -------------------------------------------------------------------------
+  // Seerr user links
+  // -------------------------------------------------------------------------
+
+  getSeerrUserLink(userId: number): SeerrUserLink | null {
+    return seerrRepo.getSeerrUserLink(this.db, userId);
+  }
+
+  listSeerrUserLinks(): SeerrUserLink[] {
+    return seerrRepo.listSeerrUserLinks(this.db);
+  }
+
+  upsertSeerrUserLink(input: UpsertSeerrUserLinkInput): SeerrUserLink {
+    return seerrRepo.upsertSeerrUserLink(this.db, input);
+  }
+
+  deleteSeerrUserLink(userId: number): void {
+    seerrRepo.deleteSeerrUserLink(this.db, userId);
+  }
+
+  // -------------------------------------------------------------------------
+  // Seerr request state
+  // -------------------------------------------------------------------------
+
+  getSeerrRequestState(userId: number, plexItemId: string): SeerrRequestState | null {
+    return seerrRepo.getSeerrRequestState(this.db, userId, plexItemId);
+  }
+
+  listSeerrRequestStatesForItem(plexItemId: string): SeerrRequestState[] {
+    return seerrRepo.listSeerrRequestStatesForItem(this.db, plexItemId);
+  }
+
+  listSeerrRequestStatesForUser(userId: number): SeerrRequestState[] {
+    return seerrRepo.listSeerrRequestStatesForUser(this.db, userId);
+  }
+
+  deleteSkippedUnlinkedSeerrRequestStatesForUser(userId: number): number {
+    return seerrRepo.deleteSkippedUnlinkedRequestStatesForUser(this.db, userId);
+  }
+
+  listSeerrRequestedPlexItemIds(plexItemIds: string[]): Set<string> {
+    return seerrRepo.listSeerrRequestedPlexItemIds(this.db, plexItemIds);
+  }
+
+  upsertSeerrRequestState(input: UpsertSeerrRequestStateInput): SeerrRequestState {
+    return seerrRepo.upsertSeerrRequestState(this.db, input);
+  }
+
+  deleteSeerrRequestState(userId: number, plexItemId: string): void {
+    seerrRepo.deleteSeerrRequestState(this.db, userId, plexItemId);
   }
 }

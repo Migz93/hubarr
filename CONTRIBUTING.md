@@ -39,6 +39,19 @@ npm run dev
 
 The app is designed to run with persistent data stored under `/config` in containers. For local Docker-based runs, follow the setup guidance in the README.
 
+## Testing
+
+See [TESTING.md](TESTING.md) for the full guide — setup, authentication, commands, and a breakdown of every test.
+
+## Technical Docs
+
+See [docs/README.md](docs/README.md) for the technical reference area.
+
+If you are changing architecture, sync behavior, persistence, integrations, or
+other long-lived internal behavior, update the relevant `docs/*.md` page in the
+same branch/PR. If no existing page fits, add a new topic doc and link it from
+`docs/README.md`.
+
 ## Coding Notes
 
 - Keep changes scoped to the task at hand

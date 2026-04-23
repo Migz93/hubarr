@@ -3,11 +3,24 @@ export type MediaType = "movie" | "show";
 
 export interface BootstrapStatus {
   hasOwner: boolean;
-  setupComplete: boolean;
+  configurationValid: boolean;
+  onboardingComplete: boolean;
   hasActiveSession: boolean;
 }
 
-export type OnboardingStep = "auth" | "plex" | "collections";
+export type OnboardingStep = "auth" | "plex" | "general" | "collections" | "users" | "preload";
+
+export type PreloadPhase = "activity-cache" | "graphql-sync" | "publish-collections" | "complete";
+
+export interface PreloadProgressEvent {
+  phase: PreloadPhase;
+  status: "running" | "done" | "error";
+  message: string;
+  /** Current number of items processed (graphql-sync phase only). */
+  progress?: number;
+  /** Total number of items to process (graphql-sync phase only). */
+  total?: number;
+}
 
 export interface SessionUser {
   plexId: string;
@@ -49,14 +62,16 @@ export interface VisibilityConfig {
   shared: boolean;
 }
 
-export type CollectionSortOrder = "year-desc" | "year-asc" | "title";
+export type CollectionSortOrder = "date-desc" | "date-asc" | "title" | "watchlist-date-desc" | "watchlist-date-asc";
 
 export type WatchlistSortBy = "added-desc" | "added-asc" | "title-asc" | "title-desc" | "year-desc" | "year-asc";
 
 export interface AppSettings {
   reconciliationIntervalMinutes: number;
+  activityCacheFetchIntervalMinutes: number;
   rssPollIntervalSeconds: number;
   rssEnabled: boolean;
+  trackAllUsers: boolean;
   collectionPublishIntervalMinutes: number;
   plexRecentlyAddedScanIntervalMinutes: number;
   plexFullLibraryScanIntervalMinutes: number;
@@ -67,6 +82,9 @@ export interface AppSettings {
   fullSyncOnStartup: boolean;
   defaultMovieLibraryId: string | null;
   defaultShowLibraryId: string | null;
+  trustProxy: boolean;
+  usersStepComplete: boolean;
+  onboardingComplete: boolean;
 }
 
 export interface UserRecord {
@@ -83,19 +101,43 @@ export interface UserRecord {
   visibilityOverride: VisibilityConfig | null;
   collectionNameOverride: string | null;
   collectionName: string;
+  /** Per-user collection sort order. null means fall back to the global collectionSortOrder setting. */
+  collectionSortOrderOverride: CollectionSortOrder | null;
   lastSyncedAt: string | null;
   lastSyncError: string | null;
+  watchlistItemCount: number;
+}
+
+export interface ManagedUserRecord {
+  plexUserId: string;
+  displayName: string;
+  avatarUrl: string | null;
+  hasRestrictionProfile: boolean;
 }
 
 export interface WatchlistItem {
   plexItemId: string;
   title: string;
   type: MediaType;
+  /** The title's release year. Kept for display, matching, and as a fallback
+   *  when a full releaseDate is not available. Not used for collection ordering. */
   year: number | null;
+  /** ISO date string (YYYY-MM-DD) representing the media's original release date.
+   *  Sourced from Plex discover metadata `originallyAvailableAt`.
+   *  Used for collection sort ordering.
+   *
+   *  Distinct from `addedAt`, which records when the item entered the watchlist/feed
+   *  and must never be used as a proxy for the media release date.
+   *
+   *  null when not yet discovered; synthesised as YYYY-01-01 from `year` as a
+   *  last resort when no full date is available. */
+  releaseDate: string | null;
   thumb: string | null;
   guids?: string[];
   discoverKey?: string;
   source: "graphql" | "rss";
+  /** ISO timestamp of when this item entered the watchlist or RSS feed.
+   *  Used for watchlist recency views and RSS diffing only — not for collection ordering. */
   addedAt: string;
   matchedRatingKey: string | null;
 }
@@ -127,6 +169,7 @@ export interface WatchlistGroupedItem {
   userCount: number;
   users: WatchlistUser[];
   plexAvailable: boolean;
+  seerrRequested: boolean;
   matchedRatingKey: string | null;
 }
 
@@ -138,6 +181,7 @@ export interface WatchlistPageResponse {
   filters: {
     userId: number | null;
     mediaType: "all" | MediaType;
+    availability: "all" | "available" | "missing" | "requested";
     sortBy: WatchlistSortBy;
   };
   facets: {
@@ -153,7 +197,18 @@ export interface WatchlistPageResponse {
       movie: number;
       show: number;
     };
+    availability: {
+      available: number;
+      missing: number;
+      requested: number;
+    };
   };
+  selectedUser: {
+    userId: number;
+    displayName: string;
+    avatarUrl: string | null;
+    enabled: boolean;
+  } | null;
 }
 
 export interface PlexCollectionRecord {
@@ -171,7 +226,7 @@ export interface PlexCollectionRecord {
 
 export interface SyncRun {
   id: number;
-  kind: "full" | "user" | "rss" | "publish";
+  kind: "full" | "user" | "rss" | "publish" | "seerr";
   status: SyncStatus;
   startedAt: string;
   completedAt: string | null;
@@ -188,6 +243,7 @@ export interface RecentlyAddedItem {
   users: WatchlistUser[];
   addedAt: string;
   plexAvailable: boolean;
+  seerrRequested: boolean;
 }
 
 export interface DashboardStats {
@@ -300,12 +356,16 @@ export interface JobInfo {
   name: string;
   intervalDescription: string;
   nextRunAt: string | null;
+  nextRunLabel?: string;
   lastRunAt: string | null;
   lastRunStatus: "success" | "error" | null;
+  isRunning: boolean;
 }
 
 export interface AboutInfo {
   version: string;
+  buildChannel: "stable" | "develop" | "custom";
+  commitSha: string;
   nodeVersion: string;
   platform: string;
   dataDir: string;
@@ -316,6 +376,8 @@ export interface SettingsResponse {
   general: {
     fullSyncOnStartup: boolean;
     historyRetentionDays: number;
+    trackAllUsers: boolean;
+    trustProxy: boolean;
   };
   sync: {
     reconciliationIntervalMinutes: number;
@@ -330,6 +392,7 @@ export interface SettingsResponse {
     showLibraryId: string | null;
     visibilityDefaults: VisibilityConfig;
   };
+  seerr: SeerrSettingsView;
 }
 
 export interface PlexConnectionOption {
@@ -351,4 +414,74 @@ export interface PlexConfigPayload {
   hostname?: string;
   port?: number;
   useSsl?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Seerr integration
+// ---------------------------------------------------------------------------
+
+export type SeerrMappingStatus = "manual" | "auto" | "unlinked" | "ambiguous" | "missing";
+
+export type SeerrRequestOutcome =
+  | "created"
+  | "already_requested"
+  | "already_available"
+  | "added_directly"
+  | "skipped_unlinked_user"
+  | "skipped_missing_ids"
+  | "failed";
+
+/** Seerr user as returned by the Seerr API and stored for mapping UI. */
+export interface SeerrUser {
+  id: number;
+  email: string;
+  username: string | null;
+  displayName: string | null;
+  plexUsername: string | null;
+}
+
+/** Per-user Seerr mapping record as seen by the client. */
+export interface SeerrUserLink {
+  userId: number;
+  manualSeerrUserId: number | null;
+  autoMatchedSeerrUserId: number | null;
+  effectiveSeerrUserId: number | null;
+  mappingStatus: SeerrMappingStatus;
+  autoRequestEnabledOverride: boolean | null;
+  autoRequestEnabled: boolean;
+}
+
+/** Per-user per-item Seerr request state. */
+export interface SeerrRequestState {
+  id: number;
+  userId: number;
+  plexItemId: string;
+  seerrRequestId: number | null;
+  seerrMediaId: number | null;
+  tmdbId: number | null;
+  lastAttemptedAt: string | null;
+  outcome: SeerrRequestOutcome | null;
+  lastError: string | null;
+  effectiveSeerrUserId: number | null;
+  executionSeerrUserId: number | null;
+  updatedAt: string;
+}
+
+/** Seerr settings sent to the client (API key never exposed). */
+export interface SeerrSettingsView {
+  enabled: boolean;
+  baseUrl: string;
+  apiKeyConfigured: boolean;
+  autoRequestEnabled: boolean;
+  useServiceAccount: boolean;
+  serviceAccountSeerrUserId: number | null;
+}
+
+/** Payload accepted by PATCH /api/settings/seerr */
+export interface SeerrSettingsPatch {
+  enabled?: boolean;
+  baseUrl?: string;
+  apiKey?: string;
+  autoRequestEnabled?: boolean;
+  useServiceAccount?: boolean;
 }

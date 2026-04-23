@@ -10,6 +10,128 @@ export interface ResolvedWatchlistItem extends WatchlistItem {
 }
 
 // ---------------------------------------------------------------------------
+// Adaptive per-item enrichment limiter
+// ---------------------------------------------------------------------------
+// Shared across concurrent user syncs so all users draw from the same pool.
+// Starts at MAX_ENRICHMENT_CONCURRENCY. On a 429 the limit drops by 30% and
+// all in-flight items wait out an exponential-backoff cooldown before retrying.
+// After RECOVERY_THRESHOLD consecutive successes the limit climbs back by 1
+// until it reaches the original max.
+
+const MAX_ENRICHMENT_CONCURRENCY = 3;
+const RECOVERY_THRESHOLD = 5;
+
+class AdaptiveItemLimiter {
+  private currentLimit: number;
+  private readonly maxLimit: number;
+  private active = 0;
+  private consecutiveSuccesses = 0;
+  private consecutiveRateLimits = 0;
+  private readonly pending: Array<() => void> = [];
+  private cooldownUntil = 0;
+  private schedulePending = false;
+
+  constructor(limit: number) {
+    this.currentLimit = limit;
+    this.maxLimit = limit;
+  }
+
+  run<T>(fn: () => Promise<T>, logger?: Logger, maxRetries = 5): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.pending.push(() => {
+        this.active++;
+        this.executeWithRetry(fn, logger, maxRetries)
+          .then((result) => {
+            this.active--;
+            this.onSuccess(logger);
+            this.schedule();
+            resolve(result);
+          })
+          .catch((err) => {
+            this.active--;
+            this.schedule();
+            reject(err);
+          });
+      });
+      this.schedule();
+    });
+  }
+
+  private schedule(): void {
+    const delay = Math.max(0, this.cooldownUntil - Date.now());
+    if (delay > 0) {
+      if (!this.schedulePending) {
+        this.schedulePending = true;
+        setTimeout(() => {
+          this.schedulePending = false;
+          this.schedule();
+        }, delay);
+      }
+      return;
+    }
+    while (this.pending.length > 0 && this.active < this.currentLimit) {
+      const next = this.pending.shift()!;
+      next();
+    }
+  }
+
+  private async executeWithRetry<T>(fn: () => Promise<T>, logger?: Logger, maxRetries = 5): Promise<T> {
+    let attempts = 0;
+    for (;;) {
+      const wait = this.cooldownUntil - Date.now();
+      if (wait > 0) await new Promise<void>(r => setTimeout(r, wait));
+      try {
+        const result = await fn();
+        return result;
+      } catch (err) {
+        if (this.is429(err)) {
+          attempts++;
+          if (attempts > maxRetries) {
+            throw new Error(`Rate limit exceeded after ${maxRetries} retries`);
+          }
+          this.onRateLimit(logger);
+        } else {
+          throw err;
+        }
+      }
+    }
+  }
+
+  private is429(err: unknown): boolean {
+    if (!(err instanceof Error)) return false;
+    return err.message.includes("429") || err.message.toLowerCase().includes("rate limit");
+  }
+
+  private onRateLimit(logger?: Logger): void {
+    this.consecutiveSuccesses = 0;
+    this.consecutiveRateLimits++;
+    const base = Math.min(2000 * (1.5 ** (this.consecutiveRateLimits - 1)), 30_000);
+    const jitter = (Math.random() * 2 - 1) * base * 0.1;
+    const cooldownMs = base + jitter;
+    this.cooldownUntil = Math.max(this.cooldownUntil, Date.now() + cooldownMs);
+    const prev = this.currentLimit;
+    this.currentLimit = Math.max(1, Math.floor(this.currentLimit * 0.7));
+    logger?.warn("Plex rate limit detected; reducing enrichment concurrency", {
+      prev,
+      current: this.currentLimit,
+      cooldownSecs: (cooldownMs / 1000).toFixed(1)
+    });
+  }
+
+  private onSuccess(logger?: Logger): void {
+    this.consecutiveRateLimits = 0;
+    this.consecutiveSuccesses++;
+    if (this.currentLimit < this.maxLimit && this.consecutiveSuccesses >= RECOVERY_THRESHOLD) {
+      this.currentLimit = Math.min(this.currentLimit + 1, this.maxLimit);
+      this.consecutiveSuccesses = Math.floor(RECOVERY_THRESHOLD / 2);
+      logger?.debug("Plex rate limit recovery: enrichment concurrency increased", { current: this.currentLimit });
+    }
+  }
+}
+
+const adaptiveItemLimiter = new AdaptiveItemLimiter(MAX_ENRICHMENT_CONCURRENCY);
+
+// ---------------------------------------------------------------------------
 // Filter string helpers for per-user Plex content isolation
 // ---------------------------------------------------------------------------
 
@@ -81,6 +203,32 @@ type PlexFriendWatchlistResponse = {
   };
 };
 
+interface PlexActivityFeedNode {
+  date: string;
+  userV2: {
+    id: string;
+    username: string;
+    displayName: string;
+  };
+  metadataItem: {
+    id: string;
+    title: string;
+    type: string;
+    key: string | null;
+    guid: string | null;
+  } | null;
+}
+
+type PlexActivityFeedResponse = {
+  activityFeed: {
+    nodes: PlexActivityFeedNode[];
+    pageInfo: {
+      endCursor: string | null;
+      hasNextPage: boolean;
+    };
+  };
+};
+
 export interface PlexLibrary {
   key: string;
   title: string;
@@ -98,10 +246,15 @@ const DISCOVER_ORIGIN = "https://discover.provider.plex.tv";
 const DISCOVER_RSS_PATH = "/rss";
 const RSS_PLEX_ORIGIN = "https://rss.plex.tv";
 const PLEX_TV_ACCOUNT_URL = "https://plex.tv/users/account.json";
+const PLEX_TV_USERS_URL = "https://plex.tv/api/users";
 const PLEX_TV_PING_URL = "https://plex.tv/api/v2/ping";
 const PLEX_TV_RESOURCES_URL = "https://plex.tv/api/v2/resources";
 
 const RSS_PLEX_UUID_PATH = /^\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+
+// Sentinel value used when no real watchlist date can be determined.
+// Stored in the DB so it can be overwritten later if a real date is found.
+export const WATCHLIST_DATE_UNKNOWN_SENTINEL = "2001-01-01T00:00:00.000Z";
 
 export class PlexIntegration {
   private resolvedMachineIdentifier: string | null = null;
@@ -219,6 +372,14 @@ export class PlexIntegration {
     return JSON.parse(rawText) as T;
   }
 
+  // Returns true when a requestServer error indicates the specific item is
+  // missing or invalid in Plex (HTTP 400/404). Other status codes (401, 5xx,
+  // network failures) are transient and should not be treated as stale keys.
+  private isItemMissingError(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err);
+    return /Plex server request failed: (400|404) /.test(msg);
+  }
+
   private async requestCommunity<T>(query: string, variables?: Record<string, unknown>) {
     const response = await fetch(COMMUNITY_API_URL, {
       method: "POST",
@@ -294,26 +455,6 @@ export class PlexIntegration {
     return url;
   }
 
-  private normalizeGuids(guids: unknown): string[] {
-    if (!Array.isArray(guids)) {
-      return [];
-    }
-
-    return guids
-      .map((guid) => {
-        if (typeof guid === "string") {
-          return guid;
-        }
-        if (guid && typeof guid === "object" && "id" in guid && typeof guid.id === "string") {
-          return guid.id;
-        }
-        return null;
-      })
-      .filter((guid): guid is string => Boolean(guid))
-      .map((guid) => guid.toLowerCase().trim())
-      .filter(Boolean);
-  }
-
   private normalizeAddedAt(value: unknown): string {
     if (typeof value === "number" && Number.isFinite(value)) {
       return new Date(value > 10_000_000_000 ? value : value * 1000).toISOString();
@@ -331,7 +472,7 @@ export class PlexIntegration {
       }
     }
 
-    return new Date().toISOString();
+    return WATCHLIST_DATE_UNKNOWN_SENTINEL;
   }
 
   private buildPlexItemId(fallbackId: string, guids?: string[]): string {
@@ -339,12 +480,36 @@ export class PlexIntegration {
     return plexGuid ?? fallbackId;
   }
 
-  private async fetchDiscoverMetadata(item: WatchlistItem): Promise<{ posterUrl: string | null; year: number | null; guids: string[] } | null> {
+  /**
+   * Hit the Plex discover API to retrieve poster, year, release date, and
+   * cross-database GUIDs for a watchlist item.
+   *
+   * `originallyAvailableAt` is the authoritative release-date source. When it
+   * is a full YYYY-MM-DD string we use it directly; when only a year is available
+   * we synthesise `YYYY-01-01` as a sortable fallback. Both cases populate
+   * `releaseDate` so collection ordering is always deterministic.
+   *
+   * Best-effort: returns null when all endpoint attempts fail.
+   */
+  private async fetchDiscoverMetadata(item: WatchlistItem): Promise<{ posterUrl: string | null; year: number | null; releaseDate: string | null; guids: string[] } | null> {
+    // Only use plexItemId as a fallback endpoint when it's a valid plex:// GUID
+    // (extract the hex part) or a bare 24-char hex. RSS items temporarily use a
+    // stableKey as plexItemId before enrichment resolves the real GUID, and that
+    // format is not a valid discover endpoint path.
+    const plexGuidHex = (() => {
+      const plexItemId = item.plexItemId.trim();
+      const m = plexItemId.match(/^plex:\/\/(?:movie|show)\/([a-f0-9]{24})$/i);
+      if (m) return m[1].toLowerCase();
+      if (/^[a-f0-9]{24}$/i.test(plexItemId)) return plexItemId.toLowerCase();
+      return null;
+    })();
+
     const endpoints = Array.from(new Set([
       item.discoverKey ? item.discoverKey.replace(/^\//, "") : null,
-      `library/metadata/${encodeURIComponent(item.plexItemId)}`,
-      `library/metadata/${item.plexItemId}`
+      plexGuidHex ? `library/metadata/${plexGuidHex}` : null,
     ].filter((endpoint): endpoint is string => Boolean(endpoint))));
+
+    let lastErr: Error | null = null;
 
     for (const endpoint of endpoints) {
       try {
@@ -357,7 +522,9 @@ export class PlexIntegration {
         });
 
         if (!response.ok) {
-          continue;
+          let body = "";
+          try { body = await response.text(); } catch { /* ignore */ }
+          throw new Error(`Discover metadata request failed with HTTP ${response.status}: ${body}`);
         }
 
         const json = (await response.json()) as {
@@ -376,15 +543,41 @@ export class PlexIntegration {
           const guids = (metadata.Guid ?? [])
             .map((g) => g.id)
             .filter((id): id is string => Boolean(id));
+
+          // Derive a full release date from originallyAvailableAt when available,
+          // otherwise synthesize YYYY-01-01 from year as a sortable fallback.
+          const oaa = metadata.originallyAvailableAt;
+          let releaseDate: string | null = null;
+          if (oaa && /^\d{4}-\d{2}-\d{2}$/.test(oaa)) {
+            releaseDate = oaa;
+          } else if (metadata.year) {
+            releaseDate = `${metadata.year}-01-01`;
+          }
+
           return {
             posterUrl: metadata.thumb ?? null,
-            year: metadata.year ?? this.parseYear(metadata.originallyAvailableAt) ?? null,
+            year: metadata.year ?? this.parseYear(oaa) ?? null,
+            releaseDate,
             guids
           };
         }
-      } catch {
-        // Best-effort discover metadata lookup only.
+      } catch (err) {
+        if (err instanceof Error && (err.message.includes("429") || err.message.toLowerCase().includes("rate limit"))) {
+          throw err; // propagate rate-limit errors so adaptiveItemLimiter can handle backoff
+        }
+        // Non-rate-limit errors: store and try next endpoint
+        if (err instanceof Error) {
+          lastErr = err;
+        }
       }
+    }
+
+    if (lastErr) {
+      this.logger.warn("Discover metadata lookup failed for all endpoints", {
+        plexItemId: item.plexItemId,
+        message: lastErr.message,
+        stack: lastErr.stack
+      });
     }
 
     return null;
@@ -441,19 +634,25 @@ export class PlexIntegration {
     return null;
   }
 
+  /**
+   * Enrich a watchlist item with poster, year, release date, and GUIDs from
+   * Plex discover metadata.
+   *
+   * Short-circuit rule: skip the discover lookup only when BOTH thumb AND
+   * releaseDate are already known. Having thumb+year alone is not enough —
+   * RSS items typically arrive with a thumbnail and year extracted from the
+   * feed title, but they have never been through a discover lookup so they
+   * will not yet have a proper releaseDate.
+   */
   private async enrichWatchlistMetadata(item: WatchlistItem) {
-    if (item.thumb && item.year) {
+    // Only skip the discover lookup when we already have everything we need.
+    // Requiring releaseDate (not just year) prevents RSS-ingested items from
+    // permanently bypassing the discover call.
+    if (item.thumb && item.releaseDate) {
       return {
         thumb: item.thumb,
         year: item.year,
-        guids: item.guids ?? []
-      };
-    }
-
-    if (item.thumb) {
-      return {
-        thumb: item.thumb,
-        year: item.year,
+        releaseDate: item.releaseDate,
         guids: item.guids ?? []
       };
     }
@@ -466,9 +665,20 @@ export class PlexIntegration {
       ...(item.guids ?? []),
       ...(discover?.guids ?? [])
     ]));
+
+    // Derive releaseDate: prefer discover metadata, then synthesize from year.
+    let releaseDate = discover?.releaseDate ?? item.releaseDate ?? null;
+    if (!releaseDate) {
+      const year = discover?.year ?? item.year;
+      if (year) {
+        releaseDate = `${year}-01-01`;
+      }
+    }
+
     return {
       thumb: discover?.posterUrl ?? item.thumb,
       year: discover?.year ?? item.year,
+      releaseDate,
       guids: mergedGuids
     };
   }
@@ -488,13 +698,16 @@ export class PlexIntegration {
   }
 
   async getLibraries(): Promise<PlexLibrary[]> {
+    this.logger.debug("Fetching Plex libraries");
     const response = await this.requestServer<{
       MediaContainer?: { Directory?: Array<{ key: string; title: string; type: "movie" | "show" }> };
     }>("/library/sections");
 
-    return (response.MediaContainer?.Directory || []).filter(
+    const libraries = (response.MediaContainer?.Directory || []).filter(
       (library) => library.type === "movie" || library.type === "show"
     );
+    this.logger.debug("Plex libraries fetched", { count: libraries.length });
+    return libraries;
   }
 
   async getRecentlyAddedLibraryItems(
@@ -637,11 +850,12 @@ export class PlexIntegration {
           title: item.title,
           type: item.type === "SHOW" ? "show" : "movie",
           year: item.year ?? null,
+          releaseDate: null,
           thumb: null,
           guids,
           discoverKey: item.key,
           source: "graphql",
-          addedAt: new Date().toISOString(),
+          addedAt: WATCHLIST_DATE_UNKNOWN_SENTINEL,
           matchedRatingKey: null
         });
       }
@@ -657,77 +871,139 @@ export class PlexIntegration {
     return this.fetchGraphqlWatchlist(userId);
   }
 
+  /**
+   * Fetch WATCHLIST activity feed entries from the Plex Community GraphQL API.
+   *
+   * On the initial call (since = null) paginates the full history.
+   * On incremental calls, pass the ISO timestamp from the previous run —
+   * pagination stops when entries older than that timestamp are reached.
+   * Plex returns entries newest-first so this is safe to short-circuit.
+   *
+   * Returns one tuple per event. The caller is responsible for upserting into
+   * watchlist_activity_cache, keeping only the most recent date per user+item.
+   */
+  async fetchWatchlistActivityFeed(
+    since: string | null
+  ): Promise<Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }>> {
+    const results: Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }> = [];
+    let after: string | null = null;
+    let hasNextPage = true;
+
+    while (hasNextPage) {
+      const data: PlexActivityFeedResponse = await this.requestCommunity<PlexActivityFeedResponse>(
+        `query GetWatchlistActivity($first: PaginationInt!, $after: String) {
+           activityFeed(first: $first, after: $after, types: [WATCHLIST]) {
+             nodes {
+               date
+               userV2 { id username displayName }
+               metadataItem { id title type key guid }
+             }
+             pageInfo { endCursor hasNextPage }
+           }
+         }`,
+        { first: 100, after }
+      );
+
+      let reachedSince = false;
+      for (const node of data.activityFeed.nodes) {
+        // Incremental mode: stop once we pass entries older than last fetch
+        if (since && node.date <= since) {
+          reachedSince = true;
+          break;
+        }
+        if (!node.metadataItem) continue;
+        const guids = node.metadataItem.guid ? [node.metadataItem.guid] : undefined;
+        const plexItemId = this.buildPlexItemId(node.metadataItem.key ?? node.metadataItem.id, guids);
+        results.push({
+          plexItemId,
+          plexUserId: node.userV2.id,
+          watchlistedAt: node.date
+        });
+      }
+
+      hasNextPage = !reachedSince && data.activityFeed.pageInfo.hasNextPage;
+      after = data.activityFeed.pageInfo.endCursor;
+    }
+
+    return results;
+  }
+
   async enrichWatchlistItem(item: WatchlistItem): Promise<WatchlistItem> {
     const enriched = await this.enrichWatchlistMetadata(item);
     return {
       ...item,
       thumb: enriched.thumb,
       year: enriched.year,
+      releaseDate: enriched.releaseDate,
       guids: enriched.guids
     };
   }
 
   async resolveWatchlistItems(items: WatchlistItem[], mediaType: MediaType, libraryId: string): Promise<ResolvedWatchlistItem[]> {
-    const resolved: ResolvedWatchlistItem[] = [];
+    const filteredItems = items.filter((entry) => entry.type === mediaType);
 
-    for (const item of items.filter((entry) => entry.type === mediaType)) {
-      this.logger.debug("Watchlist item raw data", { item });
+    const results = await Promise.all(filteredItems.map((item) =>
+      adaptiveItemLimiter.run(async (): Promise<ResolvedWatchlistItem> => {
+        this.logger.debug("Watchlist item raw data", { item });
 
-      // Enrich first so we have tmdb/tvdb/imdb GUIDs from discover.provider.plex.tv
-      // before attempting the library match.
-      const enriched = await this.enrichWatchlistMetadata(item);
-      const enrichedGuids = enriched.guids;
+        // Enrich first so we have tmdb/tvdb/imdb GUIDs from discover.provider.plex.tv
+        // before attempting the library match.
+        const enriched = await this.enrichWatchlistMetadata(item);
+        const enrichedGuids = enriched.guids;
 
-      this.logger.debug("Watchlist item enriched GUIDs", {
-        title: item.title,
-        originalGuids: item.guids ?? [],
-        enrichedGuids
-      });
-
-      const match = await this.searchLibraryItem(
-        item.title,
-        mediaType,
-        libraryId,
-        enriched.year || undefined,
-        enrichedGuids
-      );
-      const matchedRatingKey = match.ratingKey || null;
-
-      if (matchedRatingKey) {
-        this.logger.debug("Watchlist item resolved to library", {
+        this.logger.debug("Watchlist item enriched GUIDs", {
           title: item.title,
-          type: mediaType,
-          ratingKey: matchedRatingKey
+          originalGuids: item.guids ?? [],
+          enrichedGuids
         });
-        resolved.push({
-          ...item,
-          thumb: enriched.thumb,
-          year: enriched.year,
-          guids: enrichedGuids,
-          matchedRatingKey
-        });
-      } else {
-        this.logger.warn("Watchlist item not matched in library", {
-          title: item.title,
-          type: mediaType,
-          year: enriched.year ?? null,
-          guids: enrichedGuids,
+
+        const match = await this.searchLibraryItem(
+          item.title,
+          mediaType,
           libraryId,
-          candidateCount: match.candidates.length,
-          candidates: match.candidates
-        });
-        resolved.push({
-          ...item,
-          thumb: enriched.thumb,
-          year: enriched.year,
-          guids: enrichedGuids,
-          matchedRatingKey: null,
-          searchCandidates: match.candidates
-        });
-      }
-    }
+          enriched.year || undefined,
+          enrichedGuids
+        );
+        const matchedRatingKey = match.ratingKey || null;
 
-    return resolved;
+        if (matchedRatingKey) {
+          this.logger.debug("Watchlist item resolved to library", {
+            title: item.title,
+            type: mediaType,
+            ratingKey: matchedRatingKey
+          });
+          return {
+            ...item,
+            thumb: enriched.thumb,
+            year: enriched.year,
+            releaseDate: enriched.releaseDate,
+            guids: enrichedGuids,
+            matchedRatingKey
+          };
+        } else {
+          this.logger.warn("Watchlist item not matched in library", {
+            title: item.title,
+            type: mediaType,
+            year: enriched.year ?? null,
+            guids: enrichedGuids,
+            libraryId,
+            candidateCount: match.candidates.length,
+            candidates: match.candidates
+          });
+          return {
+            ...item,
+            thumb: enriched.thumb,
+            year: enriched.year,
+            releaseDate: enriched.releaseDate,
+            guids: enrichedGuids,
+            matchedRatingKey: null,
+            searchCandidates: match.candidates
+          };
+        }
+      }, this.logger)
+    ));
+
+    return results;
   }
 
   async searchLibraryItem(
@@ -741,22 +1017,29 @@ export class PlexIntegration {
     // Note: year is intentionally omitted from the query — it's too strict
     // and Plex sometimes stores a different year than the watchlist metadata.
     // GUID matching handles precision; title matching uses year only for disambiguation.
+
+    // Plex's GraphQL watchlist API appends (YYYY) to titles to disambiguate shows
+    // with the same name (e.g. "JoJo's Bizarre Adventure (2012)"). Library items
+    // don't carry the year suffix in their title field, so strip it before searching.
+    const searchTitle = title.replace(/\s+\(\d{4}\)$/, "").trim() || title;
+
     const params = new URLSearchParams({
       type: String(typeParam),
-      title,
+      title: searchTitle,
       includeGuids: "1"
     });
 
     this.logger.debug("Library match attempt", {
       mediaType,
       title,
+      searchTitle,
       year: year ?? null,
       guids: guids ?? [],
       libraryId,
       query: params.toString()
     });
 
-    const response = await this.requestServer<{
+    let response = await this.requestServer<{
       MediaContainer?: {
         Metadata?: Array<{
           ratingKey: string;
@@ -768,6 +1051,66 @@ export class PlexIntegration {
         [key: string]: unknown;
       };
     }>(`/library/sections/${libraryId}/all?${params.toString()}`);
+
+    // If the stripped title returned nothing and the original title was different,
+    // retry with the original — the library may store the (YYYY) suffix canonically.
+    if (!response.MediaContainer?.Metadata?.length && searchTitle !== title) {
+      const fallbackParams = new URLSearchParams({
+        type: String(typeParam),
+        title,
+        includeGuids: "1"
+      });
+      this.logger.debug("Library search fallback with original title", {
+        title,
+        searchTitle,
+        libraryId,
+        query: fallbackParams.toString()
+      });
+      try {
+        response = await this.requestServer(`/library/sections/${libraryId}/all?${fallbackParams.toString()}`);
+      } catch (fallbackErr) {
+        this.logger.warn("Library search fallback request failed; treating as no match", {
+          title,
+          searchTitle,
+          libraryId,
+          query: fallbackParams.toString(),
+          error: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
+        });
+      }
+    }
+
+    // If still no results, retry with Unicode dashes normalised to a regular
+    // hyphen. Plex watchlist titles sometimes use en-dash (–) or em-dash (—)
+    // while the local library stores the same show with a plain hyphen (-),
+    // causing the title search to return zero candidates even though the item
+    // is present. This prevents a failed search from being mistaken for a
+    // genuine absence and clearing a valid stored match.
+    if (!response.MediaContainer?.Metadata?.length) {
+      const dashNormalised = searchTitle.replace(/[\u2010\u2011\u2012\u2013\u2014\u2015]/g, "-");
+      if (dashNormalised !== searchTitle) {
+        const dashParams = new URLSearchParams({
+          type: String(typeParam),
+          title: dashNormalised,
+          includeGuids: "1"
+        });
+        this.logger.debug("Library search fallback with dash-normalised title", {
+          title,
+          normalisedTitle: dashNormalised,
+          libraryId,
+          query: dashParams.toString()
+        });
+        try {
+          response = await this.requestServer(`/library/sections/${libraryId}/all?${dashParams.toString()}`);
+        } catch (dashErr) {
+          this.logger.warn("Library search dash-normalised fallback failed; treating as no match", {
+            title,
+            normalisedTitle: dashNormalised,
+            libraryId,
+            error: dashErr instanceof Error ? dashErr.message : String(dashErr)
+          });
+        }
+      }
+    }
 
     this.logger.debug("Library search raw response", { response });
 
@@ -825,6 +1168,7 @@ export class PlexIntegration {
   }
 
   async createCollection(title: string, mediaType: MediaType, libraryId: string) {
+    this.logger.info("Creating Plex collection", { title, mediaType, libraryId });
     const type = mediaType === "movie" ? 1 : 2;
     const response = await this.requestServer<{
       MediaContainer?: {
@@ -839,6 +1183,7 @@ export class PlexIntegration {
     if (!ratingKey) {
       throw new Error("Plex did not return a collection rating key.");
     }
+    this.logger.info("Plex collection created", { title, mediaType, ratingKey });
     return ratingKey;
   }
 
@@ -852,11 +1197,12 @@ export class PlexIntegration {
     return (response.MediaContainer?.Metadata || []).map((item) => item.ratingKey);
   }
 
-  async syncCollectionItems(collectionRatingKey: string, ratingKeys: string[]) {
+  async syncCollectionItems(collectionRatingKey: string, ratingKeys: string[]): Promise<{ staleKeys: Set<string> }> {
     const machineIdentifier = await this.getMachineIdentifier();
     const currentItems = await this.getCollectionItems(collectionRatingKey);
     const currentSet = new Set(currentItems);
     const desiredSet = new Set(ratingKeys);
+    const staleKeys = new Set<string>();
 
     const toAdd = ratingKeys.filter((key) => !currentSet.has(key));
     const toRemove = currentItems.filter((key) => !desiredSet.has(key));
@@ -870,11 +1216,39 @@ export class PlexIntegration {
     });
 
     if (toAdd.length) {
-      const uri = `server://${machineIdentifier}/com.plexapp.plugins.library/library/metadata/${toAdd.join(",")}`;
-      await this.requestServer(
-        `/library/collections/${collectionRatingKey}/items?uri=${encodeURIComponent(uri)}`,
-        { method: "PUT" }
-      );
+      // Try adding all keys in one request. If Plex rejects the batch (e.g. a
+      // stale key causes a 400), fall back to per-key adds so we can isolate
+      // and skip whichever keys are no longer valid.
+      try {
+        const uri = `server://${machineIdentifier}/com.plexapp.plugins.library/library/metadata/${toAdd.join(",")}`;
+        await this.requestServer(
+          `/library/collections/${collectionRatingKey}/items?uri=${encodeURIComponent(uri)}`,
+          { method: "PUT" }
+        );
+      } catch (bulkErr) {
+        this.logger.warn("Bulk collection add failed, retrying per-key to isolate stale entries", {
+          collectionRatingKey,
+          toAdd: toAdd.length,
+          error: bulkErr instanceof Error ? bulkErr.message : String(bulkErr)
+        });
+        for (const key of toAdd) {
+          try {
+            const uri = `server://${machineIdentifier}/com.plexapp.plugins.library/library/metadata/${key}`;
+            await this.requestServer(
+              `/library/collections/${collectionRatingKey}/items?uri=${encodeURIComponent(uri)}`,
+              { method: "PUT" }
+            );
+          } catch (err) {
+            if (!this.isItemMissingError(err)) throw err;
+            this.logger.warn("Skipping stale rating key during collection add", {
+              collectionRatingKey,
+              staleKey: key,
+              error: err instanceof Error ? err.message : String(err)
+            });
+            staleKeys.add(key);
+          }
+        }
+      }
     }
 
     for (const key of toRemove) {
@@ -883,17 +1257,91 @@ export class PlexIntegration {
         { method: "DELETE" }
       );
     }
+
+    return { staleKeys };
   }
 
-  async ensureCollection(title: string, mediaType: MediaType, libraryId: string) {
-    const existing = (await this.getCollections(libraryId)).find((collection) => collection.title === title);
-    if (existing) {
-      return existing.ratingKey;
+  async updateCollectionTitle(ratingKey: string, title: string): Promise<void> {
+    this.logger.info("Updating Plex collection title", { ratingKey, title });
+    const params = new URLSearchParams({
+      type: "18",
+      id: ratingKey,
+      title: title,
+      "title.locked": "1"
+    });
+    await this.requestServer(`/library/metadata/${ratingKey}?${params.toString()}`, { method: "PUT" });
+  }
+
+  async ensureCollection(title: string, username: string, mediaType: MediaType, libraryId: string) {
+    const collections = await this.getCollections(libraryId);
+    const label = this.createCollectionLabel(username);
+
+    // Fetch all collection labels in parallel. Use allSettled so a single
+    // failing label fetch (network blip, permission issue) is logged and skipped
+    // rather than aborting the entire reconciliation.
+    const settled = await Promise.allSettled(
+      collections.map(async (c) => ({ ...c, labels: await this.getCollectionLabels(c.ratingKey) }))
+    );
+    const withLabels = settled
+      .map((result, i) => {
+        if (result.status === "fulfilled") return result.value;
+        this.logger.warn("Failed to fetch labels for collection, skipping in reconciliation", {
+          ratingKey: collections[i].ratingKey,
+          title: collections[i].title,
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason)
+        });
+        return null;
+      })
+      .filter((c): c is { ratingKey: string; title: string; labels: string[] } => c !== null);
+
+    // Only accept a title match that already carries this user's label or has no
+    // hubarr:* label at all — this avoids accidentally claiming another user's
+    // same-named collection.
+    const byTitle = withLabels.find(
+      (c) => c.title === title &&
+             (c.labels.some((l) => l.toLowerCase() === label.toLowerCase()) ||
+              !c.labels.some((l) => l.toLowerCase().startsWith("hubarr:")))
+    );
+    // Label matches on collections other than the title match are duplicates to reconcile.
+    const labelMatches = withLabels.filter(
+      (c) => c.ratingKey !== byTitle?.ratingKey &&
+             c.labels.some((l) => l.toLowerCase() === label.toLowerCase())
+    );
+
+    // Canonical: title match wins; otherwise first label match.
+    const canonical = byTitle ?? labelMatches[0];
+    const extras = byTitle ? labelMatches : labelMatches.slice(1);
+
+    if (!canonical) {
+      return this.createCollection(title, mediaType, libraryId);
     }
-    return this.createCollection(title, mediaType, libraryId);
+
+    if (canonical.title !== title) {
+      this.logger.info("Found existing collection by label, renaming to current expected title", {
+        ratingKey: canonical.ratingKey,
+        oldTitle: canonical.title,
+        newTitle: title,
+        label
+      });
+      await this.updateCollectionTitle(canonical.ratingKey, title);
+    }
+
+    if (extras.length > 0) {
+      this.logger.warn("Found duplicate Hubarr-labelled collections for user, removing extras", {
+        canonicalRatingKey: canonical.ratingKey,
+        duplicates: extras.map((c) => ({ ratingKey: c.ratingKey, title: c.title })),
+        label
+      });
+      for (const extra of extras) {
+        await this.deleteCollection(extra.ratingKey);
+      }
+    }
+
+    return canonical.ratingKey;
   }
 
   async deleteCollection(collectionRatingKey: string): Promise<void> {
+    this.logger.info("Deleting Plex collection", { collectionRatingKey });
     await this.requestServer(`/library/metadata/${collectionRatingKey}`, { method: "DELETE" });
   }
 
@@ -938,12 +1386,23 @@ export class PlexIntegration {
 
   /**
    * Set the Plex collection sort mode.
-   *   year-desc → collectionSort=2 (custom order, items then positioned via reorderCollectionItems)
-   *   year-asc  → collectionSort=0 (Plex native release-date ascending)
+   *   date-desc → collectionSort=2 (custom order, items positioned via reorderCollectionItems)
+   *   date-asc  → collectionSort=2 (custom order, items positioned via reorderCollectionItems)
    *   title     → collectionSort=1 (Plex native alphabetical)
+   *
+   * Both date directions use Hubarr-managed custom ordering so the sort behaviour
+   * is consistent and deterministic regardless of direction.
    */
   async updateCollectionContentSort(ratingKey: string, sortOrder: CollectionSortOrder): Promise<void> {
-    const plexSort: Record<CollectionSortOrder, number> = { "year-desc": 2, "year-asc": 0, title: 1 };
+    const plexSort: Record<CollectionSortOrder, number> = {
+      "date-desc": 2,
+      "date-asc": 2,
+      "title": 1,
+      // Watchlist date sorts use Plex's custom order mode (2) so item positions
+      // can be pushed explicitly via reorderCollectionItems.
+      "watchlist-date-desc": 2,
+      "watchlist-date-asc": 2
+    };
     await this.requestServer(
       `/library/collections/${ratingKey}/prefs?collectionSort=${plexSort[sortOrder]}`,
       { method: "PUT" }
@@ -955,8 +1414,10 @@ export class PlexIntegration {
    * Moves every item into position sequentially — simple and guaranteed correct.
    * Skips the whole operation if the collection is already in the desired order.
    */
-  async reorderCollectionItems(collectionRatingKey: string, orderedRatingKeys: string[]): Promise<void> {
-    if (orderedRatingKeys.length <= 1) return;
+  async reorderCollectionItems(collectionRatingKey: string, orderedRatingKeys: string[]): Promise<{ staleKeys: Set<string> }> {
+    const staleKeys = new Set<string>();
+
+    if (orderedRatingKeys.length <= 1) return { staleKeys };
 
     const currentOrder = await this.getCollectionItems(collectionRatingKey);
 
@@ -964,24 +1425,39 @@ export class PlexIntegration {
       currentOrder.length === orderedRatingKeys.length &&
       currentOrder.every((key, i) => key === orderedRatingKeys[i])
     ) {
-      return; // already in correct order
+      return { staleKeys }; // already in correct order
     }
 
-    for (let i = 0; i < orderedRatingKeys.length; i++) {
-      const itemKey = orderedRatingKeys[i];
-      if (i === 0) {
-        await this.requestServer(
-          `/library/collections/${collectionRatingKey}/items/${itemKey}/move`,
-          { method: "PUT" }
-        );
-      } else {
-        const afterKey = orderedRatingKeys[i - 1];
-        await this.requestServer(
-          `/library/collections/${collectionRatingKey}/items/${itemKey}/move?after=${afterKey}`,
-          { method: "PUT" }
-        );
+    // Track the last successfully placed key so the anchor for subsequent moves
+    // stays valid even when stale keys are skipped mid-sequence.
+    let lastPlacedKey: string | null = null;
+
+    for (const itemKey of orderedRatingKeys) {
+      try {
+        if (lastPlacedKey === null) {
+          await this.requestServer(
+            `/library/collections/${collectionRatingKey}/items/${itemKey}/move`,
+            { method: "PUT" }
+          );
+        } else {
+          await this.requestServer(
+            `/library/collections/${collectionRatingKey}/items/${itemKey}/move?after=${lastPlacedKey}`,
+            { method: "PUT" }
+          );
+        }
+        lastPlacedKey = itemKey;
+      } catch (err) {
+        if (!this.isItemMissingError(err)) throw err;
+        this.logger.warn("Skipping stale rating key during collection reorder", {
+          collectionRatingKey,
+          staleKey: itemKey,
+          error: err instanceof Error ? err.message : String(err)
+        });
+        staleKeys.add(itemKey);
       }
     }
+
+    return { staleKeys };
   }
 
   /**
@@ -1054,6 +1530,18 @@ export class PlexIntegration {
   async fetchSelfWatchlist(): Promise<WatchlistItem[]> {
     const account = await this.fetchSelfAccountData();
     return this.fetchGraphqlWatchlist(account.plexUuid);
+  }
+
+  /**
+   * Return the UUID of the authenticated admin account.
+   * Plex internally uses two ID formats for the same account: a legacy numeric
+   * ID (stored in the `users` table as plexUserId) and a hex UUID (used by the
+   * GraphQL API and the activityFeed). This method returns the UUID form so
+   * callers can look up the activity cache using the correct identifier.
+   */
+  async fetchSelfPlexUuid(): Promise<string> {
+    const account = await this.fetchSelfAccountData();
+    return account.plexUuid;
   }
 
   /**
@@ -1308,6 +1796,113 @@ export class PlexIntegration {
   }
 
   /**
+   * Fetch Plex Home managed users who have no independent Plex account.
+   * Uses the plex.tv/api/users endpoint and filters for home-only managed
+   * accounts (home="1", no username/email), scoped to this server.
+   */
+  private async getHomeOnlyManagedUsers(): Promise<Array<{
+    plexUserId: string;
+    displayName: string;
+    avatarUrl: string | null;
+    filterMovies: string;
+    filterTelevision: string;
+    filterMusic: string;
+    filterPhotos: string;
+    filterAll: string;
+    allowSync: boolean;
+    allowChannels: boolean;
+    allowCameraUpload: boolean;
+    allowSubtitleAdmin: boolean;
+    allowTuners: number;
+    hasRestrictionProfile: boolean;
+  }>> {
+    const machineIdentifier = await this.getMachineIdentifier();
+
+    const url = new URL(PLEX_TV_USERS_URL);
+    url.searchParams.set("X-Plex-Token", this.settings.token);
+
+    const response = await fetch(url.toString(), {
+      headers: { Accept: "application/xml", "User-Agent": PLEX_USER_AGENT }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch Plex users list: ${response.status} ${response.statusText}`);
+    }
+
+    const xml = await response.text();
+    const parsed = await parseStringPromise(xml) as {
+      MediaContainer?: {
+        User?: Array<{
+          $: {
+            id: string;
+            title?: string;
+            thumb?: string;
+            home?: string;
+            username?: string;
+            email?: string;
+            filterMovies?: string;
+            filterTelevision?: string;
+            filterMusic?: string;
+            filterPhotos?: string;
+            filterAll?: string;
+            allowSync?: string;
+            allowChannels?: string;
+            allowCameraUpload?: string;
+            allowSubtitleAdmin?: string;
+            allowTuners?: string;
+          };
+          Server?: Array<{ $: { machineIdentifier: string } }>;
+        }>;
+      };
+    };
+
+    const users = parsed.MediaContainer?.User ?? [];
+
+    return users
+      .filter((u) =>
+        u.$.home === "1" &&
+        !u.$.username &&
+        !u.$.email &&
+        (u.Server ?? []).some((s) => s.$.machineIdentifier === machineIdentifier)
+      )
+      .map((u) => {
+        const filterMovies = decodeURIComponent(u.$.filterMovies ?? "");
+        const filterTelevision = decodeURIComponent(u.$.filterTelevision ?? "");
+        return {
+          plexUserId: u.$.id,
+          displayName: u.$.title ?? u.$.id,
+          avatarUrl: u.$.thumb ?? null,
+          filterMovies,
+          filterTelevision,
+          filterMusic: u.$.filterMusic ?? "",
+          filterPhotos: u.$.filterPhotos ?? "",
+          filterAll: u.$.filterAll ?? "",
+          allowSync: u.$.allowSync === "1",
+          allowChannels: u.$.allowChannels === "1",
+          allowCameraUpload: u.$.allowCameraUpload === "1",
+          allowSubtitleAdmin: u.$.allowSubtitleAdmin === "1",
+          allowTuners: parseInt(u.$.allowTuners ?? "0", 10),
+          hasRestrictionProfile: filterMovies.includes("contentRating=") || filterTelevision.includes("contentRating=")
+        };
+      });
+  }
+
+  async fetchManagedUsers(): Promise<Array<{
+    plexUserId: string;
+    displayName: string;
+    avatarUrl: string | null;
+    hasRestrictionProfile: boolean;
+  }>> {
+    const users = await this.getHomeOnlyManagedUsers();
+    return users.map(({ plexUserId, displayName, avatarUrl, hasRestrictionProfile }) => ({
+      plexUserId,
+      displayName,
+      avatarUrl,
+      hasRestrictionProfile
+    }));
+  }
+
+  /**
    * Apply per-user label exclusion filters so each Plex managed user only
    * sees their own watchlist hub row, not other users' rows.
    *
@@ -1322,7 +1917,7 @@ export class PlexIntegration {
     const sharedUsers = await this.getSharedUsers();
 
     // Build one label per user (same label applies to both movie and TV collections)
-    const allLabels = enabledUsers.map((u) => this.createCollectionLabel(u.displayName));
+    const allLabels = enabledUsers.map((u) => this.createCollectionLabel(u.username));
 
     // Index enabled users by their Plex username for matching with shared users.
     // The XML invitedId and GraphQL plexUserId are different ID formats, but
@@ -1348,7 +1943,7 @@ export class PlexIntegration {
 
       // Labels to exclude: all labels EXCEPT this user's own
       const excludedLabels = matchedUser
-        ? allLabels.filter((l) => l !== this.createCollectionLabel(matchedUser.displayName))
+        ? allLabels.filter((l) => l !== this.createCollectionLabel(matchedUser.username))
         : allLabels;
 
       // Strip old Hubarr labels then re-apply the current set
@@ -1393,6 +1988,59 @@ export class PlexIntegration {
       updated++;
     }
 
+    // Also apply to Plex Home managed users who have no independent Plex account.
+    // These can't be reached via the email-based sharing_settings path, but the
+    // same endpoint accepts invitedId (numeric user ID) as an alternative.
+    const homeUsers = await this.getHomeOnlyManagedUsers();
+    for (const user of homeUsers) {
+      // Skip users with a restriction profile — Plex prevents label filter changes for them
+      if (user.hasRestrictionProfile) {
+        skipped++;
+        continue;
+      }
+
+      // Managed users are never Hubarr-enabled, so always exclude all labels
+      const cleanedMovieFilter = removeHubarrLabelsFromFilter(user.filterMovies);
+      const cleanedShowFilter = removeHubarrLabelsFromFilter(user.filterTelevision);
+      const finalMovieFilter = addHubarrLabelExclusions(cleanedMovieFilter, allLabels);
+      const finalShowFilter = addHubarrLabelExclusions(cleanedShowFilter, allLabels);
+
+      if (finalMovieFilter === user.filterMovies && finalShowFilter === user.filterTelevision) {
+        skipped++;
+        continue;
+      }
+
+      const payload = {
+        invitedId: user.plexUserId,
+        settings: {
+          filterMovies: finalMovieFilter,
+          filterTelevision: finalShowFilter,
+          filterMusic: user.filterMusic,
+          filterPhotos: user.filterPhotos,
+          filterAll: user.filterAll || null,
+          allowSync: user.allowSync,
+          allowChannels: user.allowChannels,
+          allowCameraUpload: user.allowCameraUpload,
+          allowSubtitleAdmin: user.allowSubtitleAdmin,
+          allowTuners: user.allowTuners
+        }
+      };
+
+      const response = await fetch(updateUrl.toString(), {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Failed to update sharing filters for managed user ${user.displayName} (${user.plexUserId}): ${response.status} ${text}`);
+      }
+
+      updated++;
+    }
+
+    this.logger.debug("Isolation filters synced", { updated, skipped });
     return { updated, skipped };
   }
 
@@ -1446,6 +2094,53 @@ export class PlexIntegration {
       if (!response.ok) {
         const text = await response.text();
         throw new Error(`Failed to clear sharing filters for ${user.invitedEmail}: ${response.status} ${text}`);
+      }
+
+      updated++;
+    }
+
+    // Also clear from Plex Home managed users
+    const homeUsers = await this.getHomeOnlyManagedUsers();
+    for (const user of homeUsers) {
+      // Restriction profile users are skipped in sync — don't attempt to clear them either
+      if (user.hasRestrictionProfile) {
+        skipped++;
+        continue;
+      }
+
+      const finalMovieFilter = removeHubarrLabelsFromFilter(user.filterMovies);
+      const finalShowFilter = removeHubarrLabelsFromFilter(user.filterTelevision);
+
+      if (finalMovieFilter === user.filterMovies && finalShowFilter === user.filterTelevision) {
+        skipped++;
+        continue;
+      }
+
+      const payload = {
+        invitedId: user.plexUserId,
+        settings: {
+          filterMovies: finalMovieFilter,
+          filterTelevision: finalShowFilter,
+          filterMusic: user.filterMusic,
+          filterPhotos: user.filterPhotos,
+          filterAll: user.filterAll || null,
+          allowSync: user.allowSync,
+          allowChannels: user.allowChannels,
+          allowCameraUpload: user.allowCameraUpload,
+          allowSubtitleAdmin: user.allowSubtitleAdmin,
+          allowTuners: user.allowTuners
+        }
+      };
+
+      const response = await fetch(updateUrl.toString(), {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Failed to clear sharing filters for managed user ${user.displayName} (${user.plexUserId}): ${response.status} ${text}`);
       }
 
       updated++;

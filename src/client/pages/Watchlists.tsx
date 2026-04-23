@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Film, Tv, ChevronLeft, ChevronRight, CheckCircle, XCircle } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { apiGet } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
+import { useLiveRefresh } from "../lib/useLiveRefresh";
+import { useSettings } from "../lib/useSettings";
 import { WatchlistItemModal } from "../components/WatchlistItemModal";
 import type {
   MediaType,
@@ -10,10 +12,11 @@ import type {
   WatchlistGroupedItem,
   WatchlistSortBy
 } from "../../shared/types";
+import { formatWatchlistDateShort } from "../lib/utils";
 
 const PAGE_SIZE = 24;
 
-type AvailabilityFilter = "all" | "available" | "missing";
+type AvailabilityFilter = "all" | "available" | "missing" | "requested";
 
 const SORT_OPTIONS: { value: WatchlistSortBy; label: string }[] = [
   { value: "added-desc", label: "Watchlisted (Newest)" },
@@ -23,8 +26,9 @@ const SORT_OPTIONS: { value: WatchlistSortBy; label: string }[] = [
 ];
 
 const VALID_SORT_VALUES = ["added-desc", "added-asc", "title-asc", "title-desc"];
-const VALID_AVAILABILITY = ["all", "available", "missing"];
+const VALID_AVAILABILITY = ["all", "available", "missing", "requested"];
 const VALID_MEDIA_TYPES = ["all", "movie", "show"];
+const WATCHLISTS_REFRESH_MS = 20_000;
 
 export default function Watchlists() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -58,17 +62,39 @@ export default function Watchlists() {
   const [loading, setLoading] = useState(true);
   const [selectedItem, setSelectedItem] = useState<WatchlistGroupedItem | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { settings } = useSettings();
+  const seerrEnabled = Boolean(settings?.seerr?.enabled);
 
-  useEffect(() => {
-    setLoading(true);
+  async function load(background = false) {
+    setLoading((current) => current || !background);
     const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE), sortBy });
     if (selectedUserId !== null) params.set("userId", String(selectedUserId));
     if (selectedMediaType !== "all") params.set("mediaType", selectedMediaType);
     if (availability !== "all") params.set("availability", availability);
-    apiGet<WatchlistPageResponse>(`/api/watchlists?${params.toString()}`)
-      .then((result) => { setData(result); setError(null); })
-      .catch((caught: unknown) => setError(caught instanceof Error ? caught.message : String(caught)))
-      .finally(() => setLoading(false));
+    try {
+      const result = await apiGet<WatchlistPageResponse>(`/api/watchlists?${params.toString()}`);
+      setData(result);
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const getIntervalMs = useCallback(() => WATCHLISTS_REFRESH_MS, []);
+
+  useLiveRefresh(
+    async () => {
+      await load(true);
+    },
+    {
+      getIntervalMs
+    }
+  );
+
+  useEffect(() => {
+    void load();
   }, [selectedUserId, selectedMediaType, availability, sortBy, page]);
 
   const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0;
@@ -93,8 +119,11 @@ export default function Watchlists() {
 
         <div className="w-px h-5 bg-outline-variant/40 mx-1 flex-shrink-0" />
 
-        <FilterChip label="In Library" active={availability === "available"} onClick={() => selectAvailability(availability === "available" ? "all" : "available")} />
-        <FilterChip label="Missing"    active={availability === "missing"}   onClick={() => selectAvailability(availability === "missing"   ? "all" : "missing")} />
+        <FilterChip label="In Library" active={availability === "available"} count={data?.facets?.availability?.available ?? 0} onClick={() => selectAvailability(availability === "available" ? "all" : "available")} />
+        <FilterChip label="Missing"    active={availability === "missing"}   count={data?.facets?.availability?.missing ?? 0}   onClick={() => selectAvailability(availability === "missing"   ? "all" : "missing")} />
+        {seerrEnabled && (
+          <FilterChip label="Requested" active={availability === "requested"} count={data?.facets?.availability?.requested ?? 0} onClick={() => selectAvailability(availability === "requested" ? "all" : "requested")} />
+        )}
       </div>
 
       {/* Row 2: Users */}
@@ -144,7 +173,7 @@ export default function Watchlists() {
       )}
 
       {/* Grid */}
-      {loading ? (
+      {loading && !data ? (
         <div className="flex items-center justify-center h-64">
           <div className="text-on-surface-variant text-sm">Loading watchlists...</div>
         </div>
@@ -156,6 +185,7 @@ export default function Watchlists() {
                 key={item.plexItemId}
                 item={item}
                 selectedUserId={selectedUserId}
+                seerrEnabled={seerrEnabled}
                 onClick={() => setSelectedItem(item)}
               />
             ))}
@@ -165,9 +195,11 @@ export default function Watchlists() {
           {totalPages > 1 && (
             <div className="flex items-center justify-center gap-3">
               <button
+                aria-label="Previous page"
+                title="Previous page"
                 disabled={page <= 1}
                 onClick={() => setParam({ page: String(page - 1) })}
-                className="p-2 rounded-lg border border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high disabled:opacity-40 transition-colors"
+                className="p-2 rounded-lg border border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:bg-background-container-high disabled:opacity-40 transition-colors"
               >
                 <ChevronLeft size={18} />
               </button>
@@ -175,9 +207,11 @@ export default function Watchlists() {
                 Page {page} of {totalPages}
               </span>
               <button
+                aria-label="Next page"
+                title="Next page"
                 disabled={page >= totalPages}
                 onClick={() => setParam({ page: String(page + 1) })}
-                className="p-2 rounded-lg border border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high disabled:opacity-40 transition-colors"
+                className="p-2 rounded-lg border border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:bg-background-container-high disabled:opacity-40 transition-colors"
               >
                 <ChevronRight size={18} />
               </button>
@@ -185,7 +219,7 @@ export default function Watchlists() {
           )}
         </>
       ) : (
-        <div className="bg-surface-container rounded-2xl border border-outline-variant/20 flex items-center justify-center py-16 text-center">
+        <div className="bg-background-container rounded-2xl border border-outline-variant/20 flex items-center justify-center py-16 text-center">
           <p className="text-on-surface-variant text-sm max-w-xs">
             No watchlist items found. Run a sync to populate watchlists.
           </p>
@@ -194,7 +228,7 @@ export default function Watchlists() {
 
       {/* Item detail modal */}
       {selectedItem && (
-        <WatchlistItemModal item={selectedItem} onClose={() => setSelectedItem(null)} />
+        <WatchlistItemModal item={selectedItem} onClose={() => setSelectedItem(null)} seerrSettings={settings?.seerr} />
       )}
     </div>
   );
@@ -218,20 +252,20 @@ function FilterChip({
       onClick={onClick}
       className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-colors border ${
         active
-          ? "bg-primary/10 text-primary border-primary/30"
-          : "bg-surface-container border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:border-outline-variant/40"
+          ? "bg-primary-dim text-on-surface border-primary-dim"
+          : "bg-background-container border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:border-outline-variant/40"
       }`}
     >
-      {avatarUrl && (
+      {getPlexImageSrc(avatarUrl) && (
         <img
-          src={getPlexImageSrc(avatarUrl) ?? undefined}
+          src={getPlexImageSrc(avatarUrl)!}
           alt=""
           className="w-5 h-5 rounded-full object-cover"
         />
       )}
       {label}
       {count !== undefined && (
-        <span className={`text-xs ${active ? "text-primary/70" : "text-on-surface-variant/60"}`}>
+        <span className={`text-xs ${active ? "text-on-surface" : "text-on-surface-variant/60"}`}>
           {count}
         </span>
       )}
@@ -242,10 +276,12 @@ function FilterChip({
 function WatchlistPoster({
   item,
   selectedUserId,
+  seerrEnabled,
   onClick
 }: {
   item: WatchlistGroupedItem;
   selectedUserId: number | null;
+  seerrEnabled: boolean;
   onClick: () => void;
 }) {
   const posterSrc = getPlexImageSrc(item.posterUrl);
@@ -255,17 +291,18 @@ function WatchlistPoster({
     selectedUserId !== null
       ? (item.users.find((u) => u.userId === selectedUserId)?.addedAt ?? item.addedAt)
       : item.addedAt;
-  const addedDate = new Date(displayAddedAt).toLocaleDateString("en-GB");
+  const addedDate = formatWatchlistDateShort(displayAddedAt);
 
   return (
     <button onClick={onClick} className="group text-left w-full">
-      <div className="relative aspect-[2/3] rounded-xl overflow-hidden bg-surface-container-high transition-transform duration-300 group-hover:scale-105">
+      <div className="relative aspect-[2/3] rounded-xl overflow-hidden bg-background-container-high transition-transform duration-300 group-hover:scale-105">
         {posterSrc ? (
           <img
             src={posterSrc}
             alt={item.title}
             className="w-full h-full object-cover"
             loading="lazy"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).src = "/poster-fallback.svg"; }}
           />
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center p-3 text-center">
@@ -279,17 +316,21 @@ function WatchlistPoster({
         )}
         {/* Gradient overlay — fades in on hover */}
         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
-          style={{ background: "linear-gradient(180deg, rgba(45,55,72,0.2) 0%, rgba(45,55,72,0.95) 100%)" }} />
+          style={{ background: "linear-gradient(180deg, var(--overlay-poster-transparent) 0%, var(--overlay-poster) 100%)" }} />
         {/* Availability icon — always visible, top-right */}
         <div className="absolute top-1.5 right-1.5">
           {item.plexAvailable ? (
             <div className="relative">
-              <div className="absolute inset-[3px] rounded-full bg-[#0a3d1f]" />
+              <div className="absolute inset-[3px] rounded-full bg-(--poster-halo-success)" />
               <CheckCircle size={18} className="relative text-success drop-shadow-[0_0_4px_rgba(0,0,0,1)]" />
+            </div>
+          ) : seerrEnabled && item.seerrRequested ? (
+            <div className="relative w-[18px] h-[18px] rounded-full bg-background-container-highest border border-outline-variant/40 flex items-center justify-center drop-shadow-[0_0_4px_rgba(0,0,0,1)]">
+              <img src="/seerr-icon.svg" alt="Requested in Seerr" className="w-3 h-3" />
             </div>
           ) : (
             <div className="relative">
-              <div className="absolute inset-[3px] rounded-full bg-[#3d0a0a]" />
+              <div className="absolute inset-[3px] rounded-full bg-(--poster-halo-error)" />
               <XCircle size={18} className="relative text-error drop-shadow-[0_0_4px_rgba(0,0,0,1)]" />
             </div>
           )}

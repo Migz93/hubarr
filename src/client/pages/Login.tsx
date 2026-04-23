@@ -36,7 +36,7 @@ export default function Login({ onAuthenticated }: LoginProps) {
         </div>
 
         {/* Card */}
-        <div className="bg-surface-container rounded-2xl p-6 border border-outline-variant/20">
+        <div className="bg-background-container rounded-2xl p-6 border border-outline-variant/20">
           <h2 className="font-headline font-semibold text-lg text-on-surface mb-6 text-center">Sign in to continue</h2>
 
           {error && (
@@ -48,7 +48,7 @@ export default function Login({ onAuthenticated }: LoginProps) {
           <button
             disabled={busy}
             onClick={() => void handlePlexLogin()}
-            className="w-full flex items-center justify-center gap-3 bg-primary hover:bg-primary-dim disabled:opacity-50 disabled:cursor-not-allowed text-on-primary font-semibold rounded-xl px-4 py-3 transition-colors"
+            className="w-full flex items-center justify-center gap-3 bg-primary-dim hover:bg-primary disabled:opacity-50 disabled:cursor-not-allowed text-on-surface font-semibold rounded-xl px-4 py-3 transition-colors"
           >
             {busy ? (
               <span>Waiting for Plex...</span>

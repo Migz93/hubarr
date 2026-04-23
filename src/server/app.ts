@@ -5,12 +5,17 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { rateLimit } from "express-rate-limit";
 import helmet from "helmet";
 import type {
+  CollectionSortOrder,
   HealthResponse,
+  JobInfo,
   PlexConfigPayload,
   PlexConnectionOption,
+  SeerrSettingsPatch,
+  SeerrSettingsView,
   SettingsResponse,
   SessionUser,
-  SetupStatusResponse
+  SetupStatusResponse,
+  VisibilityConfig
 } from "../shared/types.js";
 import { createSessionId } from "./auth.js";
 import type { RuntimeConfig } from "./config.js";
@@ -18,8 +23,9 @@ import { HubarrDatabase } from "./db/index.js";
 import { PlexIntegration } from "./integrations/plex.js";
 import { JobScheduler } from "./job-scheduler.js";
 import { Logger } from "./logger.js";
+import { ImageCacheService } from "./image-cache.js";
 import { HubarrServices } from "./services.js";
-import { APP_VERSION } from "./version.js";
+import { APP_VERSION, BUILD_CHANNEL, BUILD_COMMIT } from "./version.js";
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -40,109 +46,78 @@ function parseCookies(rawCookie = "") {
     }, new Map());
 }
 
+function parsePositiveIntegerQuery(value: unknown): number | undefined {
+  if (typeof value !== "string" || value.trim() === "") {
+    return undefined;
+  }
+
+  if (!/^[1-9]\d*$/.test(value)) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
 function signedValue(secret: string, value: string) {
   return crypto.createHmac("sha256", secret).update(value).digest("hex");
 }
 
-const PLEX_LIBRARY_IMAGE_PATH = /^\/library\/metadata\/([A-Za-z0-9:-]+)\/(thumb|art|clearLogo|squareArt|theme)(?:\/(\d+))?$/;
-const PLEX_RESOURCE_IMAGE_PATH = /^\/:\/resources\/([A-Za-z0-9._-]+)$/;
-const ALLOWED_PLEX_IMAGE_QUERY_PARAMS = new Set(["width", "height", "minSize", "upscale", "format"]);
-
-// Matches private/loopback addresses in both bare and bracket-wrapped forms.
-// Node's WHATWG URL parser returns IPv6 hostnames with brackets, e.g. [::1].
-// Covers: IPv4 private ranges, IPv4 link-local, IPv6 loopback, IPv4-mapped IPv6
-// (::ffff:... normalized by URL parser to [::ffff:7f00:1] etc.), IPv6 ULA
-// (fc00::/7 = fc and fd prefixes), IPv6 link-local (fe80::/10).
-const PRIVATE_IP_RE =
-  /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|::1$|\[::1\]|::ffff:|\[::ffff:|f[cd][0-9a-f]{2}:|\[f[cd][0-9a-f]{2}|fe80:|\[fe80:|localhost)/i;
-const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
-const AVATAR_TIMEOUT_MS = 10_000;
-const AVATAR_MAX_REDIRECTS = 3;
-
-// Validates and sanitizes an avatar URL (or a redirect location resolved against
-// a base URL). Returns url.href reconstructed from the parsed URL object —
-// never the raw input string — so that static analysis sees a clean value
-// rather than a tainted user-supplied string flowing into fetch().
-function sanitizeAvatarUrl(raw: string, base?: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(raw, base);
-  } catch {
-    return null;
+function isVisibilityConfig(value: unknown): value is VisibilityConfig {
+  if (!value || typeof value !== "object") {
+    return false;
   }
-  if (
-    url.protocol !== "https:" ||
-    url.username ||
-    url.password ||
-    PRIVATE_IP_RE.test(url.hostname)
-  ) {
-    return null;
-  }
-  return url.href;
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate["recommended"] === "boolean" &&
+    typeof candidate["home"] === "boolean" &&
+    typeof candidate["shared"] === "boolean"
+  );
 }
 
-function sanitizePlexImageQuery(search: string) {
-  const parsed = new URLSearchParams(search);
-  const sanitized = new URLSearchParams();
-
-  for (const [key, value] of parsed) {
-    if (key.toLowerCase() === "x-plex-token") {
-      continue;
+function summarizeSettingsPatch(patch: Record<string, unknown>) {
+  const changedSections = Object.keys(patch).sort();
+  const fieldKeys = changedSections.flatMap((section) => {
+    const value = patch[section];
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return [section];
     }
-    if (!ALLOWED_PLEX_IMAGE_QUERY_PARAMS.has(key)) {
-      throw new Error(`Unsupported Plex image query parameter: ${key}`);
-    }
-    if (key === "format") {
-      if (!/^[a-z0-9-]+$/i.test(value)) {
-        throw new Error("Invalid Plex image format parameter.");
-      }
-      sanitized.set(key, value.toLowerCase());
-      continue;
-    }
-    if (!/^\d{1,4}$/.test(value)) {
-      throw new Error(`Invalid Plex image query parameter value for ${key}.`);
-    }
-    sanitized.set(key, value);
-  }
 
-  return sanitized;
-}
+    return Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map((key) => `${section}.${key}`);
+  });
 
-function buildTrustedPlexImageRequest(serverUrl: string, rawPath: string) {
-  if (/^[a-z][a-z0-9+.-]*:/i.test(rawPath) || rawPath.startsWith("//")) {
-    throw new Error("Absolute Plex image URLs are not allowed.");
-  }
-
-  const [pathname, search = ""] = rawPath.split("?", 2);
-  if (!pathname.startsWith("/")) {
-    throw new Error("Plex image path must start with '/'.");
-  }
-
-  const serverOrigin = new URL(serverUrl).origin;
-  const upstream = new URL(serverOrigin);
-  const libraryMatch = pathname.match(PLEX_LIBRARY_IMAGE_PATH);
-  const resourceMatch = pathname.match(PLEX_RESOURCE_IMAGE_PATH);
-
-  if (libraryMatch) {
-    const [, ratingKey, assetKind, version] = libraryMatch;
-    upstream.pathname = version
-      ? `/library/metadata/${ratingKey}/${assetKind}/${version}`
-      : `/library/metadata/${ratingKey}/${assetKind}`;
-  } else if (resourceMatch) {
-    upstream.pathname = `/:/resources/${resourceMatch[1]}`;
-  } else {
-    throw new Error("Unsupported Plex image path.");
-  }
-
-  upstream.search = sanitizePlexImageQuery(search).toString();
-  return upstream.toString();
+  return {
+    changedSections,
+    fieldKeys,
+    fieldCount: fieldKeys.length
+  };
 }
 
 export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   const logger = new Logger(config.dataDir);
-  const db = new HubarrDatabase(config);
-  const services = new HubarrServices(db, logger);
+  const db = new HubarrDatabase(config, logger);
+  const sessionSecret = db.getSessionSecret();
+  const imageCache = new ImageCacheService(config.dataDir, db, logger);
+  const services = new HubarrServices(db, logger, imageCache);
   const app = express();
+
+  // Enable trust proxy if configured — required for express-rate-limit to
+  // correctly identify clients by their real IP when Hubarr runs behind a
+  // reverse proxy that injects X-Forwarded-For headers. Trust only a single
+  // proxy hop so forwarded headers are honored without accepting arbitrary
+  // client-supplied proxy chains.
+  if (db.getAppSettings().trustProxy) {
+    app.set("trust proxy", 1);
+    logger.info("Trust proxy enabled — using one trusted proxy hop for client IP identification");
+  }
+
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {
@@ -184,7 +159,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       return next();
     }
     const [sessionId, signature] = raw.split(".");
-    if (!sessionId || !signature || signedValue(config.sessionSecret, sessionId) !== signature) {
+    if (!sessionId || !signature || signedValue(sessionSecret, sessionId) !== signature) {
       req.sessionUser = null;
       return next();
     }
@@ -201,7 +176,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   }
 
   function setSessionCookie(res: Response, sessionId: string) {
-    const signed = `${sessionId}.${signedValue(config.sessionSecret, sessionId)}`;
+    const signed = `${sessionId}.${signedValue(sessionSecret, sessionId)}`;
     res.setHeader(
       "Set-Cookie",
       `${config.sessionCookieName}=${encodeURIComponent(signed)}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${Math.floor(config.sessionTtlMs / 1000)}`
@@ -246,6 +221,23 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     };
   }
 
+  async function handlePlexConnectionTest(payload: PlexConfigPayload, res: Response) {
+    const owner = db.getPlexOwner();
+    if (!owner) {
+      res.status(400).json({ ok: false, error: "No Plex account configured. Please sign in with Plex first." });
+      return;
+    }
+    try {
+      const input = buildPlexInputFromPayload(owner.plexToken, payload);
+      const result = await services.validatePlexSettings(input);
+      logger.info("Plex connection test succeeded", { serverUrl: input.serverUrl, libraryCount: result.libraries.length });
+      res.json({ ok: true, serverUrl: input.serverUrl, libraryCount: result.libraries.length });
+    } catch (err) {
+      logger.warn("Plex connection test failed", { error: err instanceof Error ? err.message : String(err) });
+      res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
   async function validateAndSavePlexConfiguration(payload: PlexConfigPayload) {
     const owner = db.getPlexOwner();
     if (!owner) {
@@ -273,6 +265,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       logger.warn("Friend discovery failed after Plex settings save", {
         error: err instanceof Error ? err.message : String(err)
       });
+    });
+
+    logger.info("Plex configuration saved", {
+      serverUrl: baseInput.serverUrl,
+      machineIdentifier: validation.machineIdentifier || baseInput.machineIdentifier,
+      librariesDiscovered: validation.libraries.length
     });
 
     return {
@@ -308,6 +306,9 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     try {
       account = await PlexIntegration.fetchAccountByToken(body.authToken);
     } catch (error) {
+      logger.warn("Plex authentication failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
       res
         .status(401)
         .json({ error: "Failed to authenticate with Plex.", detail: error instanceof Error ? error.message : String(error) });
@@ -326,6 +327,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         email: account.email,
         avatarUrl: account.avatarUrl
       });
+      logger.info("Plex owner account registered", { plexId: account.plexId, username: account.username });
 
       // Upsert self user record for watchlist tracking
       services.upsertSelfUser().catch((err) => {
@@ -335,6 +337,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       });
     } else if (existingOwner.plexId !== account.plexId) {
       // Different Plex account — not the owner
+      logger.warn("Plex login rejected: account does not match server owner", { attemptedPlexId: account.plexId });
       res.status(403).json({
         error: "unauthorized_account",
         message: "This Hubarr instance belongs to a different Plex account."
@@ -344,6 +347,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       // Owner re-authenticating — update their stored token and refresh email
       db.savePlexOwner({ ...existingOwner, plexToken: account.plexToken, email: account.email });
       db.updatePlexSettingsToken(account.plexToken);
+      logger.info("Plex owner re-authenticated", { plexId: account.plexId, username: account.username });
     }
 
     const sessionId = createSessionId();
@@ -430,6 +434,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       );
       res.json(options);
     } catch (error) {
+      logger.warn("Plex server discovery failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -439,8 +444,14 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       const result = await validateAndSavePlexConfiguration(req.body as PlexConfigPayload);
       res.json(result);
     } catch (error) {
+      logger.warn("Plex setup configuration save failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
+  });
+
+  /** Test Plex connectivity during onboarding with the provided configuration without saving */
+  app.post("/api/setup/plex/test", requireAuth, async (req, res) => {
+    await handlePlexConnectionTest(req.body as PlexConfigPayload, res);
   });
 
   app.get("/api/setup/status", requireAuth, (_req, res) => {
@@ -468,8 +479,66 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         }))
       );
     } catch (error) {
+      logger.warn("Failed to fetch Plex libraries during setup", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
+  });
+
+  /** Persist completion of the user-selection step before preload begins. */
+  app.post("/api/setup/users/complete", requireAuth, (_req, res) => {
+    db.updateAppSettings({ usersStepComplete: true });
+    logger.info("Onboarding users step marked complete");
+    res.json({ ok: true });
+  });
+
+  /**
+   * Final onboarding step: streams preload progress via Server-Sent Events.
+   * The client connects once the users step is confirmed and listens until a
+   * "complete" phase event signals that all remaining preload phases have
+   * finished. Reconnecting during preload resumes the same in-flight session.
+   *
+   * Phases emitted:
+   * activity-cache → graphql-sync → publish-collections → complete
+   */
+  app.get("/api/setup/preload", requireAuth, async (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    let clientDisconnected = false;
+    req.on("close", () => {
+      clientDisconnected = true;
+    });
+
+    try {
+      await services.runOnboardingPreload((event) => {
+        if (clientDisconnected) return;
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      });
+    } catch (err) {
+      // Top-level guard — runOnboardingPreload handles per-phase errors
+      // internally, so this only fires on truly unexpected failures.
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error("Onboarding preload aborted with unexpected error", { message });
+      if (!clientDisconnected) {
+        res.write(`data: ${JSON.stringify({ phase: "complete", status: "error", message })}\n\n`);
+      }
+    }
+
+    res.end();
+  });
+
+  /** Mark onboarding as fully complete so the main app becomes accessible. */
+  app.post("/api/setup/complete", requireAuth, (_req, res) => {
+    if (!services.isPreloadComplete()) {
+      res.status(400).json({ error: "Preload has not completed successfully." });
+      return;
+    }
+    db.updateAppSettings({ usersStepComplete: true, onboardingComplete: true });
+    services.clearOnboardingPreloadSession();
+    logger.info("Onboarding marked complete");
+    res.json({ ok: true });
   });
 
   // ---------------------------------------------------------------------------
@@ -478,130 +547,6 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   app.get("/api/dashboard", requireAuth, (_req, res) => {
     res.json(db.buildDashboard());
-  });
-
-  // Plex image proxy (keeps token server-side)
-  app.get("/api/plex/image", requireAuth, async (req, res) => {
-    const plexPath = typeof req.query["path"] === "string" ? req.query["path"] : undefined;
-    if (!plexPath) {
-      res.status(400).json({ error: "path query param required." });
-      return;
-    }
-    const plexSettings = db.getPlexSettings();
-    if (!plexSettings) {
-      res.status(400).json({ error: "Plex not configured." });
-      return;
-    }
-    try {
-      const imageUrl = buildTrustedPlexImageRequest(plexSettings.serverUrl, plexPath);
-      const upstream = await fetch(imageUrl, {
-        headers: {
-          "X-Plex-Token": plexSettings.token
-        }
-      });
-      if (!upstream.ok) {
-        res.status(upstream.status).end();
-        return;
-      }
-      const contentType = upstream.headers.get("content-type") || "image/jpeg";
-      res.setHeader("content-type", contentType);
-      res.setHeader("cache-control", "public, max-age=86400");
-      const buf = Buffer.from(await upstream.arrayBuffer());
-      res.send(buf);
-    } catch {
-      res.status(502).end();
-    }
-  });
-
-  // Avatar proxy (safe passthrough for absolute Plex user avatar URLs)
-  app.get("/api/avatar", requireAuth, async (req, res) => {
-    const rawUrl = typeof req.query["url"] === "string" ? req.query["url"] : undefined;
-    const initialUrl = rawUrl ? sanitizeAvatarUrl(rawUrl) : null;
-    if (!initialUrl) {
-      res.status(400).json({ error: "Invalid or disallowed avatar URL." });
-      return;
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), AVATAR_TIMEOUT_MS);
-
-    try {
-      let currentUrl = initialUrl;
-      let fetchRes: Awaited<ReturnType<typeof fetch>> | null = null;
-
-      for (let i = 0; i <= AVATAR_MAX_REDIRECTS; i++) {
-        // codeql[js/request-forgery] - currentUrl is always the return value of
-        // sanitizeAvatarUrl(), which enforces https:, blocks private/loopback IPs,
-        // strips credentials, and returns url.href from the parsed URL object.
-        fetchRes = await fetch(currentUrl, {
-          method: "GET",
-          redirect: "manual",
-          signal: controller.signal
-        });
-
-        if (fetchRes.status >= 300 && fetchRes.status < 400) {
-          const location = fetchRes.headers.get("location");
-          const next = location ? sanitizeAvatarUrl(location, currentUrl) : null;
-          if (!next) {
-            res.status(502).end();
-            return;
-          }
-          currentUrl = next;
-          continue;
-        }
-        break;
-      }
-
-      // Treat redirect-loop exhaustion (still 3xx after max hops) as a
-      // proxy failure rather than forwarding the redirect to the client.
-      if (!fetchRes || !fetchRes.ok) {
-        res.status(502).end();
-        return;
-      }
-
-      const contentType = fetchRes.headers.get("content-type") ?? "";
-      if (!contentType.startsWith("image/")) {
-        res.status(502).end();
-        return;
-      }
-
-      // Reject based on Content-Length if the server provides it.
-      const contentLength = Number(fetchRes.headers.get("content-length") ?? 0);
-      if (contentLength > MAX_AVATAR_BYTES) {
-        res.status(502).end();
-        return;
-      }
-
-      // Stream the body with a hard byte cap so an upstream server that omits
-      // or lies about Content-Length cannot force excessive memory allocation.
-      const reader = fetchRes.body?.getReader();
-      if (!reader) {
-        res.status(502).end();
-        return;
-      }
-      const chunks: Buffer[] = [];
-      let totalBytes = 0;
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        totalBytes += value.length;
-        if (totalBytes > MAX_AVATAR_BYTES) {
-          await reader.cancel();
-          res.status(502).end();
-          return;
-        }
-        chunks.push(Buffer.from(value));
-      }
-      const buf = Buffer.concat(chunks);
-
-      res.setHeader("content-type", contentType);
-      res.setHeader("cache-control", "public, max-age=86400");
-      res.send(buf);
-    } catch {
-      res.status(502).end();
-    } finally {
-      clearTimeout(timeout);
-    }
   });
 
   // ---------------------------------------------------------------------------
@@ -613,12 +558,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   });
 
   app.post("/api/users/discover", requireAuth, async (_req, res) => {
-    try {
-      const users = await services.discoverUsers();
-      res.json(users);
-    } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    const triggered = scheduler?.runNow("users-discover") ?? false;
+    if (!triggered) {
+      res.status(404).json({ error: "User discovery job is not registered." });
+      return;
     }
+    res.json({ triggered: true });
   });
 
   app.post("/api/users/bulk", requireAuth, (req, res) => {
@@ -629,12 +574,111 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     }
     const ids = (body.ids as unknown[]).filter((id): id is number => typeof id === "number");
     const updated = db.bulkUpdateUsers(ids, body.enabled);
+    logger.info("Bulk user update applied", {
+      requestedIds: ids.length,
+      enabled: body.enabled,
+      updated
+    });
     res.json({ updated });
+  });
+
+  app.get("/api/users/managed", requireAuth, (_req, res) => {
+    res.json(services.getManagedUsers());
   });
 
   app.patch("/api/users/:id", requireAuth, (req, res) => {
     try {
-      const user = db.updateUser(Number(req.params.id), req.body);
+      const body = req.body as Record<string, unknown>;
+      const allowedUserPatchFields = new Set([
+        "enabled",
+        "collectionNameOverride",
+        "movieLibraryId",
+        "showLibraryId",
+        "visibilityOverride",
+        "displayNameOverride",
+        "collectionSortOrderOverride"
+      ]);
+      // Validate collectionSortOrderOverride if provided — reject unknown values.
+      const validSortOrders: CollectionSortOrder[] = ["date-desc", "date-asc", "title", "watchlist-date-desc", "watchlist-date-asc"];
+      if (
+        "collectionSortOrderOverride" in body &&
+        body.collectionSortOrderOverride !== null &&
+        !validSortOrders.includes(body.collectionSortOrderOverride as CollectionSortOrder)
+      ) {
+        res.status(400).json({ error: "Invalid collectionSortOrderOverride value." });
+        return;
+      }
+
+      const invalidFields = Object.keys(body).filter((key) => !allowedUserPatchFields.has(key));
+      if (invalidFields.length > 0) {
+        res.status(400).json({ error: `Unsupported fields: ${invalidFields.join(", ")}` });
+        return;
+      }
+
+      const updatePayload: Partial<{
+        enabled: boolean;
+        movieLibraryId: string | null;
+        showLibraryId: string | null;
+        visibilityOverride: VisibilityConfig | null;
+        displayNameOverride: string | null;
+        collectionNameOverride: string | null;
+        collectionSortOrderOverride: CollectionSortOrder | null;
+      }> = {};
+
+      if ("enabled" in body) {
+        if (typeof body.enabled !== "boolean") {
+          res.status(400).json({ error: "enabled must be a boolean." });
+          return;
+        }
+        updatePayload.enabled = body.enabled;
+      }
+      if ("movieLibraryId" in body) {
+        if (body.movieLibraryId !== null && typeof body.movieLibraryId !== "string") {
+          res.status(400).json({ error: "movieLibraryId must be a string or null." });
+          return;
+        }
+        updatePayload.movieLibraryId = body.movieLibraryId as string | null;
+      }
+      if ("showLibraryId" in body) {
+        if (body.showLibraryId !== null && typeof body.showLibraryId !== "string") {
+          res.status(400).json({ error: "showLibraryId must be a string or null." });
+          return;
+        }
+        updatePayload.showLibraryId = body.showLibraryId as string | null;
+      }
+      if ("visibilityOverride" in body) {
+        if (body.visibilityOverride !== null && !isVisibilityConfig(body.visibilityOverride)) {
+          res.status(400).json({ error: "visibilityOverride is invalid." });
+          return;
+        }
+        updatePayload.visibilityOverride = body.visibilityOverride as VisibilityConfig | null;
+      }
+      if ("displayNameOverride" in body) {
+        if (body.displayNameOverride !== null && typeof body.displayNameOverride !== "string") {
+          res.status(400).json({ error: "displayNameOverride must be a string or null." });
+          return;
+        }
+        updatePayload.displayNameOverride = body.displayNameOverride as string | null;
+      }
+      if ("collectionNameOverride" in body) {
+        if (body.collectionNameOverride !== null && typeof body.collectionNameOverride !== "string") {
+          res.status(400).json({ error: "collectionNameOverride must be a string or null." });
+          return;
+        }
+        updatePayload.collectionNameOverride = body.collectionNameOverride as string | null;
+      }
+      if ("collectionSortOrderOverride" in body) {
+        updatePayload.collectionSortOrderOverride = (body.collectionSortOrderOverride ?? null) as CollectionSortOrder | null;
+      }
+
+      const updatedFields = Object.keys(body).filter((key) => allowedUserPatchFields.has(key));
+      const user = db.updateUser(Number(req.params.id), updatePayload);
+      logger.info("User settings updated", {
+        userId: user.id,
+        displayName: user.displayName,
+        updatedFields,
+        fieldCount: updatedFields.length
+      });
       res.json(user);
     } catch (error) {
       res.status(404).json({ error: error instanceof Error ? error.message : String(error) });
@@ -655,7 +699,11 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   // ---------------------------------------------------------------------------
 
   app.get("/api/watchlists", requireAuth, (req, res) => {
-    const userId = req.query["userId"] ? Number(req.query["userId"]) : undefined;
+    const rawUserId = req.query["userId"];
+    const rawPage = req.query["page"];
+    const rawPageSize = req.query["pageSize"];
+
+    const userId = parsePositiveIntegerQuery(rawUserId);
     const mediaTypeParam = req.query["mediaType"];
     const mediaType =
       mediaTypeParam === "movie" || mediaTypeParam === "show"
@@ -663,18 +711,54 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         : undefined;
     const availabilityParam = req.query["availability"];
     const availability =
-      availabilityParam === "available" || availabilityParam === "missing"
+      availabilityParam === "available" || availabilityParam === "missing" || availabilityParam === "requested"
         ? availabilityParam
         : undefined;
     const sortByParam = req.query["sortBy"];
     const sortBy =
       sortByParam === "added-desc" || sortByParam === "added-asc" ||
-      sortByParam === "title-asc" || sortByParam === "title-desc" ||
-      sortByParam === "year-desc" || sortByParam === "year-asc"
+      sortByParam === "title-asc" || sortByParam === "title-desc"
         ? sortByParam
         : "added-desc";
-    const page = req.query["page"] ? Math.max(1, Number(req.query["page"])) : 1;
-    const pageSize = req.query["pageSize"] ? Math.min(200, Math.max(1, Number(req.query["pageSize"]))) : 50;
+
+    const parsedPage = parsePositiveIntegerQuery(rawPage);
+    const page = parsedPage ?? 1;
+
+    const parsedPageSize = parsePositiveIntegerQuery(rawPageSize);
+    const pageSize = Math.min(200, parsedPageSize ?? 50);
+
+    const invalidFields: string[] = [];
+    const clampedFields: string[] = [];
+    if (rawUserId !== undefined && userId === undefined) {
+      invalidFields.push("userId");
+    }
+    if (rawPage !== undefined && parsedPage === undefined) {
+      invalidFields.push("page");
+    }
+    if (rawPageSize !== undefined && parsedPageSize === undefined) {
+      invalidFields.push("pageSize");
+    }
+    if (parsedPageSize !== undefined && pageSize !== parsedPageSize) {
+      clampedFields.push("pageSize");
+    }
+
+    if (invalidFields.length > 0 || clampedFields.length > 0) {
+      logger.debug("Watchlist query parameters normalized", {
+        originalQuery: {
+          userId: rawUserId,
+          page: rawPage,
+          pageSize: rawPageSize
+        },
+        invalidFields,
+        clampedFields,
+        effectiveValues: {
+          userId,
+          page,
+          pageSize
+        }
+      });
+    }
+
     res.json(db.getWatchlistGrouped({ userId, mediaType, availability, sortBy, page, pageSize }));
   });
 
@@ -699,6 +783,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       const run = await services.refreshAllWatchlists();
       res.json(run);
     } catch (error) {
+      logger.warn("Manual watchlist refresh failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -739,11 +824,23 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   app.get("/api/settings", requireAuth, (_req, res) => {
     const app = db.getAppSettings();
     const plexView = db.getPlexSettingsView();
+    const seerrStored = db.getSeerrSettings();
+
+    const seerrView: SeerrSettingsView = {
+      enabled: seerrStored.enabled,
+      baseUrl: seerrStored.baseUrl,
+      apiKeyConfigured: Boolean(seerrStored.apiKey),
+      autoRequestEnabled: seerrStored.autoRequestEnabled,
+      useServiceAccount: seerrStored.useServiceAccount,
+      serviceAccountSeerrUserId: seerrStored.serviceAccountSeerrUserId
+    };
 
     const payload: SettingsResponse = {
       general: {
         fullSyncOnStartup: app.fullSyncOnStartup,
-        historyRetentionDays: app.historyRetentionDays
+        historyRetentionDays: app.historyRetentionDays,
+        trackAllUsers: app.trackAllUsers,
+        trustProxy: app.trustProxy
       },
       sync: {
         reconciliationIntervalMinutes: app.reconciliationIntervalMinutes,
@@ -757,14 +854,15 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         movieLibraryId: app.defaultMovieLibraryId,
         showLibraryId: app.defaultShowLibraryId,
         visibilityDefaults: app.visibilityDefaults
-      }
+      },
+      seerr: seerrView
     };
     res.json(payload);
   });
 
   app.patch("/api/settings", requireAuth, (req, res) => {
     const body = req.body as {
-      general?: { fullSyncOnStartup?: boolean; historyRetentionDays?: number };
+      general?: { fullSyncOnStartup?: boolean; historyRetentionDays?: number; trackAllUsers?: boolean; trustProxy?: boolean };
       collections?: {
         collectionNamePattern?: string;
         collectionSortOrder?: string;
@@ -788,6 +886,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       if (body.general.historyRetentionDays !== undefined) {
         patch.historyRetentionDays = Math.max(1, Math.floor(body.general.historyRetentionDays));
       }
+      if (typeof body.general.trackAllUsers === "boolean") {
+        patch.trackAllUsers = body.general.trackAllUsers;
+      }
+      if (typeof body.general.trustProxy === "boolean") {
+        patch.trustProxy = body.general.trustProxy;
+      }
     }
 
     if (body.collections) {
@@ -795,9 +899,13 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         patch.collectionNamePattern = body.collections.collectionNamePattern;
       }
       if (body.collections.collectionSortOrder !== undefined) {
-        const valid = ["year-desc", "year-asc", "title"];
-        if (valid.includes(body.collections.collectionSortOrder)) {
-          patch.collectionSortOrder = body.collections.collectionSortOrder as "year-desc" | "year-asc" | "title";
+        const valid: CollectionSortOrder[] = ["date-desc", "date-asc", "title", "watchlist-date-desc", "watchlist-date-asc"];
+        if (valid.includes(body.collections.collectionSortOrder as CollectionSortOrder)) {
+          patch.collectionSortOrder = body.collections.collectionSortOrder as CollectionSortOrder;
+        } else {
+          logger.warn("Invalid collectionSortOrder value rejected", { value: body.collections.collectionSortOrder, allowed: valid });
+          res.status(400).json({ error: "Invalid collectionSortOrder.", allowed: valid });
+          return;
         }
       }
       if ("movieLibraryId" in body.collections) {
@@ -806,8 +914,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       if ("showLibraryId" in body.collections) {
         patch.defaultShowLibraryId = body.collections.showLibraryId ?? null;
       }
-      if (body.collections.visibilityDefaults) {
-        patch.visibilityDefaults = body.collections.visibilityDefaults as typeof patch.visibilityDefaults;
+      if ("visibilityDefaults" in body.collections) {
+        if (!isVisibilityConfig(body.collections.visibilityDefaults)) {
+          res.status(400).json({ error: "visibilityDefaults is invalid." });
+          return;
+        }
+        patch.visibilityDefaults = body.collections.visibilityDefaults;
       }
     }
 
@@ -823,7 +935,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       }
     }
 
-    const updated = db.updateAppSettings(patch);
+    const updated = services.updateSettings(patch);
 
     scheduler?.updateJob("full-sync", {
       intervalMs: updated.reconciliationIntervalMinutes * 60 * 1000,
@@ -834,6 +946,9 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       enabled: updated.rssEnabled
     });
 
+    logger.info("Application settings updated", {
+      summary: summarizeSettingsPatch(patch as Record<string, unknown>)
+    });
     res.json(updated);
   });
 
@@ -850,6 +965,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         }))
       );
     } catch (error) {
+      logger.warn("Failed to fetch Plex libraries for settings", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -859,8 +975,14 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       const result = await validateAndSavePlexConfiguration(req.body as PlexConfigPayload);
       res.json(result);
     } catch (error) {
+      logger.warn("Plex settings save failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
+  });
+
+  /** Test Plex connectivity with the provided configuration without saving */
+  app.post("/api/settings/plex/test", requireAuth, async (req, res) => {
+    await handlePlexConnectionTest(req.body as PlexConfigPayload, res);
   });
 
   app.use("/api/settings/logs", logsRateLimiter);
@@ -946,6 +1068,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       const result = await services.resetCollections();
       res.json(result);
     } catch (error) {
+      logger.warn("Collection reset failed", { error: error instanceof Error ? error.message : String(error) });
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -953,17 +1076,23 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   /** Job status */
   app.get("/api/settings/jobs", requireAuth, (_req, res) => {
     const settings = db.getAppSettings();
+    const seerrSettings = db.getSeerrSettings();
     const recentRuns = db.listSyncRuns(20);
 
-    const lastFull = recentRuns.find((r) => r.kind === "full");
-    const lastPublish = recentRuns.find((r) => r.kind === "publish");
-    const lastRss = recentRuns.find((r) => r.kind === "rss");
+    // Keep the "last run" fields anchored to the most recent completed run so
+    // active jobs can still show consistent previous-run context while running.
+    const lastFull = recentRuns.find((r) => r.kind === "full" && r.completedAt);
+    const lastPublish = recentRuns.find((r) => r.kind === "publish" && r.completedAt);
+    const lastRss = recentRuns.find((r) => r.kind === "rss" && r.completedAt);
+    const lastSeerr = recentRuns.find((r) => r.kind === "seerr" && r.completedAt);
+    const seerrJobState = db.getJobRunState("seerr-request-sync");
 
-    const jobs = [
+    const jobs: JobInfo[] = [
       {
         id: "collection-publish",
         name: "Collection Sync",
         intervalDescription: `Every ${settings.collectionPublishIntervalMinutes} minutes`,
+        isRunning: scheduler?.isRunning("collection-publish") ?? false,
         nextRunAt:
           scheduler?.getNextRunAt("collection-publish") ??
           (lastPublish?.completedAt
@@ -979,6 +1108,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "full-sync",
         name: "Watchlist GraphQL Sync",
         intervalDescription: `Every ${settings.reconciliationIntervalMinutes} minutes`,
+        isRunning: scheduler?.isRunning("full-sync") ?? false,
         nextRunAt:
           scheduler?.getNextRunAt("full-sync") ??
           (lastFull?.completedAt
@@ -993,6 +1123,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "plex-recently-added-scan",
         name: "Plex Recently Added Scan",
         intervalDescription: `Every ${settings.plexRecentlyAddedScanIntervalMinutes} minutes`,
+        isRunning: scheduler?.isRunning("plex-recently-added-scan") ?? false,
         nextRunAt: scheduler?.getNextRunAt("plex-recently-added-scan") ?? null,
         lastRunAt: scheduler?.getLastRunAt("plex-recently-added-scan") ?? null,
         lastRunStatus: scheduler?.getLastRunStatus("plex-recently-added-scan") ?? null
@@ -1001,6 +1132,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "plex-full-library-scan",
         name: "Plex Full Library Scan",
         intervalDescription: `Every ${settings.plexFullLibraryScanIntervalMinutes / 60} hour${settings.plexFullLibraryScanIntervalMinutes / 60 !== 1 ? "s" : ""}`,
+        isRunning: scheduler?.isRunning("plex-full-library-scan") ?? false,
         nextRunAt: scheduler?.getNextRunAt("plex-full-library-scan") ?? null,
         lastRunAt: scheduler?.getLastRunAt("plex-full-library-scan") ?? null,
         lastRunStatus: scheduler?.getLastRunStatus("plex-full-library-scan") ?? null
@@ -1009,9 +1141,28 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "plex-refresh-token",
         name: "Plex Refresh Token",
         intervalDescription: "Daily at 5:00 AM",
+        isRunning: scheduler?.isRunning("plex-refresh-token") ?? false,
         nextRunAt: scheduler?.getNextRunAt("plex-refresh-token") ?? null,
         lastRunAt: scheduler?.getLastRunAt("plex-refresh-token") ?? null,
         lastRunStatus: scheduler?.getLastRunStatus("plex-refresh-token") ?? null
+      },
+      {
+        id: "users-discover",
+        name: "Refresh Users",
+        intervalDescription: "Daily at 5:00 AM",
+        isRunning: scheduler?.isRunning("users-discover") ?? false,
+        nextRunAt: scheduler?.getNextRunAt("users-discover") ?? null,
+        lastRunAt: scheduler?.getLastRunAt("users-discover") ?? null,
+        lastRunStatus: scheduler?.getLastRunStatus("users-discover") ?? null
+      },
+      {
+        id: "maintenance-tasks",
+        name: "Maintenance Tasks",
+        intervalDescription: "Daily at 5:30 AM",
+        isRunning: scheduler?.isRunning("maintenance-tasks") ?? false,
+        nextRunAt: scheduler?.getNextRunAt("maintenance-tasks") ?? null,
+        lastRunAt: scheduler?.getLastRunAt("maintenance-tasks") ?? null,
+        lastRunStatus: scheduler?.getLastRunStatus("maintenance-tasks") ?? null
       },
       {
         id: "rss-sync",
@@ -1019,11 +1170,36 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         intervalDescription: settings.rssEnabled
           ? `Every ${settings.rssPollIntervalSeconds / 60} minute${settings.rssPollIntervalSeconds / 60 !== 1 ? "s" : ""}`
           : "Disabled",
-        nextRunAt: scheduler?.getNextRunAt("rss-sync"),
+        isRunning: scheduler?.isRunning("rss-sync") ?? false,
+        nextRunAt: scheduler?.getNextRunAt("rss-sync") ?? null,
         lastRunAt: lastRss?.completedAt ?? null,
         lastRunStatus: lastRss?.status === "success" || lastRss?.status === "error" ? lastRss.status : null
+      },
+      {
+        id: "activity-cache-fetch",
+        name: "Watchlist Activity Cache",
+        intervalDescription: `Every ${settings.activityCacheFetchIntervalMinutes} minutes`,
+        isRunning: scheduler?.isRunning("activity-cache-fetch") ?? false,
+        nextRunAt: scheduler?.getNextRunAt("activity-cache-fetch") ?? null,
+        lastRunAt: scheduler?.getLastRunAt("activity-cache-fetch") ?? null,
+        lastRunStatus: scheduler?.getLastRunStatus("activity-cache-fetch") ?? null
       }
     ];
+
+    if (seerrSettings.enabled) {
+      jobs.push({
+        id: "seerr-request-sync",
+        name: "Seerr Request Sync",
+        intervalDescription: "Manual",
+        isRunning: services.isSeerrRequestSyncRunning(),
+        nextRunAt: null,
+        nextRunLabel: "Manual",
+        lastRunAt: seerrJobState?.lastRunAt ?? lastSeerr?.completedAt ?? null,
+        lastRunStatus: seerrJobState?.lastRunStatus ?? (
+          lastSeerr?.status === "success" || lastSeerr?.status === "error" ? lastSeerr.status : null
+        )
+      });
+    }
 
     jobs.sort((a, b) => a.name.localeCompare(b.name));
 
@@ -1042,9 +1218,11 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         }
         res.json({ triggered: true });
       } else if (jobId === "full-sync") {
-        services.runFullSync().catch((err) => {
-          logger.warn("Manual full sync failed", { error: err instanceof Error ? err.message : String(err) });
-        });
+        const triggered = scheduler?.runNow("full-sync") ?? false;
+        if (!triggered) {
+          res.status(404).json({ error: "Unknown job." });
+          return;
+        }
         res.json({ triggered: true });
       } else if (jobId === "plex-recently-added-scan") {
         const triggered = scheduler?.runNow("plex-recently-added-scan") ?? false;
@@ -1067,9 +1245,36 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
           return;
         }
         res.json({ triggered: true });
+      } else if (jobId === "users-discover") {
+        const triggered = scheduler?.runNow("users-discover") ?? false;
+        if (!triggered) {
+          res.status(404).json({ error: "Unknown job." });
+          return;
+        }
+        res.json({ triggered: true });
+      } else if (jobId === "maintenance-tasks") {
+        const triggered = scheduler?.runNow("maintenance-tasks") ?? false;
+        if (!triggered) {
+          res.status(404).json({ error: "Unknown job." });
+          return;
+        }
+        res.json({ triggered: true });
       } else if (jobId === "rss-sync") {
-        services.pollRss().catch((err) => {
-          logger.warn("Manual RSS poll failed", { error: err instanceof Error ? err.message : String(err) });
+        const triggered = scheduler?.runNow("rss-sync") ?? false;
+        if (!triggered) {
+          res.status(404).json({ error: "Unknown job." });
+          return;
+        }
+        res.json({ triggered: true });
+      } else if (jobId === "activity-cache-fetch") {
+        logger.info("Manual job run requested", { jobId });
+        services.syncActivityCache().catch((err) => {
+          logger.warn("Manual activity cache fetch failed", { error: err instanceof Error ? err.message : String(err) });
+        });
+        res.json({ triggered: true });
+      } else if (jobId === "seerr-request-sync") {
+        services.runSeerrRequestSync({ mode: "all", triggeredBy: "manual" }).catch((err) => {
+          logger.warn("Manual Seerr request sync failed", { error: err instanceof Error ? err.message : String(err) });
         });
         res.json({ triggered: true });
       } else {
@@ -1119,6 +1324,13 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         enabled: updated.rssEnabled
       });
       res.json({ updated: true });
+    } else if (jobId === "activity-cache-fetch" && body.intervalMinutes) {
+      const updated = db.updateAppSettings({ activityCacheFetchIntervalMinutes: body.intervalMinutes });
+      scheduler?.updateJob("activity-cache-fetch", {
+        intervalMs: updated.activityCacheFetchIntervalMinutes * 60 * 1000,
+        enabled: true
+      });
+      res.json({ updated: true });
     } else {
       res.status(400).json({ error: "Unknown job or missing interval." });
     }
@@ -1128,6 +1340,8 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   app.get("/api/settings/about", requireAuth, (_req, res) => {
     res.json({
       version: APP_VERSION,
+      buildChannel: BUILD_CHANNEL,
+      commitSha: BUILD_COMMIT,
       nodeVersion: process.version,
       platform: process.platform,
       dataDir: config.dataDir,
@@ -1135,9 +1349,295 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     });
   });
 
+  /** Clear image cache — removes all files and metadata */
+  app.post("/api/settings/image-cache/clear", requireAuth, (_req, res) => {
+    const removed = imageCache.clearAll();
+    res.json({ removed });
+  });
+
+  /** Clear activity cache — removes all watchlist activity date entries */
+  app.post("/api/settings/activity-cache/clear", requireAuth, (_req, res) => {
+    const removed = db.clearActivityCache();
+    res.json({ removed });
+  });
+
+  /** Prune orphaned image files not referenced by any metadata row */
+  app.post("/api/settings/image-cache/prune", requireAuth, (_req, res) => {
+    const removed = imageCache.pruneOrphaned();
+    res.json({ removed });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Seerr settings
+  // ---------------------------------------------------------------------------
+
+  app.patch("/api/settings/seerr", requireAuth, async (req, res) => {
+    const body = req.body as SeerrSettingsPatch;
+    const current = db.getSeerrSettings();
+    const serviceAccountAvatarUrl = "https://raw.githubusercontent.com/Migz93/hubarr/refs/heads/main/public/logo.png";
+
+    const patch: Parameters<typeof db.updateSeerrSettings>[0] = {};
+
+    if (typeof body.enabled === "boolean") patch.enabled = body.enabled;
+    if (typeof body.baseUrl === "string") patch.baseUrl = body.baseUrl.trim();
+    if (typeof body.apiKey === "string" && body.apiKey) patch.apiKey = body.apiKey;
+    if (typeof body.autoRequestEnabled === "boolean") patch.autoRequestEnabled = body.autoRequestEnabled;
+
+    if (typeof body.useServiceAccount === "boolean") {
+      patch.useServiceAccount = body.useServiceAccount;
+
+      // When enabling service account mode, always reconcile the Hubarr Seerr account.
+      // This runs on every save (not just first enable) so permissions are corrected
+      // if they were changed in Seerr after initial setup.
+      if (body.useServiceAccount) {
+        const baseUrl = patch.baseUrl ?? current.baseUrl;
+        const apiKey = patch.apiKey ?? current.apiKey;
+        if (!baseUrl || !apiKey) {
+          res.status(400).json({ error: "Base URL and API key are required to enable service account mode." });
+          return;
+        }
+        try {
+          const seerr = services.buildSeerrIntegration(baseUrl, apiKey);
+          const seerrUserId = await seerr.createOrReconcileServiceAccount(serviceAccountAvatarUrl);
+          patch.serviceAccountSeerrUserId = seerrUserId;
+          logger.info("Seerr service account reconciled on settings save", {
+            seerrUserId,
+            avatarUrl: serviceAccountAvatarUrl
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          logger.error("Failed to create Seerr service account", { message });
+          res.status(400).json({ error: `Could not create Seerr service account: ${message}` });
+          return;
+        }
+      }
+
+      if (!body.useServiceAccount) {
+        // Disabling service account mode — stop using the account but do not delete it from Seerr.
+        // Deleting causes Seerr user IDs to increment each time the option is toggled, which is
+        // surprising and hard to recover from. The account will be found and reused by email if
+        // the option is enabled again later.
+        if (current.useServiceAccount) {
+          logger.info("Seerr service account usage disabled — account retained in Seerr", {
+            seerrUserId: current.serviceAccountSeerrUserId
+          });
+        }
+        patch.serviceAccountSeerrUserId = null;
+      }
+    }
+
+    const candidate = { ...current, ...patch };
+    let validatedSeerr = null as ReturnType<typeof services.buildSeerrIntegration> | null;
+    if (candidate.enabled && (!candidate.baseUrl || !candidate.apiKey)) {
+      res.status(400).json({ error: "Base URL and API key are required to enable Seerr." });
+      return;
+    }
+    if (candidate.baseUrl && candidate.apiKey) {
+      try {
+        validatedSeerr = services.buildSeerrIntegration(candidate.baseUrl, candidate.apiKey);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn("Rejected invalid Seerr settings", { message });
+        res.status(400).json({ error: message });
+        return;
+      }
+    }
+
+    const updated = db.updateSeerrSettings(patch);
+
+    // Kick off auto-matching whenever Seerr settings change and integration is enabled
+    if (updated.enabled && updated.baseUrl && updated.apiKey && validatedSeerr) {
+      validatedSeerr.getUsers()
+        .then((seerrUsers) => services.syncSeerrUserMappings(seerrUsers))
+        .catch((err) => {
+          logger.warn("Seerr auto-match sync failed after settings update", {
+            message: err instanceof Error ? err.message : String(err)
+          });
+        });
+
+      // Run the Seerr Request Sync job so newly-missing items get their state
+      // refreshed immediately without the user needing to trigger it manually.
+      services.runSeerrRequestSync({ mode: "all", triggeredBy: "manual" }).catch((err) => {
+        logger.warn("Seerr request sync failed after settings save", {
+          message: err instanceof Error ? err.message : String(err)
+        });
+      });
+    }
+
+    res.json({
+      enabled: updated.enabled,
+      baseUrl: updated.baseUrl,
+      apiKeyConfigured: Boolean(updated.apiKey),
+      autoRequestEnabled: updated.autoRequestEnabled,
+      useServiceAccount: updated.useServiceAccount,
+      serviceAccountSeerrUserId: updated.serviceAccountSeerrUserId
+    });
+  });
+
+  /** Test Seerr connectivity with provided or stored credentials */
+  app.post("/api/settings/seerr/test", requireAuth, async (req, res) => {
+    const body = req.body as { baseUrl?: string; apiKey?: string };
+    const stored = db.getSeerrSettings();
+    const baseUrl = (body.baseUrl ?? stored.baseUrl ?? "").trim();
+    const apiKey = body.apiKey ?? stored.apiKey ?? "";
+
+    if (!baseUrl) {
+      res.status(400).json({ error: "Base URL is required." });
+      return;
+    }
+    if (!apiKey) {
+      res.status(400).json({ error: "API key is required." });
+      return;
+    }
+
+    try {
+      const seerr = services.buildSeerrIntegration(baseUrl, apiKey);
+      const result = await seerr.validate();
+      res.json({ ok: true, version: result.version, userCount: result.userCount });
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  /** List Seerr users for the mapping dropdown */
+  app.get("/api/settings/seerr/users", requireAuth, async (_req, res) => {
+    const stored = db.getSeerrSettings();
+    if (!stored.baseUrl || !stored.apiKey) {
+      res.status(400).json({ error: "Seerr is not configured." });
+      return;
+    }
+    try {
+      const seerr = services.buildSeerrIntegration(stored.baseUrl, stored.apiKey);
+      const users = await seerr.getUsers();
+      res.json(users);
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Seerr user links
+  // ---------------------------------------------------------------------------
+
+  /** Get Seerr link for a specific user */
+  app.get("/api/users/:id/seerr", requireAuth, (req, res) => {
+    const userId = Number(req.params.id);
+    const link = db.getSeerrUserLink(userId);
+    const globalAutoRequestEnabled = db.getSeerrSettings().autoRequestEnabled;
+    const response = link
+      ? {
+          ...link,
+          autoRequestEnabled: link.autoRequestEnabledOverride ?? globalAutoRequestEnabled
+        }
+      : {
+          userId,
+          manualSeerrUserId: null,
+          autoMatchedSeerrUserId: null,
+          effectiveSeerrUserId: null,
+          mappingStatus: "unlinked" as const,
+          autoRequestEnabledOverride: null,
+          autoRequestEnabled: globalAutoRequestEnabled
+        };
+    res.json(response);
+  });
+
+  /** Update Seerr link for a user (manual override or auto-request toggle) */
+  app.patch("/api/users/:id/seerr", requireAuth, (req, res) => {
+    const userId = Number(req.params.id);
+    const body = req.body as {
+      manualSeerrUserId?: unknown;
+      autoRequestEnabledOverride?: unknown;
+    };
+
+    // Validate autoRequestEnabledOverride — must be boolean or null, not a string/number coercible value
+    if ("autoRequestEnabledOverride" in body) {
+      const v = body.autoRequestEnabledOverride;
+      if (v !== null && v !== true && v !== false) {
+        res.status(400).json({ error: "autoRequestEnabledOverride must be true, false, or null." });
+        return;
+      }
+    }
+
+    // Normalise manualSeerrUserId — the client sends -1 as a sentinel for "no user selected";
+    // any non-positive number is treated as null.
+    let manualSeerrUserId: number | null | undefined = undefined;
+    if ("manualSeerrUserId" in body) {
+      const v = body.manualSeerrUserId;
+      if (v === null || v === undefined) {
+        manualSeerrUserId = null;
+      } else if (typeof v === "number" && v > 0) {
+        manualSeerrUserId = v;
+      } else {
+        manualSeerrUserId = null;
+      }
+    }
+
+    // Verify user exists
+    const user = db.getUser(userId);
+    if (!user) {
+      res.status(404).json({ error: "User not found." });
+      return;
+    }
+
+    const updated = db.upsertSeerrUserLink({
+      userId,
+      ...("manualSeerrUserId" in body && { manualSeerrUserId: manualSeerrUserId ?? null }),
+      ...("autoRequestEnabledOverride" in body && {
+        autoRequestEnabledOverride: (body.autoRequestEnabledOverride as boolean | null) ?? null
+      })
+    });
+    if (updated.effectiveSeerrUserId !== null) {
+      const cleared = db.deleteSkippedUnlinkedSeerrRequestStatesForUser(userId);
+      if (cleared > 0) {
+        logger.info("Cleared stale Seerr unlinked request states after user mapping save", {
+          userId,
+          displayName: user.displayName,
+          cleared
+        });
+      }
+    }
+    const globalAutoRequestEnabled = db.getSeerrSettings().autoRequestEnabled;
+    res.json({
+      ...updated,
+      autoRequestEnabled: updated.autoRequestEnabledOverride ?? globalAutoRequestEnabled
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Seerr request state
+  // ---------------------------------------------------------------------------
+
+  /** Get Seerr request state for a watchlist item across all users */
+  app.get("/api/watchlists/seerr-state", requireAuth, (req, res) => {
+    const plexItemId = req.query["plexItemId"];
+    if (typeof plexItemId !== "string" || !plexItemId) {
+      res.status(400).json({ error: "plexItemId is required." });
+      return;
+    }
+    res.json(db.listSeerrRequestStatesForItem(plexItemId));
+  });
+
+  /** Manually trigger a Seerr request for a watchlist item */
+  app.post("/api/watchlists/request", requireAuth, async (req, res) => {
+    const body = req.body as { userId?: number; plexItemId?: string };
+    if (typeof body.userId !== "number" || typeof body.plexItemId !== "string" || !body.plexItemId) {
+      res.status(400).json({ error: "userId and plexItemId are required." });
+      return;
+    }
+    try {
+      const result = await services.triggerManualSeerrRequest(body.userId, body.plexItemId);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // Static file serving
   // ---------------------------------------------------------------------------
+
+  const imageCacheDir = path.join(config.dataDir, "image-cache");
+  app.use("/images", requireAuth, express.static(imageCacheDir, { maxAge: "7d" }));
 
   if (fs.existsSync(clientDir)) {
     app.use(express.static(clientDir));

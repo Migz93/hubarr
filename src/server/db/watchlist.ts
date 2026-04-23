@@ -1,8 +1,278 @@
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
 import type { WatchlistGroupedItem, WatchlistItem, WatchlistPageResponse, WatchlistSortBy } from "../../shared/types.js";
+import { mergeRawPayloadGuids } from "./guid-dedupe.js";
+import { getDiscoverKeyForPlexItemId, upsertMediaItemIdentifiers } from "./identifiers.js";
+import { listSeerrRequestedPlexItemIds } from "./seerr.js";
+import { getAppSettings } from "./settings.js";
+import type { Logger } from "../logger.js";
+
+type ItemSummaryRow = {
+  plexItemId: string;
+  title: string;
+  type: "movie" | "show";
+  year: number | null;
+  addedAt: string;
+  matchedRatingKey: string | null;
+  userId: number;
+  rawPayload: string;
+  discoverKey: string | null;
+};
+
+type BaseWatchlistItemGroup = {
+  plexItemId: string;
+  title: string;
+  year: number | null;
+  type: "movie" | "show";
+  addedAt: string;
+  matchedRatingKey: string | null;
+  plexAvailable: boolean;
+  seerrRequested: boolean;
+  memberItemIds: Set<string>;
+  userAddedAt: Map<number, string>;
+};
+
+class ItemDisjointSet {
+  private readonly parent = new Map<string, string>();
+
+  add(itemId: string): void {
+    if (!this.parent.has(itemId)) {
+      this.parent.set(itemId, itemId);
+    }
+  }
+
+  find(itemId: string): string {
+    const parent = this.parent.get(itemId);
+    if (!parent || parent === itemId) return itemId;
+    const root = this.find(parent);
+    this.parent.set(itemId, root);
+    return root;
+  }
+
+  union(left: string, right: string): void {
+    const leftRoot = this.find(left);
+    const rightRoot = this.find(right);
+    if (leftRoot !== rightRoot) {
+      this.parent.set(rightRoot, leftRoot);
+    }
+  }
+}
+
+function compareRepresentativeCandidate(
+  left: Pick<BaseWatchlistItemGroup, "matchedRatingKey" | "addedAt" | "userAddedAt" | "plexItemId">,
+  right: Pick<BaseWatchlistItemGroup, "matchedRatingKey" | "addedAt" | "userAddedAt" | "plexItemId">
+): number {
+  if (Boolean(left.matchedRatingKey) !== Boolean(right.matchedRatingKey)) {
+    return left.matchedRatingKey ? 1 : -1;
+  }
+
+  if (left.addedAt !== right.addedAt) {
+    return left.addedAt > right.addedAt ? 1 : -1;
+  }
+
+  if (left.userAddedAt.size !== right.userAddedAt.size) {
+    return left.userAddedAt.size > right.userAddedAt.size ? 1 : -1;
+  }
+
+  return right.plexItemId.localeCompare(left.plexItemId);
+}
+
+function compareGroupedItems(
+  left: BaseWatchlistItemGroup,
+  right: BaseWatchlistItemGroup,
+  sortBy: WatchlistSortBy
+): number {
+  switch (sortBy) {
+    case "added-asc": {
+      const addedCmp = new Date(left.addedAt).getTime() - new Date(right.addedAt).getTime();
+      if (addedCmp !== 0) return addedCmp;
+      break;
+    }
+    case "title-asc": {
+      const titleCmp = left.title.localeCompare(right.title, undefined, { sensitivity: "base" });
+      if (titleCmp !== 0) return titleCmp;
+      break;
+    }
+    case "title-desc": {
+      const titleCmp = right.title.localeCompare(left.title, undefined, { sensitivity: "base" });
+      if (titleCmp !== 0) return titleCmp;
+      break;
+    }
+    default: {
+      const addedCmp = new Date(right.addedAt).getTime() - new Date(left.addedAt).getTime();
+      if (addedCmp !== 0) return addedCmp;
+      break;
+    }
+  }
+
+  const titleCmp = left.title.localeCompare(right.title, undefined, { sensitivity: "base" });
+  if (titleCmp !== 0) return titleCmp;
+
+  const yearCmp = (right.year ?? 0) - (left.year ?? 0);
+  if (yearCmp !== 0) return yearCmp;
+
+  return left.plexItemId.localeCompare(right.plexItemId);
+}
+
+function buildWhereClause(options: {
+  allowSelectedDisabledOnly: boolean;
+  userId?: number;
+}): { sql: string; params: (string | number)[] } {
+  const whereParts: string[] = [options.allowSelectedDisabledOnly ? "f.id = ?" : "f.enabled = 1"];
+  const params: (string | number)[] = options.allowSelectedDisabledOnly && options.userId ? [options.userId] : [];
+
+  return {
+    sql: whereParts.join(" AND "),
+    params
+  };
+}
+
+function loadWatchlistItemSummaries(
+  db: Database.Database,
+  whereClause: string,
+  whereParams: (string | number)[]
+): ItemSummaryRow[] {
+  return db.prepare(`
+    SELECT
+      w.plex_item_id AS plexItemId,
+      w.title AS title,
+      w.type AS type,
+      w.year AS year,
+      w.added_at AS addedAt,
+      w.matched_rating_key AS matchedRatingKey,
+      w.user_id AS userId,
+      w.raw_payload AS rawPayload,
+      w.discover_key AS discoverKey
+    FROM watchlist_cache w
+    JOIN users f ON f.id = w.user_id
+    WHERE ${whereClause}
+    ORDER BY
+      w.added_at DESC,
+      w.year DESC,
+      w.title COLLATE NOCASE ASC,
+      w.plex_item_id ASC,
+      w.user_id ASC
+  `).all(...whereParams) as ItemSummaryRow[];
+}
+
+function buildMergedWatchlistGroups(
+  rows: ItemSummaryRow[]
+): BaseWatchlistItemGroup[] {
+  const itemsById = new Map<string, BaseWatchlistItemGroup>();
+  const dsu = new ItemDisjointSet();
+  const itemGuids = new Map<string, Set<string>>();
+
+  for (const row of rows) {
+    dsu.add(row.plexItemId);
+
+    const existing = itemsById.get(row.plexItemId);
+    if (existing) {
+      const currentAddedAt = existing.userAddedAt.get(row.userId);
+      if (!currentAddedAt || row.addedAt > currentAddedAt) {
+        existing.userAddedAt.set(row.userId, row.addedAt);
+      }
+      if (row.addedAt > existing.addedAt) {
+        existing.addedAt = row.addedAt;
+      }
+      if (row.matchedRatingKey && !existing.matchedRatingKey) {
+        existing.matchedRatingKey = row.matchedRatingKey;
+      }
+      existing.plexAvailable = existing.plexAvailable || Boolean(row.matchedRatingKey);
+      continue;
+    }
+
+    mergeRawPayloadGuids(itemGuids, row.plexItemId, row.rawPayload);
+    if (row.discoverKey?.trim()) {
+      const identifiers = itemGuids.get(row.plexItemId) ?? new Set<string>();
+      identifiers.add(row.discoverKey.trim().toLowerCase());
+      itemGuids.set(row.plexItemId, identifiers);
+    }
+
+    itemsById.set(row.plexItemId, {
+      plexItemId: row.plexItemId,
+      title: row.title,
+      year: row.year,
+      type: row.type,
+      addedAt: row.addedAt,
+      matchedRatingKey: row.matchedRatingKey,
+      plexAvailable: Boolean(row.matchedRatingKey),
+      seerrRequested: false,
+      memberItemIds: new Set([row.plexItemId]),
+      userAddedAt: new Map([[row.userId, row.addedAt]])
+    });
+  }
+
+  const firstItemByIdentifier = new Map<string, string>();
+  for (const [itemId, identifiers] of itemGuids) {
+    if (!itemsById.has(itemId)) continue;
+    for (const identifier of identifiers) {
+      const existing = firstItemByIdentifier.get(identifier);
+      if (existing) {
+        const existingItem = itemsById.get(existing);
+        const currentItem = itemsById.get(itemId);
+        if (existingItem && currentItem && existingItem.type === currentItem.type) {
+          dsu.union(existing, itemId);
+        }
+      } else {
+        firstItemByIdentifier.set(identifier, itemId);
+      }
+    }
+  }
+
+  const groupsByRoot = new Map<string, BaseWatchlistItemGroup>();
+  for (const item of itemsById.values()) {
+    const root = dsu.find(item.plexItemId);
+    const existing = groupsByRoot.get(root);
+    if (!existing) {
+      groupsByRoot.set(root, {
+        plexItemId: item.plexItemId,
+        title: item.title,
+        year: item.year,
+        type: item.type,
+        addedAt: item.addedAt,
+        matchedRatingKey: item.matchedRatingKey,
+        plexAvailable: item.plexAvailable,
+        seerrRequested: item.seerrRequested,
+        memberItemIds: new Set(item.memberItemIds),
+        userAddedAt: new Map(item.userAddedAt)
+      });
+      continue;
+    }
+
+    if (compareRepresentativeCandidate(item, existing) > 0) {
+      existing.plexItemId = item.plexItemId;
+      existing.title = item.title;
+      existing.year = item.year;
+      existing.type = item.type;
+    }
+
+    if (item.addedAt > existing.addedAt) {
+      existing.addedAt = item.addedAt;
+    }
+    if (item.matchedRatingKey && !existing.matchedRatingKey) {
+      existing.matchedRatingKey = item.matchedRatingKey;
+    }
+    existing.plexAvailable = existing.plexAvailable || item.plexAvailable;
+    existing.seerrRequested = existing.seerrRequested || item.seerrRequested;
+
+    for (const memberItemId of item.memberItemIds) {
+      existing.memberItemIds.add(memberItemId);
+    }
+    for (const [userId, addedAt] of item.userAddedAt) {
+      const currentAddedAt = existing.userAddedAt.get(userId);
+      if (!currentAddedAt || addedAt > currentAddedAt) {
+        existing.userAddedAt.set(userId, addedAt);
+      }
+    }
+  }
+
+  return Array.from(groupsByRoot.values());
+}
 
 export function getWatchlistDiscoverKey(db: Database.Database, plexItemId: string): string | null {
+  const explicitDiscoverKey = getDiscoverKeyForPlexItemId(db, plexItemId);
+  if (explicitDiscoverKey) return explicitDiscoverKey;
+
   const row = db
     .prepare("SELECT raw_payload FROM watchlist_cache WHERE plex_item_id = ? LIMIT 1")
     .get(plexItemId) as { raw_payload: string } | undefined;
@@ -15,34 +285,58 @@ export function getWatchlistDiscoverKey(db: Database.Database, plexItemId: strin
   }
 }
 
+// Clears the matched_rating_key for a specific user's watchlist item.
+// Use this when a full scan confirms the item is no longer in the Plex library.
+export function clearMatchedRatingKey(db: Database.Database, userId: number, plexItemId: string): void {
+  db.prepare(
+    "UPDATE watchlist_cache SET matched_rating_key = NULL WHERE user_id = ? AND plex_item_id = ?"
+  ).run(userId, plexItemId);
+}
+
+// Clears matched_rating_key for every user whose item references the given ratingKey value.
+// Use this when collection publishing discovers a ratingKey is no longer valid in Plex.
+export function clearMatchedRatingKeyByValue(db: Database.Database, ratingKey: string): void {
+  db.prepare(
+    "UPDATE watchlist_cache SET matched_rating_key = NULL WHERE matched_rating_key = ?"
+  ).run(ratingKey);
+}
+
 export function upsertWatchlistItem(db: Database.Database, userId: number, item: WatchlistItem): void {
+  const discoverKey = item.discoverKey ?? null;
   db.prepare(`
     INSERT INTO watchlist_cache (
-      user_id, plex_item_id, title, type, year, thumb, source, added_at, matched_rating_key, raw_payload
+      user_id, plex_item_id, title, type, year, thumb, source, added_at, matched_rating_key, raw_payload, discover_key
     )
-    VALUES (@userId, @plexItemId, @title, @type, @year, @thumb, @source, @addedAt, @matchedRatingKey, @rawPayload)
+    VALUES (@userId, @plexItemId, @title, @type, @year, @thumb, @source, @addedAt, @matchedRatingKey, @rawPayload, @discoverKey)
     ON CONFLICT(user_id, plex_item_id) DO UPDATE SET
       title = excluded.title,
       year = excluded.year,
       thumb = excluded.thumb,
       matched_rating_key = COALESCE(excluded.matched_rating_key, matched_rating_key),
-      raw_payload = excluded.raw_payload
-  `).run({ userId, ...item, rawPayload: JSON.stringify(item) });
+      source = excluded.source,
+      raw_payload = excluded.raw_payload,
+      discover_key = COALESCE(excluded.discover_key, discover_key),
+      added_at = CASE
+        WHEN added_at = '2001-01-01T00:00:00.000Z' THEN excluded.added_at
+        ELSE added_at
+      END
+  `).run({ userId, ...item, rawPayload: JSON.stringify(item), discoverKey });
+  upsertMediaItemIdentifiers(db, item);
 }
 
 export function replaceWatchlistItems(db: Database.Database, userId: number, items: WatchlistItem[]): void {
   const del = db.prepare("DELETE FROM watchlist_cache WHERE user_id = ?");
   const insert = db.prepare(`
     INSERT INTO watchlist_cache (
-      user_id, plex_item_id, title, type, year, thumb, source, added_at, matched_rating_key, raw_payload
+      user_id, plex_item_id, title, type, year, thumb, source, added_at, matched_rating_key, raw_payload, discover_key
     )
-    VALUES (@userId, @plexItemId, @title, @type, @year, @thumb, @source, @addedAt, @matchedRatingKey, @rawPayload)
+    VALUES (@userId, @plexItemId, @title, @type, @year, @thumb, @source, @addedAt, @matchedRatingKey, @rawPayload, @discoverKey)
   `);
 
   db.transaction(() => {
     del.run(userId);
     for (const item of items) {
-      insert.run({ userId, ...item, rawPayload: JSON.stringify(item) });
+      insert.run({ userId, ...item, rawPayload: JSON.stringify(item), discoverKey: item.discoverKey ?? null });
     }
   })();
 }
@@ -50,11 +344,13 @@ export function replaceWatchlistItems(db: Database.Database, userId: number, ite
 export function getWatchlistItems(db: Database.Database, userId?: number): WatchlistItem[] {
   const query = userId
     ? db.prepare(`
-        SELECT plex_item_id AS plexItemId, title, type, year, thumb, source, added_at AS addedAt, matched_rating_key AS matchedRatingKey, raw_payload AS rawPayload
+        SELECT plex_item_id AS plexItemId, title, type, year, thumb, source, added_at AS addedAt,
+               matched_rating_key AS matchedRatingKey, raw_payload AS rawPayload, discover_key AS discoverKey
         FROM watchlist_cache WHERE user_id = ? ORDER BY added_at DESC, title ASC
       `)
     : db.prepare(`
-        SELECT plex_item_id AS plexItemId, title, type, year, thumb, source, added_at AS addedAt, matched_rating_key AS matchedRatingKey, raw_payload AS rawPayload
+        SELECT plex_item_id AS plexItemId, title, type, year, thumb, source, added_at AS addedAt,
+               matched_rating_key AS matchedRatingKey, raw_payload AS rawPayload, discover_key AS discoverKey
         FROM watchlist_cache ORDER BY added_at DESC, title ASC
       `);
 
@@ -67,8 +363,10 @@ export function getWatchlistItems(db: Database.Database, userId?: number): Watch
       const parsed = JSON.parse(rawPayload) as Partial<WatchlistItem>;
       return {
         ...row,
+        // guids and releaseDate are stored only in raw_payload — wide/variable-length data not needed for SQL filtering.
         guids: Array.isArray(parsed.guids) ? parsed.guids : undefined,
-        discoverKey: typeof parsed.discoverKey === "string" ? parsed.discoverKey : undefined
+        discoverKey: row.discoverKey,
+        releaseDate: typeof parsed.releaseDate === "string" ? parsed.releaseDate : null
       };
     } catch {
       return row;
@@ -81,160 +379,75 @@ export function getWatchlistGrouped(
   options: {
     userId?: number;
     mediaType?: "movie" | "show";
-    availability?: "available" | "missing";
+    availability?: "available" | "missing" | "requested";
     sortBy?: WatchlistSortBy;
     page: number;
     pageSize: number;
-  }
+  },
+  logger?: Logger
 ): WatchlistPageResponse {
   const { userId, mediaType, availability, sortBy = "added-desc", page, pageSize } = options;
   const offset = (page - 1) * pageSize;
+  const selectedUser = userId
+    ? (db.prepare(`
+        SELECT
+          u.id AS userId,
+          COALESCE(u.display_name_override, u.username) AS displayName,
+          ic.local_web_path AS avatarUrl,
+          u.enabled
+        FROM users u
+        LEFT JOIN image_cache ic ON ic.cache_key = 'avatar:' || u.plex_user_id
+        WHERE u.id = ?
+      `).get(userId) as
+        | { userId: number; displayName: string; avatarUrl: string | null; enabled: number }
+        | undefined)
+    : undefined;
+  const allowSelectedDisabledOnly = Boolean(
+    selectedUser &&
+    !selectedUser.enabled &&
+    getAppSettings(db).trackAllUsers
+  );
+  // Load all items without mediaType filter so facet counts remain accurate across type switches
+  const { sql: whereClause, params: whereParams } = buildWhereClause({
+    allowSelectedDisabledOnly,
+    userId
+  });
 
-  type RawRow = {
-    plex_item_id: string;
-    title: string;
-    type: string;
-    year: number | null;
-    thumb: string | null;
-    added_at: string;
-    matched_rating_key: string | null;
-    raw_payload: string;
-    user_id: number;
-    friend_display_name: string;
-    friend_avatar_url: string | null;
-  };
+  logger?.debug("Building watchlist facets with filters", { allowSelectedDisabledOnly, userId });
 
-  const rawRows = db
-    .prepare(`
-      SELECT w.plex_item_id, w.title, w.type, w.year, w.thumb, w.added_at, w.matched_rating_key, w.raw_payload,
-             f.id AS user_id,
-                   COALESCE(f.display_name_override, f.username) AS friend_display_name,
-                   f.avatar_url AS friend_avatar_url
-      FROM watchlist_cache w
-      JOIN users f ON f.id = w.user_id
-      WHERE f.enabled = 1
-      ORDER BY w.added_at DESC
-    `)
-    .all() as RawRow[];
+  const itemRows = loadWatchlistItemSummaries(db, whereClause, whereParams);
+  const seerrRequestedItemIds = listSeerrRequestedPlexItemIds(db, itemRows.map((row) => row.plexItemId));
+  const allItems = buildMergedWatchlistGroups(itemRows);
+  for (const item of allItems) {
+    item.seerrRequested = Array.from(item.memberItemIds).some((memberItemId) =>
+      seerrRequestedItemIds.has(memberItemId.trim().toLowerCase())
+    );
+  }
 
   const enabledUsers = db
     .prepare(`
-      SELECT id AS userId, COALESCE(display_name_override, username) AS displayName, avatar_url AS avatarUrl
-      FROM users
-      WHERE enabled = 1
-      ORDER BY is_self DESC, LOWER(display_name) ASC
+      SELECT u.id AS userId, COALESCE(u.display_name_override, u.username) AS displayName,
+             ic.local_web_path AS avatarUrl
+      FROM users u
+      LEFT JOIN image_cache ic ON ic.cache_key = 'avatar:' || u.plex_user_id
+      WHERE u.enabled = 1
+      ORDER BY u.is_self DESC, LOWER(u.display_name) ASC
     `)
     .all() as Array<{ userId: number; displayName: string; avatarUrl: string | null }>;
 
-  const grouped = new Map<string, WatchlistGroupedItem>();
-  // Track GUIDs per item so we can merge items that share GUIDs but have
-  // different plex_item_id values (e.g. old discover ratingKey vs new plex:// GUID).
-  const itemGuids = new Map<string, string[]>();
-
-  for (const row of rawRows) {
-    const existing = grouped.get(row.plex_item_id);
-    const userEntry = {
-      userId: row.user_id,
-      displayName: row.friend_display_name,
-      avatarUrl: row.friend_avatar_url,
-      addedAt: row.added_at
-    };
-    if (existing) {
-      existing.users.push(userEntry);
-      existing.userCount++;
-      if (row.added_at > existing.addedAt) existing.addedAt = row.added_at;
-      if (row.matched_rating_key && !existing.matchedRatingKey) {
-        existing.matchedRatingKey = row.matched_rating_key;
-      }
-      existing.plexAvailable = existing.plexAvailable || Boolean(row.matched_rating_key);
-    } else {
-      grouped.set(row.plex_item_id, {
-        plexItemId: row.plex_item_id,
-        title: row.title,
-        year: row.year,
-        type: row.type as "movie" | "show",
-        posterUrl: row.thumb,
-        addedAt: row.added_at,
-        userCount: 1,
-        users: [userEntry],
-        plexAvailable: Boolean(row.matched_rating_key),
-        matchedRatingKey: row.matched_rating_key
-      });
-      try {
-        const payload = JSON.parse(row.raw_payload) as Partial<WatchlistItem>;
-        if (Array.isArray(payload.guids) && payload.guids.length > 0) {
-          itemGuids.set(row.plex_item_id, payload.guids.map((g) => g.toLowerCase()));
-        }
-      } catch {
-        // unparseable payload — skip GUID tracking for this item
-      }
-    }
-  }
-
-  // Second pass: merge entries whose GUIDs overlap but have different plex_item_id.
-  // This handles legacy data where the same media was cached under different ID formats
-  // (e.g. discover ratingKey for self vs plex:// GUID for friend).
-  const guidToCanonical = new Map<string, string>(); // guid → first-seen plex_item_id
-  const mergeInto = new Map<string, string>();       // secondary_id → canonical_id
-
-  for (const [plexItemId, guids] of itemGuids) {
-    for (const guid of guids) {
-      if (guidToCanonical.has(guid)) {
-        const canonical = guidToCanonical.get(guid)!;
-        if (canonical !== plexItemId && !mergeInto.has(plexItemId)) {
-          mergeInto.set(plexItemId, canonical);
-        }
-      } else {
-        guidToCanonical.set(guid, plexItemId);
-      }
-    }
-  }
-
-  for (const [sourceId, targetId] of mergeInto) {
-    const source = grouped.get(sourceId);
-    const target = grouped.get(targetId);
-    if (!source || !target) continue;
-    for (const user of source.users) {
-      if (!target.users.some((u) => u.userId === user.userId)) {
-        target.users.push(user);
-        target.userCount++;
-      }
-    }
-    if (source.addedAt > target.addedAt) target.addedAt = source.addedAt;
-    if (source.matchedRatingKey && !target.matchedRatingKey) {
-      target.matchedRatingKey = source.matchedRatingKey;
-    }
-    target.plexAvailable = target.plexAvailable || source.plexAvailable;
-    grouped.delete(sourceId);
-  }
-
-  const sortFn = (a: WatchlistGroupedItem, b: WatchlistGroupedItem): number => {
-    switch (sortBy) {
-      case "added-asc":  return new Date(a.addedAt).getTime() - new Date(b.addedAt).getTime();
-      case "title-asc":  return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
-      case "title-desc": return b.title.localeCompare(a.title, undefined, { sensitivity: "base" });
-      case "year-desc":  return (b.year ?? 0) - (a.year ?? 0);
-      case "year-asc":   return (a.year ?? 0) - (b.year ?? 0);
-      default:           return new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime(); // added-desc
-    }
-  };
-
-  const allItems = Array.from(grouped.values()).sort(sortFn);
-
-  const userFacetRows = rawRows.filter((row) =>
-    mediaType ? row.type === mediaType : true
-  );
+  // User chip counts: total items per user regardless of type/availability
   const userCounts = new Map<number, number>();
-  for (const row of userFacetRows) {
-    userCounts.set(row.user_id, (userCounts.get(row.user_id) ?? 0) + 1);
+  for (const item of allItems) {
+    for (const userEntryId of item.userAddedAt.keys()) {
+      userCounts.set(userEntryId, (userCounts.get(userEntryId) ?? 0) + 1);
+    }
   }
 
-  const allUsersCount = allItems.filter((item) =>
-    mediaType ? item.type === mediaType : true
-  ).length;
+  const allUsersCount = allItems.length;
 
+  // Media type facets: filtered only by userId so switching type doesn't zero out other counts
   const mediaFacetItems = allItems.filter((item) =>
-    userId ? item.users.some((user) => user.userId === userId) : true
+    userId ? item.userAddedAt.has(userId) : true
   );
   const mediaCounts = {
     all: mediaFacetItems.length,
@@ -242,8 +455,20 @@ export function getWatchlistGrouped(
     show: mediaFacetItems.filter((item) => item.type === "show").length
   };
 
+  // Availability facets: filtered by userId + mediaType but not by availability
+  const availabilityFacetItems = mediaFacetItems.filter((item) =>
+    mediaType ? item.type === mediaType : true
+  );
+  const availabilityCounts = {
+    available: availabilityFacetItems.filter((item) => item.plexAvailable).length,
+    missing: availabilityFacetItems.filter((item) => !item.plexAvailable && !item.seerrRequested).length,
+    requested: availabilityFacetItems.filter((item) => !item.plexAvailable && item.seerrRequested).length
+  };
+
+  logger?.info("Computed watchlist facet counts", { totalItems: allItems.length, mediaCounts, availabilityCounts });
+
   const filteredItems = allItems.filter((item) => {
-    if (userId && !item.users.some((user) => user.userId === userId)) {
+    if (userId && !item.userAddedAt.has(userId)) {
       return false;
     }
     if (mediaType && item.type !== mediaType) {
@@ -252,30 +477,118 @@ export function getWatchlistGrouped(
     if (availability === "available" && !item.plexAvailable) {
       return false;
     }
-    if (availability === "missing" && item.plexAvailable) {
+    if (availability === "missing" && (item.plexAvailable || item.seerrRequested)) {
+      return false;
+    }
+    if (availability === "requested" && (!item.seerrRequested || item.plexAvailable)) {
       return false;
     }
     return true;
+  }).sort((left, right) => compareGroupedItems(left, right, sortBy));
+
+  const pagedGroups = filteredItems.slice(offset, offset + pageSize);
+
+  const pageMemberItemIds = Array.from(new Set(pagedGroups.flatMap((item) => Array.from(item.memberItemIds))));
+  const posterByItemId = new Map<string, string | null>();
+  if (pageMemberItemIds.length > 0) {
+    const posterRows = db.prepare(`
+      SELECT substr(cache_key, 8) AS plexItemId, local_web_path AS posterUrl
+      FROM image_cache
+      WHERE cache_key IN (${pageMemberItemIds.map(() => "?").join(", ")})
+    `).all(...pageMemberItemIds.map((itemId) => `poster:${itemId}`)) as Array<{ plexItemId: string; posterUrl: string | null }>;
+
+    for (const row of posterRows) {
+      posterByItemId.set(row.plexItemId, row.posterUrl);
+    }
+  }
+
+  const userLookup = new Map<number, { displayName: string; avatarUrl: string | null }>();
+  for (const user of enabledUsers) {
+    userLookup.set(user.userId, {
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl
+    });
+  }
+  if (selectedUser) {
+    userLookup.set(selectedUser.userId, {
+      displayName: selectedUser.displayName,
+      avatarUrl: selectedUser.avatarUrl
+    });
+  }
+
+  const items: WatchlistGroupedItem[] = pagedGroups.map((item) => {
+    const users = Array.from(item.userAddedAt.entries())
+      .sort((left, right) => {
+        const addedCmp = right[1].localeCompare(left[1]);
+        return addedCmp !== 0 ? addedCmp : left[0] - right[0];
+      })
+      .map(([itemUserId, addedAt]) => ({
+        userId: itemUserId,
+        displayName: userLookup.get(itemUserId)?.displayName ?? `User ${itemUserId}`,
+        avatarUrl: userLookup.get(itemUserId)?.avatarUrl ?? null,
+        addedAt
+      }));
+
+    const posterUrl =
+      posterByItemId.get(item.plexItemId)
+      ?? Array.from(item.memberItemIds)
+        .map((memberItemId) => posterByItemId.get(memberItemId) ?? null)
+        .find((candidate): candidate is string => Boolean(candidate))
+      ?? null;
+
+    return {
+      plexItemId: item.plexItemId,
+      title: item.title,
+      year: item.year,
+      type: item.type,
+      posterUrl,
+      addedAt: item.addedAt,
+      userCount: item.userAddedAt.size,
+      users,
+      plexAvailable: item.plexAvailable,
+      seerrRequested: item.seerrRequested,
+      matchedRatingKey: item.matchedRatingKey
+    };
   });
 
   return {
-    items: filteredItems.slice(offset, offset + pageSize),
+    items,
     total: filteredItems.length,
     page,
     pageSize,
     filters: {
       userId: userId ?? null,
       mediaType: mediaType ?? "all",
+      availability: availability ?? "all",
       sortBy
     },
     facets: {
       allUsersCount,
-      users: enabledUsers.map((user) => ({
-        ...user,
-        count: userCounts.get(user.userId) ?? 0
-      })),
-      media: mediaCounts
-    }
+      users: [
+        ...enabledUsers.map((user) => ({
+          ...user,
+          count: userCounts.get(user.userId) ?? 0
+        })),
+        ...(allowSelectedDisabledOnly && selectedUser
+          ? [{
+              userId: selectedUser.userId,
+              displayName: selectedUser.displayName,
+              avatarUrl: selectedUser.avatarUrl,
+              count: userCounts.get(selectedUser.userId) ?? 0
+            }]
+          : [])
+      ],
+      media: mediaCounts,
+      availability: availabilityCounts
+    },
+    selectedUser: selectedUser
+      ? {
+          userId: selectedUser.userId,
+          displayName: selectedUser.displayName,
+          avatarUrl: selectedUser.avatarUrl,
+          enabled: Boolean(selectedUser.enabled)
+        }
+      : null
   };
 }
 
@@ -285,4 +598,59 @@ export function computeWatchlistHash(db: Database.Database, userId: number, medi
     .createHash("sha256")
     .update(JSON.stringify(items.map((item) => [item.plexItemId, item.matchedRatingKey])))
     .digest("hex");
+}
+
+/**
+ * Upsert a batch of activity cache entries into watchlist_activity_cache.
+ * On conflict (same plex_item_id + plex_user_id) keeps the more recent date.
+ */
+export function upsertActivityCacheEntries(
+  db: Database.Database,
+  entries: Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }>
+): void {
+  const stmt = db.prepare(`
+    INSERT INTO watchlist_activity_cache (plex_item_id, plex_user_id, watchlisted_at)
+    VALUES (@plexItemId, @plexUserId, @watchlistedAt)
+    ON CONFLICT(plex_item_id, plex_user_id) DO UPDATE SET
+      watchlisted_at = CASE
+        WHEN excluded.watchlisted_at > watchlisted_at THEN excluded.watchlisted_at
+        ELSE watchlisted_at
+      END
+  `);
+  db.transaction(() => {
+    for (const entry of entries) stmt.run(entry);
+  })();
+}
+
+/**
+ * Look up the watchlisted_at date from the activity cache for a specific
+ * plex_item_id + plex_user_id pair. Returns null if not found.
+ */
+export function getActivityCacheDate(
+  db: Database.Database,
+  plexItemId: string,
+  plexUserId: string
+): string | null {
+  const row = db
+    .prepare("SELECT watchlisted_at FROM watchlist_activity_cache WHERE plex_item_id = ? AND plex_user_id = ?")
+    .get(plexItemId, plexUserId) as { watchlisted_at: string } | undefined;
+  return row?.watchlisted_at ?? null;
+}
+
+/**
+ * Delete all rows from watchlist_activity_cache and reset the job run state
+ * so the next scheduled fetch performs a full re-population.
+ * Returns the number of rows deleted.
+ */
+export function clearActivityCache(db: Database.Database): number {
+  const result = db.prepare("DELETE FROM watchlist_activity_cache").run();
+  db.prepare("UPDATE job_run_state SET last_run_at = NULL, updated_at = datetime('now') WHERE job_id = 'activity-cache-fetch'").run();
+  return result.changes;
+}
+
+export function deleteWatchlistItemsForUsers(db: Database.Database, userIds: number[]): number {
+  if (userIds.length === 0) return 0;
+  const placeholders = userIds.map(() => "?").join(", ");
+  const result = db.prepare(`DELETE FROM watchlist_cache WHERE user_id IN (${placeholders})`).run(...userIds);
+  return result.changes;
 }

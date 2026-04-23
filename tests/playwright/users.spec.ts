@@ -1,0 +1,65 @@
+import { test, expect } from "@playwright/test";
+
+/**
+ * Users page structure tests — verify the Active/Disabled sections and key action
+ * buttons render correctly.
+ * Read-only. Safe to run against a live instance.
+ */
+
+test.describe("Users page structure", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/users");
+    await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
+    await expect(page.getByText("Loading users...")).not.toBeVisible({ timeout: 10_000 });
+  });
+
+  test("Active users section heading is visible", async ({ page }) => {
+    // Heading text is "Active (N)" — match the prefix
+    await expect(page.getByText(/^Active \(/)).toBeVisible();
+  });
+
+  test("Disabled users accordion toggle is visible", async ({ page }) => {
+    // Toggle button text is "Disabled (N)"
+    await expect(page.getByRole("button", { name: /^Disabled \(/ })).toBeVisible();
+  });
+
+  test("Disabled users never show a Sync Watchlist button", async ({ page }) => {
+    const disabledToggle = page.getByRole("button", { name: /^Disabled \(/ });
+    await expect(disabledToggle).toBeVisible();
+    await disabledToggle.click();
+
+    const disabledSection = page.locator("div.mb-6").filter({
+      has: page.getByRole("button", { name: /^Disabled \(/ })
+    }).first();
+
+    await expect(disabledSection.getByRole("button", { name: /sync watchlist/i })).toHaveCount(0);
+  });
+
+  test("Refresh Users button is present", async ({ page }) => {
+    await expect(page.getByRole("button", { name: /refresh users/i })).toBeVisible();
+  });
+
+  test("Edit modal shows collection ordering override section", async ({ page }) => {
+    // Open the first user's edit modal via the "Edit user" button
+    const editButton = page.getByTitle("Edit user").first();
+    await expect(editButton).toBeVisible();
+    await editButton.click();
+
+    // The modal should appear — confirm it's open by checking for the Cancel button
+    const modal = page.locator("div.fixed.inset-0.z-50");
+    await expect(modal.getByRole("button", { name: "Cancel" })).toBeVisible();
+
+    // Navigate to the Collection tab
+    await modal.getByRole("button", { name: "Collection", exact: true }).click();
+
+    // The Sort Order field should now be visible
+    await expect(modal.getByText("Sort Order", { exact: true })).toBeVisible();
+
+    // The ordering dropdown should include watchlist date options
+    const select = modal.getByRole("combobox").last();
+    await expect(select.locator("option[value='watchlist-date-desc']")).toHaveText("Watchlisted Date (New to Old)");
+    await expect(select.locator("option[value='watchlist-date-asc']")).toHaveText("Watchlisted Date (Old to New)");
+
+    await expect(modal.getByRole("button", { name: "Cancel" })).toBeVisible();
+  });
+});

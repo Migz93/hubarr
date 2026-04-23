@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type Database from "better-sqlite3";
 import type {
   AppSettings,
@@ -9,26 +10,31 @@ import type {
   SessionUser
 } from "../../shared/types.js";
 
-export type SettingKey = "admin" | "plex" | "app";
+export type SettingKey = "admin" | "plex" | "app" | "session_secret" | "seerr";
 
 export const defaultAppSettings: AppSettings = {
   reconciliationIntervalMinutes: 60,
+  activityCacheFetchIntervalMinutes: 60,
   rssPollIntervalSeconds: 300,
   rssEnabled: true,
+  trackAllUsers: false,
   collectionPublishIntervalMinutes: 5,
   plexRecentlyAddedScanIntervalMinutes: 5,
   plexFullLibraryScanIntervalMinutes: 1440,
   historyRetentionDays: 7,
   collectionNamePattern: "{user}s Watchlist",
-  collectionSortOrder: "year-desc",
+  collectionSortOrder: "date-desc",
   visibilityDefaults: {
-    recommended: true,
+    recommended: false,
     home: true,
-    shared: true
+    shared: false
   },
   fullSyncOnStartup: false,
   defaultMovieLibraryId: null,
-  defaultShowLibraryId: null
+  defaultShowLibraryId: null,
+  trustProxy: false,
+  usersStepComplete: false,
+  onboardingComplete: false
 };
 
 export function getSetting<T>(db: Database.Database, key: SettingKey): T | null {
@@ -54,33 +60,55 @@ export function seedDefaultSettings(db: Database.Database): void {
   }
 }
 
+export function resolveSessionSecret(db: Database.Database): string {
+  const stored = getSetting<string>(db, "session_secret");
+  if (stored) return stored;
+  const secret = crypto.randomBytes(48).toString("hex");
+  setSetting(db, "session_secret", secret);
+  return secret;
+}
+
 // -------------------------------------------------------------------------
 // Bootstrap / Auth
 // -------------------------------------------------------------------------
 
+/**
+ * Reports whether the instance has enough persisted configuration to run and
+ * whether the onboarding wizard has been formally completed.
+ */
 export function getBootstrapStatus(db: Database.Database, hasActiveSession: boolean): BootstrapStatus {
   const plexSettings = getSetting<PlexSettingsInput>(db, "plex");
   const appSettings = getAppSettings(db);
+  const configurationValid = Boolean(
+    plexSettings?.serverUrl &&
+      appSettings.defaultMovieLibraryId &&
+      appSettings.defaultShowLibraryId
+  );
+
   return {
     hasOwner: Boolean(getSetting<PlexOwnerRecord>(db, "admin")),
-    setupComplete: Boolean(
-      plexSettings?.serverUrl &&
-        appSettings.defaultMovieLibraryId &&
-        appSettings.defaultShowLibraryId
-    ),
+    configurationValid,
+    onboardingComplete: appSettings.onboardingComplete,
     hasActiveSession
   };
 }
 
+/**
+ * Resumes onboarding from the earliest step that still lacks a persisted
+ * completion marker.
+ */
 export function getCurrentOnboardingStep(db: Database.Database): OnboardingStep {
   const owner = getPlexOwner(db);
   if (!owner) {
     return "auth";
   }
 
+  // General comes before Plex in the onboarding order. General has no
+  // persistent completion marker, so if Plex isn't configured yet we resume
+  // at General (the earliest un-gated step before Plex).
   const plexSettings = getPlexSettings(db);
   if (!plexSettings?.serverUrl) {
-    return "plex";
+    return "general";
   }
 
   const appSettings = getAppSettings(db);
@@ -88,7 +116,11 @@ export function getCurrentOnboardingStep(db: Database.Database): OnboardingStep 
     return "collections";
   }
 
-  return "collections";
+  if (!appSettings.usersStepComplete) {
+    return "users";
+  }
+
+  return "preload";
 }
 
 export function getPlexOwner(db: Database.Database): PlexOwnerRecord | null {
@@ -129,12 +161,17 @@ export function getSession(db: Database.Database, id: string): SessionUser | nul
   const owner = getPlexOwner(db);
   if (!owner || owner.plexId !== row.plexId) return null;
 
+  // Resolve avatar from image_cache — local path only, no external URL fallback
+  const avatarRow = db
+    .prepare("SELECT ic.local_web_path FROM image_cache ic WHERE ic.cache_key = 'avatar:' || ?")
+    .get(owner.plexId) as { local_web_path: string | null } | undefined;
+
   return {
     plexId: owner.plexId,
     username: owner.username,
     displayName: owner.displayName,
     email: owner.email ?? null,
-    avatarUrl: owner.avatarUrl
+    avatarUrl: avatarRow?.local_web_path ?? null
   };
 }
 
@@ -193,6 +230,48 @@ export function updatePlexSettingsToken(db: Database.Database, token: string): v
   const settings = getPlexSettings(db);
   if (!settings) return;
   savePlexSettings(db, { ...settings, token });
+}
+
+// -------------------------------------------------------------------------
+// Seerr Settings
+// -------------------------------------------------------------------------
+
+export interface SeerrStoredSettings {
+  enabled: boolean;
+  baseUrl: string;
+  /** Admin API key — never sent to the client. */
+  apiKey: string;
+  autoRequestEnabled: boolean;
+  useServiceAccount: boolean;
+  serviceAccountSeerrUserId: number | null;
+}
+
+const defaultSeerrSettings: SeerrStoredSettings = {
+  enabled: false,
+  baseUrl: "",
+  apiKey: "",
+  autoRequestEnabled: false,
+  useServiceAccount: false,
+  serviceAccountSeerrUserId: null
+};
+
+export function getSeerrSettings(db: Database.Database): SeerrStoredSettings {
+  const stored = getSetting<SeerrStoredSettings>(db, "seerr");
+  return { ...defaultSeerrSettings, ...stored };
+}
+
+export function saveSeerrSettings(db: Database.Database, settings: SeerrStoredSettings): void {
+  setSetting(db, "seerr", settings);
+}
+
+export function updateSeerrSettings(
+  db: Database.Database,
+  patch: Partial<SeerrStoredSettings>
+): SeerrStoredSettings {
+  const current = getSeerrSettings(db);
+  const next: SeerrStoredSettings = { ...current, ...patch };
+  setSetting(db, "seerr", next);
+  return next;
 }
 
 export function getPlexSettingsView(db: Database.Database): PlexSettingsView | null {

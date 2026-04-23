@@ -7,7 +7,9 @@ import {
   History,
   Settings,
   LogOut,
-  Server
+  Server,
+  Beaker,
+  Code2
 } from "lucide-react";
 import { apiGet } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
@@ -45,7 +47,7 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: S
 
   return (
     <aside
-      className={`fixed inset-y-0 left-0 w-64 flex flex-col bg-surface-container-low border-r border-outline-variant/20 z-40 transition-transform duration-300
+      className={`fixed inset-y-0 left-0 w-64 flex flex-col bg-background-container-low border-r border-outline-variant/20 z-40 transition-transform duration-300
         md:translate-x-0 ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
     >
       {/* Logo */}
@@ -67,8 +69,8 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: S
             className={({ isActive }) =>
               `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                 isActive
-                  ? "bg-primary/10 text-primary"
-                  : "text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+                  ? "bg-primary-dim text-on-surface"
+                  : "text-on-surface-variant hover:bg-background-container-high hover:text-on-surface"
               }`
             }
           >
@@ -84,7 +86,7 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: S
           <div className="relative">
             {/* Popup */}
             {popupOpen && (
-              <div className="absolute bottom-full left-0 right-0 mb-2 bg-surface-container-high border border-outline-variant/30 rounded-xl shadow-lg overflow-hidden">
+              <div className="absolute bottom-full left-0 right-0 mb-2 bg-background-container-high border border-outline-variant/30 rounded-xl shadow-lg overflow-hidden">
                 <div className="px-4 py-3 border-b border-outline-variant/20">
                   <div className="text-sm font-medium text-on-surface truncate">{user.username}</div>
                   {user.email && (
@@ -93,7 +95,7 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: S
                 </div>
                 <button
                   onClick={() => { setPopupOpen(false); onLogout(); }}
-                  className="flex w-full items-center gap-3 px-4 py-2.5 text-sm font-medium text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface transition-colors"
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-sm font-medium text-on-surface-variant hover:bg-background-container-highest hover:text-on-surface transition-colors"
                 >
                   <LogOut size={16} strokeWidth={1.75} />
                   Sign out
@@ -104,16 +106,16 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: S
             {/* User button */}
             <button
               onClick={() => setPopupOpen((o) => !o)}
-              className="flex w-full items-center gap-3 px-3 py-2 rounded-lg hover:bg-surface-container-high transition-colors"
+              className="flex w-full items-center gap-3 px-3 py-2 rounded-lg hover:bg-background-container-high transition-colors"
             >
-              {user.avatarUrl ? (
+              {getPlexImageSrc(user.avatarUrl) ? (
                 <img
-                  src={getPlexImageSrc(user.avatarUrl) ?? undefined}
+                  src={getPlexImageSrc(user.avatarUrl)!}
                   alt={user.displayName}
                   className="w-8 h-8 rounded-full object-cover flex-shrink-0"
                 />
               ) : (
-                <div className="w-8 h-8 rounded-full bg-surface-container-highest flex items-center justify-center flex-shrink-0">
+                <div className="w-8 h-8 rounded-full bg-background-container-highest flex items-center justify-center flex-shrink-0">
                   <span className="text-on-surface-variant text-xs font-medium">
                     {user.displayName.charAt(0).toUpperCase()}
                   </span>
@@ -132,30 +134,73 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: S
   );
 }
 
+const CHANNEL_CONFIG = {
+  stable: {
+    label: "Hubarr Stable",
+    Icon: Server,
+  },
+  develop: {
+    label: "Hubarr Develop",
+    Icon: Beaker,
+  },
+  custom: {
+    label: "Custom Build",
+    Icon: Code2,
+  },
+} as const;
+
+function getChannelConfig(buildChannel: string) {
+  return CHANNEL_CONFIG[buildChannel as keyof typeof CHANNEL_CONFIG] ?? CHANNEL_CONFIG.custom;
+}
+
 function VersionFooter({ onMobileClose }: { onMobileClose: () => void }) {
-  const [version, setVersion] = useState<string | null>(null);
+  const [info, setInfo] = useState<AboutInfo | null>(null);
 
   useEffect(() => {
     apiGet<AboutInfo>("/api/settings/about")
-      .then((info) => setVersion(info.version))
+      .then((data) => setInfo(data))
       .catch(() => null);
   }, []);
+
+  // Don't render a channel label until the API has responded — any guess
+  // before that point could misrepresent the build (e.g. showing "Stable"
+  // for a develop image during the load window).
+  if (!info) {
+    return (
+      <div className="px-3 pb-3">
+        <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg">
+          <div className="w-8 h-8 rounded-lg bg-background-container-highest flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-semibold text-on-surface-variant leading-tight">Hubarr</div>
+            <div className="text-xs text-on-surface-variant leading-tight mt-0.5">...</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const { label, Icon } = getChannelConfig(info.buildChannel);
+
+  // Show the commit SHA for develop/custom builds, version number for stable
+  const subLabel = info.buildChannel === "stable"
+    ? `v${info.version}`
+    : info.commitSha === "local"
+      ? "local"
+      : info.commitSha;
 
   return (
     <div className="px-3 pb-3">
       <Link
         to="/settings?tab=about"
         onClick={onMobileClose}
-        className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-surface-container-high transition-colors group"
+        className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-background-container-high transition-colors group"
       >
-        <div className="w-8 h-8 rounded-lg bg-surface-container-highest flex items-center justify-center flex-shrink-0">
-          <Server size={16} strokeWidth={1.75} className="text-on-surface-variant group-hover:text-on-surface transition-colors" />
+        <div className="w-8 h-8 rounded-lg bg-background-container-highest flex items-center justify-center flex-shrink-0">
+          <Icon size={16} strokeWidth={1.75} className="text-on-surface-variant group-hover:text-on-surface transition-colors" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-xs font-semibold text-on-surface leading-tight">Hubarr Stable</div>
-          <div className="text-xs text-on-surface-variant leading-tight mt-0.5">
-            {version ? `v${version}` : "..."}
-          </div>
+          <div className="text-xs font-semibold text-on-surface leading-tight">{label}</div>
+          <div className="text-xs text-on-surface-variant leading-tight mt-0.5 font-mono">{subLabel}</div>
         </div>
       </Link>
     </div>

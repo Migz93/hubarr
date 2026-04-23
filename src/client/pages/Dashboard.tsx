@@ -1,11 +1,16 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, Film, Tv, Users, Library, CheckCircle, XCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { apiGet, apiPost } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
-import { formatRelativeTime } from "../lib/utils";
+import { useLiveRefresh } from "../lib/useLiveRefresh";
+import { useSettings } from "../lib/useSettings";
+import { formatRelativeTime, formatWatchlistDateShort } from "../lib/utils";
 import { WatchlistItemModal } from "../components/WatchlistItemModal";
 import type { DashboardResponse, RecentlyAddedItem, SyncRun } from "../../shared/types";
+
+const DASHBOARD_FAST_REFRESH_MS = 2_500;
+const DASHBOARD_IDLE_REFRESH_MS = 15_000;
 
 export default function Dashboard() {
   const [data, setData] = useState<DashboardResponse | null>(null);
@@ -13,9 +18,11 @@ export default function Dashboard() {
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<RecentlyAddedItem | null>(null);
+  const { settings } = useSettings();
+  const seerrEnabled = Boolean(settings?.seerr?.enabled);
 
-  async function load() {
-    setLoading(true);
+  async function load(background = false) {
+    setLoading((current) => current || !background);
     try {
       const result = await apiGet<DashboardResponse>("/api/dashboard");
       setData(result);
@@ -27,11 +34,25 @@ export default function Dashboard() {
     }
   }
 
+  const hasRunningSync = data?.syncActivity.some((run) => run.status === "running") ?? false;
+  const getIntervalMs = useCallback(
+    () => (hasRunningSync ? DASHBOARD_FAST_REFRESH_MS : DASHBOARD_IDLE_REFRESH_MS),
+    [hasRunningSync]
+  );
+  const { refreshNow } = useLiveRefresh(
+    async () => {
+      await load(true);
+    },
+    {
+      getIntervalMs
+    }
+  );
+
   async function runFullSync() {
     setSyncing(true);
     try {
       await apiPost("/api/watchlists/refresh");
-      await load();
+      await refreshNow();
     } catch {
       // non-critical
     } finally {
@@ -43,7 +64,7 @@ export default function Dashboard() {
     void load();
   }, []);
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-on-surface-variant text-sm">Loading dashboard...</div>
@@ -51,7 +72,7 @@ export default function Dashboard() {
     );
   }
 
-  if (error) {
+  if (error && !data) {
     return (
       <div className="p-6">
         <div className="bg-error/10 border border-error/30 rounded-lg px-4 py-3 text-error text-sm">
@@ -71,12 +92,18 @@ export default function Dashboard() {
         <button
           disabled={syncing}
           onClick={() => void runFullSync()}
-          className="flex items-center gap-2 bg-surface-container-high hover:bg-surface-bright disabled:opacity-50 text-on-surface text-sm font-medium rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
+          className="flex items-center gap-2 bg-background-container-high hover:bg-background-bright disabled:opacity-50 text-on-surface text-sm font-medium rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
         >
           <RefreshCw size={15} className={syncing ? "animate-spin" : ""} />
           {syncing ? "Syncing..." : "Run Sync"}
         </button>
       </div>
+
+      {error && (
+        <div className="bg-error/10 border border-error/30 rounded-lg px-4 py-3 text-error text-sm mb-4">
+          {error}
+        </div>
+      )}
 
       <div className="flex flex-col gap-5">
       {/* Stats + Sync Activity row */}
@@ -93,7 +120,7 @@ export default function Dashboard() {
           {/* Recent sync activity */}
           <Link
             to="/history"
-            className="sm:w-80 flex-shrink-0 bg-surface-container rounded-xl border border-outline-variant/20 px-4 py-2.5 hover:bg-surface-container-high transition-colors group"
+            className="sm:w-80 flex-shrink-0 bg-background-container rounded-xl border border-outline-variant/20 px-4 py-2.5 hover:bg-background-container-high transition-colors group"
           >
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-medium text-on-surface-variant uppercase tracking-wide">Recent Syncs</span>
@@ -124,18 +151,19 @@ export default function Dashboard() {
               <PosterCard
                 key={item.plexItemId}
                 item={item}
+                seerrEnabled={seerrEnabled}
                 onClick={() => setSelectedItem(item)}
               />
             ))}
           </div>
         ) : (
-          <div className="bg-surface-container rounded-2xl border border-outline-variant/20 flex items-center justify-center py-10">
+          <div className="bg-background-container rounded-2xl border border-outline-variant/20 flex items-center justify-center py-10">
             <p className="text-on-surface-variant text-sm">No items recently added. Run a sync to populate watchlists.</p>
           </div>
         )}
       </div>
       {selectedItem && (
-        <WatchlistItemModal item={selectedItem} onClose={() => setSelectedItem(null)} />
+        <WatchlistItemModal item={selectedItem} onClose={() => setSelectedItem(null)} seerrSettings={settings?.seerr} />
       )}
       </div>
     </div>
@@ -156,7 +184,7 @@ function StatChip({
   return (
     <Link
       to={to}
-      className="flex-1 flex flex-col items-center justify-center gap-0.5 bg-surface-container hover:bg-surface-container-high rounded-xl px-4 py-2.5 border border-outline-variant/20 transition-colors text-center"
+      className="flex-1 flex flex-col items-center justify-center gap-0.5 bg-background-container hover:bg-background-container-high rounded-xl px-4 py-2.5 border border-outline-variant/20 transition-colors text-center"
     >
       <div className="flex items-center gap-1.5 text-primary">
         {icon}
@@ -168,10 +196,11 @@ function StatChip({
 }
 
 const KIND_LABELS: Record<string, string> = {
-  full: "Full",
+  full: "GraphQL",
   rss: "RSS",
   user: "Manual",
-  publish: "Publish"
+  publish: "Collection",
+  seerr: "Seerr"
 };
 
 function formatCompactSummary(run: SyncRun): string {
@@ -234,24 +263,27 @@ function CompactSyncRow({ run }: { run: SyncRun }) {
 
 function PosterCard({
   item,
+  seerrEnabled,
   onClick
 }: {
   item: RecentlyAddedItem;
+  seerrEnabled: boolean;
   onClick: () => void;
 }) {
   const posterSrc = getPlexImageSrc(item.posterUrl);
 
-  const addedDate = new Date(item.addedAt).toLocaleDateString("en-GB");
+  const addedDate = formatWatchlistDateShort(item.addedAt);
 
   return (
     <button onClick={onClick} className="group text-left w-full">
-      <div className="relative aspect-[2/3] rounded-lg overflow-hidden bg-surface-container-high transition-transform duration-300 group-hover:scale-105">
+      <div className="relative aspect-[2/3] rounded-lg overflow-hidden bg-background-container-high transition-transform duration-300 group-hover:scale-105">
         {posterSrc ? (
           <img
             src={posterSrc}
             alt={item.title}
             className="w-full h-full object-cover"
             loading="lazy"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).src = "/poster-fallback.svg"; }}
           />
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center p-2 text-center">
@@ -272,6 +304,10 @@ function PosterCard({
             <div className="relative">
               <div className="absolute inset-[3px] rounded-full bg-[#0a3d1f]" />
               <CheckCircle size={18} className="relative text-success drop-shadow-[0_0_4px_rgba(0,0,0,1)]" />
+            </div>
+          ) : seerrEnabled && item.seerrRequested ? (
+            <div className="relative w-[18px] h-[18px] rounded-full bg-background-container-highest border border-outline-variant/40 flex items-center justify-center drop-shadow-[0_0_4px_rgba(0,0,0,1)]">
+              <img src="/seerr-icon.svg" alt="Requested in Seerr" className="w-3 h-3" />
             </div>
           ) : (
             <div className="relative">

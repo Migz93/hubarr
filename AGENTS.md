@@ -153,6 +153,58 @@ For all GitHub-related work, use `gh` as the default tool. Use it for:
 
 Prefer `gh` over inferring GitHub state from local git — it gives the authoritative picture of what is open, merged, or failing on GitHub.
 
+### AI Sign-Off For GitHub Text
+
+Any text the agent sends to GitHub or stores in git history as authored output must end with an explicit AI sign-off.
+
+This applies to **body text and comments only** — never to titles or subjects:
+
+- commit messages
+- pull request descriptions (body)
+- issue comments
+- pull request comments
+- pull request reviews
+- any other agent-authored text posted to GitHub
+
+**Do not** append the sign-off to PR titles, issue titles, or any other subject/headline field.
+
+Use the sign-off that matches the agent:
+
+- `🤖 Generated with Codex`
+- `🤖 Generated with Claude Code`
+
+If the user explicitly asks for a different agent label, follow that request. Otherwise, always append the correct sign-off at the end of the text.
+
+---
+
+### Pull Request Description Format
+
+Every PR description must follow this structure. Sparse descriptions (a few bullets with no detail) are not acceptable — include enough information that a reviewer can understand what changed and how to verify it without reading the diff first.
+
+```
+## Summary
+
+A short paragraph or bullet list explaining what this PR does and why. Mention the user-facing or system-level effect, not just the implementation detail.
+
+## Changes
+
+A file-by-file or component-by-component breakdown of what was modified and what each change does. Group related changes together. This section should give a reviewer a map of the diff before they open it.
+
+## Test plan
+
+A markdown checklist of concrete steps to verify the change works correctly. Each item should be specific enough that someone unfamiliar with the code can follow it — not just "test the feature" but "open Settings → Jobs, change the interval, trigger a sync, and confirm the log shows the updated value".
+
+🤖 Generated with [Agent Name]
+```
+
+**Minimum bar:** every PR must have all three sections. A test plan with only one item is fine if the change is small; a changes section with a single file is fine too. What is not acceptable is omitting sections or writing placeholder text like "verify it works".
+
+**Issue linking:** if the PR was prompted by an open GitHub issue, include a `Closes #<number>` line in the description body (not the title). GitHub will automatically close the issue when the PR merges. For example:
+
+```
+Closes #42
+```
+
 ---
 
 ### Branch Rules Summary
@@ -171,7 +223,7 @@ Prefer `gh` over inferring GitHub state from local git — it gives the authorit
 ### Pull Request Conventions
 
 - Use semantic PR titles: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `ci:`
-- Keep descriptions concise: what changed, why, anything to verify
+- Follow the PR description format defined above (Summary / Changes / Test plan)
 - Call out explicitly if the change affects: release behaviour, Docker publishing, auth, database schema, or user-visible setup
 
 ---
@@ -215,6 +267,50 @@ When working through Snyk findings:
 4. **Never suggest a change purely to appease Snyk** if it doesn't improve actual security or code quality.
 
 See `SECURITY.md` for the full Snyk tooling guide, scan commands, and philosophy.
+
+---
+
+### Implementation Expectations — Logging And Comments
+
+When implementing new functionality, the agent should treat logging and code clarity as part of the feature work, not as optional polish.
+
+#### Logging
+
+- Consider logging for every new feature, workflow, integration, or background process where runtime visibility would help with debugging, support, or diagnosing failures
+- Think through logging across the full implementation path, not just one layer — for example request handling, service logic, scheduled work, external API calls, and error paths where relevant
+- Add logs that are useful and intentional: enough context to understand what happened, without spamming noisy or redundant messages
+- Prioritise logs around important state changes, failures, retries, skipped work, and external-system interactions when those would otherwise be hard to trace
+- Use the appropriate log level: `info` for normal significant events (sync started/completed, item matched), `warn` for recoverable failures or skipped work, `error` for failures that need attention, and `debug` for diagnostic detail
+- Pass structured data as the second `meta` argument rather than interpolating values into the message string (e.g. `logger.info("Sync complete", { count: 5 })` not `logger.info(\`Sync complete: 5\`)`)
+- If rewriting an existing section of code that has no logging, add appropriate logging at that point — the absence of logs is often what made the original issue hard to diagnose
+
+#### Code comments
+
+- Add explanatory comments where they materially improve readability or maintainability, especially around non-obvious logic, edge cases, or decisions that are easy to misread later
+- Keep comments clear and purposeful; do not add comments that only restate what the code already says
+- When a future maintainer might reasonably ask "why is this written this way?", prefer a short comment that answers that question at the point of implementation
+
+#### Technical docs
+
+- Treat technical documentation as part of the implementation for major or long-lived changes, not optional follow-up work
+- If a change affects architecture, sync flow, persistence, external integrations, or runtime behavior in a lasting way, update the relevant file under `docs/` in the same branch/PR
+- Start from `docs/README.md` when deciding where documentation belongs
+- If no existing technical doc fits the change cleanly, add a new topic doc under `docs/` and link it from `docs/README.md`
+
+---
+
+### End-to-End Tests — Playwright
+
+See `TESTING.md` for the full setup guide and a description of every test. Key points for the agent:
+
+- Tests live in `tests/playwright/` and run with `npm run test:e2e`
+- Tests hit a **live running Hubarr instance** — no mocking, no test database
+- Auth uses a `SESSION_COOKIE` env var in `.env.playwright` (gitignored), not a browser-driven OAuth flow, because the devcontainer has no display
+- Session state is saved to `tests/playwright/.auth/storageState.json` (gitignored) after the first successful auth
+- New test files go in `tests/playwright/` as `*.spec.ts` — they are picked up automatically
+- `playwright.config.ts` and `tsconfig.playwright.json` control the test runner configuration
+
+**When implementing a new feature**, before closing out the work consider whether a Playwright test makes sense for it. If it does, suggest it to the user — describe what you'd test and ask if they want it added. Don't add tests silently; always check first. When a test is agreed and written, add a row for it in the relevant table in `TESTING.md`.
 
 ---
 

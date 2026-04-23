@@ -19,6 +19,18 @@ export function cn(...inputs: ClassValue[]): string {
   return clsx(...inputs);
 }
 
+export const WATCHLIST_DATE_UNKNOWN_SENTINEL = "2001-01-01T00:00:00.000Z";
+
+export function formatWatchlistDate(isoString: string): string {
+  if (isoString === WATCHLIST_DATE_UNKNOWN_SENTINEL) return "Unknown";
+  return formatRelativeTime(isoString);
+}
+
+export function formatWatchlistDateShort(isoString: string): string {
+  if (isoString === WATCHLIST_DATE_UNKNOWN_SENTINEL) return "Unknown";
+  return new Date(isoString).toLocaleDateString("en-GB");
+}
+
 export function formatRelativeTime(isoString: string): string {
   const date = new Date(isoString);
   const now = new Date();
@@ -28,7 +40,7 @@ export function formatRelativeTime(isoString: string): string {
   const diffHours = Math.floor(diffMins / 60);
   const diffDays = Math.floor(diffHours / 24);
 
-  if (diffSecs < 60) return "just now";
+  if (diffSecs < 60) return "Just now";
 
   if (diffMs > 0) {
     if (diffMins < 60) return `in ${diffMins}m`;

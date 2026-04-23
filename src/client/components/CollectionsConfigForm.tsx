@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiPatch } from "../lib/api";
 import type { CollectionSortOrder, PlexLibrary, VisibilityConfig } from "../../shared/types";
-import { Field, SaveBar, SectionCard, SelectInput, TextInput, ToggleField } from "./FormControls";
+import { Field, SaveBar, SectionCard, SelectInput, TextInput } from "./FormControls";
 
 interface CollectionsFormValue {
   collectionNamePattern: string;
@@ -15,11 +15,13 @@ export default function CollectionsConfigForm({
   initialValue,
   librariesUrl,
   onSaved,
+  onBack,
   saveLabel = "Save Collections"
 }: {
   initialValue: CollectionsFormValue;
   librariesUrl: string;
   onSaved?: (value: CollectionsFormValue) => void | Promise<void>;
+  onBack?: () => void;
   saveLabel?: string;
 }) {
   const [form, setForm] = useState<CollectionsFormValue>(initialValue);
@@ -82,7 +84,7 @@ export default function CollectionsConfigForm({
     <div className="space-y-6">
       <SectionCard
         title="Collections"
-        description="Choose the default libraries, visibility, and naming pattern Hubarr will use when creating collections."
+        description="Choose the default collection settings for your Hubarr instance."
         wide
       >
         <Field
@@ -105,9 +107,11 @@ export default function CollectionsConfigForm({
               setForm((current) => ({ ...current, collectionSortOrder: value as CollectionSortOrder }))
             }
           >
-            <option value="year-desc">Release Year (New to Old)</option>
-            <option value="year-asc">Release Year (Old to New)</option>
+            <option value="date-desc">Release Date (New to Old)</option>
+            <option value="date-asc">Release Date (Old to New)</option>
             <option value="title">Title (A–Z)</option>
+            <option value="watchlist-date-desc">Watchlisted Date (New to Old)</option>
+            <option value="watchlist-date-asc">Watchlisted Date (Old to New)</option>
           </SelectInput>
         </Field>
 
@@ -149,38 +153,46 @@ export default function CollectionsConfigForm({
         )}
 
         <div className="pt-2 border-t border-outline-variant/10">
-          <div className="text-sm font-medium text-on-surface mb-3">Default Hub Visibility</div>
-          <div className="space-y-3">
-            <ToggleField
-              label="Library Recommended"
-              checked={form.visibilityDefaults.recommended}
-              onChange={(value) =>
-                setForm((current) => ({
-                  ...current,
-                  visibilityDefaults: { ...current.visibilityDefaults, recommended: value }
-                }))
-              }
-            />
-            <ToggleField
-              label="Home"
-              checked={form.visibilityDefaults.home}
-              onChange={(value) =>
-                setForm((current) => ({
-                  ...current,
-                  visibilityDefaults: { ...current.visibilityDefaults, home: value }
-                }))
-              }
-            />
-            <ToggleField
-              label="Friends Home"
-              checked={form.visibilityDefaults.shared}
-              onChange={(value) =>
-                setForm((current) => ({
-                  ...current,
-                  visibilityDefaults: { ...current.visibilityDefaults, shared: value }
-                }))
-              }
-            />
+          <div className="text-sm font-medium text-on-surface mb-1">Default Hub Visibility</div>
+          <div className="text-xs text-on-surface-variant mb-3">Select which Plex locations this collection appears in. Multiple allowed.</div>
+          {/* Computed-key toggle: each button flips its own boolean in visibilityDefaults */}
+          <div className="grid grid-cols-3 w-fit gap-2" role="group" aria-label="Default Hub Visibility options">
+            {(
+              [
+                { key: "recommended" as const, label: "Library Recommended" },
+                { key: "home"        as const, label: "Admin Home" },
+                { key: "shared"      as const, label: "Friends Home" }
+              ]
+            ).map(({ key, label }) => (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={!!form.visibilityDefaults[key]}
+                onClick={() =>
+                  setForm((current) => ({
+                    ...current,
+                    visibilityDefaults: {
+                      ...current.visibilityDefaults,
+                      [key]: !current.visibilityDefaults[key]
+                    }
+                  }))
+                }
+                className={`flex flex-col items-center gap-1 rounded-xl py-3 px-3 border text-xs font-medium transition-all ${
+                  form.visibilityDefaults[key]
+                    ? "bg-primary-dim border-primary-dim text-on-surface"
+                    : "bg-background-container-low border-outline-variant/20 text-on-surface-variant"
+                }`}
+              >
+                <div className={`w-3 h-3 rounded-full border-2 mb-0.5 flex-shrink-0 transition-all ${
+                  form.visibilityDefaults[key]
+                    ? "bg-on-surface border-on-surface"
+                    : "border-outline-variant"
+                }`} />
+                {label.split(" ").map((word, i) => (
+                  <span key={i} className="leading-tight">{word}</span>
+                ))}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -189,6 +201,7 @@ export default function CollectionsConfigForm({
           success={success}
           error={error}
           onSave={() => void save()}
+          onBack={onBack}
           label={saveLabel}
         />
       </SectionCard>

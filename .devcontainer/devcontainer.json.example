@@ -23,6 +23,7 @@
     "HOME": "/home/node",
     "NPM_CONFIG_CACHE": "/home/node/.npm"
   },
+  "postCreateCommand": "npm ci && npx playwright install --with-deps chromium",
   "customizations": {
     "vscode": {
       "extensions": [

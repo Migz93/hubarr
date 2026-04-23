@@ -31,6 +31,7 @@ It keeps your own Plex watchlist and selected friends' watchlists in sync with P
 - Separate per-user movie and TV collections with shared naming
 - Configurable publishing to Library Recommended, Home, and Friends Home
 - Per-user collection naming, visibility, and target library controls
+- Optional Seerr integration for manually or automatically sending missing watchlist items to a Seerr instance as requests
 
 ## How It Works
 
@@ -38,7 +39,7 @@ Hubarr uses a few background jobs:
 
 - **Watchlist RSS Sync** watches Plex RSS feeds for quick watchlist changes and stores new items fast
 - **Watchlist GraphQL Sync** regularly performs a fuller watchlist reconciliation to catch anything RSS missed
-- **Plex library scans** help Hubarr notice when something from a watchlist has now actually appeared in your Plex libraries
+- **Plex Library Scans** help Hubarr notice when something from a watchlist has now actually appeared in your Plex libraries
 - **Collection Sync** is the job that updates the Plex collections and hub rows
 
 Together, that means Hubarr can react quickly when watchlists change, while still having a slower safety net that keeps everything accurate over time.
@@ -102,14 +103,13 @@ Hubarr is configured through its web UI after first run. The two things you may 
 
 ## Important Limitations
 
-### Plex Friends Home Privacy Caveat
+### Plex Home Managed Users
 
-Plex currently does not properly respect label-based restrictions for collections shown on Home and Recommended pages.
+Plex Home managed users (sub-accounts with no independent Plex account) have two limitations:
 
-Because of that, publishing friends' watchlists to **Friends Home** is not currently recommended. If you enable it, friends may be able to see each other's watchlist collections on the Plex home screen.
-
-More information:
-- https://forums.plex.tv/t/privacy-issue-label-restrictions-not-respected-for-collections-on-the-home-recommended-pages/933544/9
+- **Watchlists cannot be synced.** Managed users have no presence in the Plex community API, so Hubarr cannot read their watchlist. They will appear in the Users page as read-only and cannot be enabled.
+- **Label exclusions are applied automatically.** Even though their watchlist can't be synced, Hubarr will still apply label exclusion filters to managed users so that other users' watchlist collections don't appear for them. This happens as part of the normal collection sync.
+- **Restriction Profiles block label exclusions.** If a managed user has a Plex restriction profile set (e.g. Younger Kid, Older Kid, Teen), Plex prevents label-based filter changes for that account. Hubarr skips those users entirely — the restriction profile itself is usually sufficient exclusion anyway.
 
 ## AI Transparency
 
