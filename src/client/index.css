@@ -6,18 +6,15 @@
   --font-headline: "Manrope", sans-serif;
 
   --color-background: #0d0e12;
-  --color-surface: #0d0e12;
-  --color-surface-container-low: #121318;
-  --color-surface-container: #18191e;
-  --color-surface-container-high: #1e1f25;
-  --color-surface-container-highest: #24252b;
-  --color-surface-bright: #2a2c32;
+  --color-background-container-low: #121318;
+  --color-background-container: #18191e;
+  --color-background-container-high: #1e1f25;
+  --color-background-container-highest: #24252b;
+  --color-background-bright: #2a2c32;
 
   --color-primary: #e50914;
-  --color-primary-dim: #b10610;
-  --color-on-primary: #ffffff;
+  --color-primary-dim: #ae0610;
 
-  --color-secondary: #d8e3fa;
   --color-on-surface: #faf8fe;
   --color-on-surface-variant: #abaab0;
 
@@ -25,7 +22,19 @@
 
   --color-success: #22c55e;
   --color-warning: #f59e0b;
-  --color-error: #ef4444;
+  --color-error: #f07070;
+}
+
+:root {
+  /* Derived from --color-background-container (#18191e) at 60% opacity */
+  --overlay-glass: rgba(24, 25, 30, 0.6);
+  /* Derived from --color-background (#0d0e12) at 95% opacity */
+  --overlay-poster: rgba(13, 14, 18, 0.95);
+  /* Derived from --color-background (#0d0e12) at 0% opacity */
+  --overlay-poster-transparent: rgba(13, 14, 18, 0);
+  /* Opaque dark halos for availability icons on poster cards */
+  --poster-halo-success: #0a3d1f;
+  --poster-halo-error: #3d0a0a;
 }
 
 @layer base {
@@ -43,12 +52,12 @@
 }
 
 .glass-panel {
-  background: rgba(24, 25, 30, 0.6);
+  background: var(--overlay-glass);
   backdrop-filter: blur(20px);
 }
 
 .poster-gradient {
-  background: linear-gradient(to top, rgba(13, 14, 18, 0.95) 0%, rgba(13, 14, 18, 0) 60%);
+  background: linear-gradient(to top, var(--overlay-poster) 0%, var(--overlay-poster-transparent) 60%);
 }
 
 .no-scrollbar::-webkit-scrollbar {

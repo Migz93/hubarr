@@ -60,7 +60,7 @@ export default function Settings() {
         <select
           value={activeTab}
           onChange={(e) => setTab(e.target.value as Tab)}
-          className="w-full bg-surface-container-high border border-outline-variant/20 rounded-xl px-4 py-2.5 text-sm font-medium text-on-surface focus:outline-none focus:border-primary/50"
+          className="w-full bg-background-container-high border border-outline-variant/20 rounded-xl px-4 py-2.5 text-sm font-medium text-on-surface focus:outline-none focus:border-primary/50"
         >
           {TABS.map((tab) => (
             <option key={tab.id} value={tab.id}>{tab.label}</option>
@@ -70,14 +70,14 @@ export default function Settings() {
 
       {/* Desktop: pill bar */}
       <div className="hidden md:block mb-6">
-        <div className="flex p-1 bg-surface-container-high rounded-xl gap-1">
+        <div className="flex p-1 bg-background-container-high rounded-xl gap-1">
           {TABS.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setTab(tab.id)}
               className={`flex-1 text-sm font-medium rounded-lg px-4 py-2 transition-all whitespace-nowrap ${
                 activeTab === tab.id
-                  ? "bg-surface-container text-on-surface shadow-sm"
+                  ? "bg-background-container text-on-surface shadow-sm"
                   : "text-on-surface-variant hover:text-on-surface"
               }`}
             >
@@ -237,7 +237,7 @@ function GeneralTab({
   return (
     <div className="space-y-5">
       {/* Settings card */}
-      <div className="bg-surface-container rounded-2xl border border-outline-variant/20 p-5">
+      <div className="bg-background-container rounded-2xl border border-outline-variant/20 p-5">
         <h3 className="font-headline font-semibold text-base text-on-surface mb-1">Settings</h3>
         <p className="text-xs text-on-surface-variant mb-4">Changes to proxy support require a container restart to take effect.</p>
         <div className="space-y-4">
@@ -283,7 +283,7 @@ function GeneralTab({
                     historyRetentionDays: Math.max(1, Math.floor(Number(e.target.value) || 1))
                   }))
                 }
-                className="w-28 bg-surface-container-low border border-outline-variant/30 rounded-xl px-3 py-2 text-sm text-on-surface focus:outline-none focus:border-primary"
+                className="w-28 bg-background-container-low border border-outline-variant/30 rounded-xl px-3 py-2 text-sm text-on-surface focus:outline-none focus:border-primary"
               />
               <span className="text-sm text-on-surface-variant">days</span>
             </div>
@@ -296,12 +296,12 @@ function GeneralTab({
       </div>
 
       {/* Maintenance card */}
-      <div className="bg-surface-container rounded-2xl border border-outline-variant/20 p-5">
+      <div className="bg-background-container rounded-2xl border border-outline-variant/20 p-5">
         <h3 className="font-headline font-semibold text-base text-on-surface mb-4">Maintenance</h3>
         <div className="space-y-3">
 
           {/* Reset Collections */}
-          <div className="flex items-start justify-between gap-4 p-4 bg-surface-container-low rounded-xl border border-outline-variant/15">
+          <div className="flex items-start justify-between gap-4 p-4 bg-background-container-low rounded-xl border border-outline-variant/15">
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium text-on-surface mb-0.5">Reset Collections</div>
               <div className="text-xs text-on-surface-variant leading-relaxed">
@@ -318,8 +318,8 @@ function GeneralTab({
                 onClick={() => void resetCollections()}
                 className={`relative z-20 text-sm font-semibold rounded-xl px-4 py-2 min-w-[120px] transition-colors disabled:opacity-50 ${
                   confirmReset
-                    ? "bg-error text-white animate-pulse hover:bg-error/90"
-                    : "bg-surface-container-high hover:bg-surface-bright border border-error/40 text-error"
+                    ? "bg-primary-dim text-on-surface animate-pulse hover:bg-primary"
+                    : "bg-background-container-high hover:bg-background-bright border border-error/40 text-error"
                 }`}
               >
                 {resetting ? "Resetting…" : confirmReset ? "Are you sure?" : "Reset"}
@@ -328,7 +328,7 @@ function GeneralTab({
           </div>
 
           {/* Image Cache */}
-          <div className="flex items-start justify-between gap-4 p-4 bg-surface-container-low rounded-xl border border-outline-variant/15">
+          <div className="flex items-start justify-between gap-4 p-4 bg-background-container-low rounded-xl border border-outline-variant/15">
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium text-on-surface mb-0.5">Image Cache</div>
               <div className="text-xs text-on-surface-variant leading-relaxed">
@@ -339,14 +339,14 @@ function GeneralTab({
             <button
               disabled={clearingCache}
               onClick={() => void clearImageCache()}
-              className="flex-shrink-0 text-sm font-semibold rounded-xl px-4 py-2 min-w-[120px] transition-colors disabled:opacity-50 bg-surface-container-high hover:bg-surface-bright border border-outline-variant/30 text-on-surface"
+              className="flex-shrink-0 text-sm font-semibold rounded-xl px-4 py-2 min-w-[120px] transition-colors disabled:opacity-50 bg-background-container-high hover:bg-background-bright border border-outline-variant/30 text-on-surface"
             >
               {clearingCache ? "Clearing…" : "Clear Cache"}
             </button>
           </div>
 
           {/* Activity Cache */}
-          <div className="flex items-start justify-between gap-4 p-4 bg-surface-container-low rounded-xl border border-outline-variant/15">
+          <div className="flex items-start justify-between gap-4 p-4 bg-background-container-low rounded-xl border border-outline-variant/15">
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium text-on-surface mb-0.5">Activity Cache</div>
               <div className="text-xs text-on-surface-variant leading-relaxed">
@@ -357,7 +357,7 @@ function GeneralTab({
             <button
               disabled={clearingActivityCache}
               onClick={() => void clearActivityCache()}
-              className="flex-shrink-0 text-sm font-semibold rounded-xl px-4 py-2 min-w-[120px] transition-colors disabled:opacity-50 bg-surface-container-high hover:bg-surface-bright border border-outline-variant/30 text-on-surface"
+              className="flex-shrink-0 text-sm font-semibold rounded-xl px-4 py-2 min-w-[120px] transition-colors disabled:opacity-50 bg-background-container-high hover:bg-background-bright border border-outline-variant/30 text-on-surface"
             >
               {clearingActivityCache ? "Clearing…" : "Clear Cache"}
             </button>
@@ -372,8 +372,8 @@ function GeneralTab({
 type LogFilter = "debug" | "info" | "warn" | "error";
 
 const LEVEL_BADGE: Record<LogFilter, string> = {
-  debug: "text-on-surface-variant bg-surface-container",
-  info:  "text-primary bg-primary/10",
+  debug: "text-on-surface-variant bg-background-container",
+  info:  "text-on-surface bg-primary-dim",
   warn:  "text-warning bg-warning/10",
   error: "text-error bg-error/10"
 };
@@ -445,7 +445,7 @@ function LogsTab() {
           onClick={() => setActiveLog(null)}
         >
           <div
-            className="bg-surface-container-high rounded-2xl border border-outline-variant/30 w-full max-w-2xl p-6 space-y-4"
+            className="bg-background-container-high rounded-2xl border border-outline-variant/30 w-full max-w-2xl p-6 space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
@@ -470,7 +470,7 @@ function LogsTab() {
               {activeLog.meta !== undefined && (
                 <div className="flex gap-2">
                   <span className="text-on-surface-variant w-24 flex-shrink-0">Meta</span>
-                  <pre className="text-on-surface font-mono text-xs bg-surface-container rounded-lg p-3 overflow-auto max-h-64 flex-1 whitespace-pre-wrap break-all">
+                  <pre className="text-on-surface font-mono text-xs bg-background-container rounded-lg p-3 overflow-auto max-h-64 flex-1 whitespace-pre-wrap break-all">
                     {JSON.stringify(activeLog.meta, null, 2)}
                   </pre>
                 </div>
@@ -479,14 +479,14 @@ function LogsTab() {
             <div className="flex justify-end gap-2 pt-2">
               <button
                 onClick={() => copyLog(activeLog)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 text-primary text-sm hover:bg-primary/20 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-dim text-on-surface text-sm hover:bg-primary transition-colors"
               >
                 <ClipboardCopy size={14} />
                 {copied ? "Copied!" : "Copy"}
               </button>
               <button
                 onClick={() => setActiveLog(null)}
-                className="px-3 py-1.5 rounded-lg bg-surface-container text-on-surface text-sm hover:bg-surface-container-high transition-colors"
+                className="px-3 py-1.5 rounded-lg bg-background-container text-on-surface text-sm hover:bg-background-container-high transition-colors"
               >
                 Close
               </button>
@@ -504,13 +504,13 @@ function LogsTab() {
             placeholder="Search logs..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="flex-1 min-w-[160px] px-3 py-1.5 rounded-lg bg-surface-container border border-outline-variant/30 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+            className="flex-1 min-w-[160px] px-3 py-1.5 rounded-lg bg-background-container border border-outline-variant/30 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary/50"
           />
           {/* Level filter */}
           <select
             value={filter}
             onChange={(e) => setFilter(e.target.value as LogFilter)}
-            className="px-3 py-1.5 rounded-lg bg-surface-container border border-outline-variant/30 text-sm text-on-surface focus:outline-none focus:border-primary/50"
+            className="px-3 py-1.5 rounded-lg bg-background-container border border-outline-variant/30 text-sm text-on-surface focus:outline-none focus:border-primary/50"
           >
             <option value="debug">Debug (all)</option>
             <option value="info">Info+</option>
@@ -521,7 +521,7 @@ function LogsTab() {
           <select
             value={pageSize}
             onChange={(e) => setPageSize(Number(e.target.value))}
-            className="px-3 py-1.5 rounded-lg bg-surface-container border border-outline-variant/30 text-sm text-on-surface focus:outline-none focus:border-primary/50"
+            className="px-3 py-1.5 rounded-lg bg-background-container border border-outline-variant/30 text-sm text-on-surface focus:outline-none focus:border-primary/50"
           >
             <option value={25}>25 / page</option>
             <option value={50}>50 / page</option>
@@ -532,8 +532,8 @@ function LogsTab() {
             onClick={() => setAutoRefresh((v) => !v)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors ${
               autoRefresh
-                ? "bg-primary/10 border-primary/30 text-primary"
-                : "bg-surface-container border-outline-variant/30 text-on-surface-variant"
+                ? "bg-primary-dim border-primary-dim text-on-surface"
+                : "bg-background-container border-outline-variant/30 text-on-surface-variant"
             }`}
           >
             {autoRefresh ? <Pause size={14} /> : <Play size={14} />}
@@ -542,14 +542,14 @@ function LogsTab() {
           {/* Manual refresh */}
           <button
             onClick={() => void load()}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container border border-outline-variant/30 text-sm text-on-surface-variant hover:text-on-surface transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-background-container border border-outline-variant/30 text-sm text-on-surface-variant hover:text-on-surface transition-colors"
           >
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
           </button>
         </div>
 
         {/* Table */}
-        <div className="bg-surface-container-low rounded-xl border border-outline-variant/20 overflow-hidden">
+        <div className="bg-background-container-low rounded-xl border border-outline-variant/20 overflow-hidden">
           {loading && !data ? (
             <div className="flex items-center justify-center h-48 text-on-surface-variant text-sm">Loading logs...</div>
           ) : results.length === 0 ? (
@@ -562,7 +562,7 @@ function LogsTab() {
           ) : (
             <div className="divide-y divide-outline-variant/10">
               {results.map((entry, i) => (
-                <div key={i} className="flex items-start gap-3 px-4 py-2 text-xs font-mono hover:bg-surface-container/50 group">
+                <div key={i} className="flex items-start gap-3 px-4 py-2 text-xs font-mono hover:bg-background-container/50 group">
                   <span className="text-on-surface-variant/60 flex-shrink-0 w-[7.5rem] truncate pt-0.5">
                     {new Date(entry.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                   </span>
@@ -604,7 +604,7 @@ function LogsTab() {
               <button
                 disabled={page <= 1}
                 onClick={() => setPage((p) => p - 1)}
-                className="p-1.5 rounded-lg bg-surface-container disabled:opacity-40 hover:bg-surface-container-high transition-colors"
+                className="p-1.5 rounded-lg bg-background-container disabled:opacity-40 hover:bg-background-container-high transition-colors"
               >
                 <ChevronLeft size={14} />
               </button>
@@ -612,7 +612,7 @@ function LogsTab() {
               <button
                 disabled={page >= pageInfo.pages}
                 onClick={() => setPage((p) => p + 1)}
-                className="p-1.5 rounded-lg bg-surface-container disabled:opacity-40 hover:bg-surface-container-high transition-colors"
+                className="p-1.5 rounded-lg bg-background-container disabled:opacity-40 hover:bg-background-container-high transition-colors"
               >
                 <ChevronRight size={14} />
               </button>
@@ -737,7 +737,7 @@ function JobsTab() {
       {/* Edit schedule modal */}
       {editingJob && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-          <div className="bg-surface-container rounded-2xl border border-outline-variant/20 w-full max-w-md shadow-2xl">
+          <div className="bg-background-container rounded-2xl border border-outline-variant/20 w-full max-w-md shadow-2xl">
             <div className="flex items-center justify-between px-6 py-4 border-b border-outline-variant/20">
               <h2 className="font-headline font-semibold text-on-surface">Edit Schedule</h2>
               <button onClick={() => setEditingJob(null)} className="text-on-surface-variant hover:text-on-surface transition-colors">
@@ -754,7 +754,7 @@ function JobsTab() {
                 <select
                   value={editValue}
                   onChange={(e) => setEditValue(e.target.value)}
-                  className="w-full bg-surface-container-low border border-outline-variant/30 rounded-xl px-3 py-2.5 text-sm text-on-surface focus:outline-none focus:border-primary"
+                  className="w-full bg-background-container-low border border-outline-variant/30 rounded-xl px-3 py-2.5 text-sm text-on-surface focus:outline-none focus:border-primary"
                 >
                   {(JOB_PRESETS[editingJob.id]?.values ?? []).map((v) => (
                     <option key={v} value={String(v)}>
@@ -774,7 +774,7 @@ function JobsTab() {
               <button
                 disabled={saving}
                 onClick={() => void saveSchedule()}
-                className="bg-primary hover:bg-primary-dim disabled:opacity-50 text-on-primary text-sm font-semibold rounded-xl px-4 py-2 transition-colors"
+                className="bg-primary-dim hover:bg-primary disabled:opacity-50 text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors"
               >
                 {saving ? "Saving..." : "Save"}
               </button>
@@ -857,7 +857,7 @@ function JobsTab() {
                         {JOB_PRESETS[job.id] && (
                           <button
                             onClick={() => openEdit(job)}
-                            className="flex items-center gap-1.5 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high text-xs font-medium rounded-lg px-3 py-1.5 transition-colors border border-outline-variant/20"
+                            className="flex items-center gap-1.5 text-on-surface-variant hover:text-on-surface hover:bg-background-container-high text-xs font-medium rounded-lg px-3 py-1.5 transition-colors border border-outline-variant/20"
                           >
                             <Pencil size={13} />
                             Edit
@@ -866,7 +866,7 @@ function JobsTab() {
                         <button
                           disabled={runningId === job.id || job.isRunning}
                           onClick={() => void runJob(job.id)}
-                          className="flex items-center gap-1.5 bg-primary/10 hover:bg-primary/20 disabled:opacity-50 text-primary text-xs font-medium rounded-lg px-3 py-1.5 transition-colors border border-primary/20"
+                          className="flex items-center gap-1.5 bg-primary-dim hover:bg-primary disabled:opacity-50 text-on-surface text-xs font-medium rounded-lg px-3 py-1.5 transition-colors border border-primary-dim"
                         >
                           <Play size={13} />
                           {runningId === job.id || job.isRunning ? "Running..." : "Run Now"}
@@ -935,14 +935,14 @@ function AboutTab() {
         </InfoRow>
         {info?.buildChannel !== "stable" && (
           <InfoRow label="Commit">
-            <code className="text-sm text-on-surface bg-surface-container-high px-2 py-0.5 rounded font-mono">{info?.commitSha ?? "..."}</code>
+            <code className="text-sm text-on-surface bg-background-container-high px-2 py-0.5 rounded font-mono">{info?.commitSha ?? "..."}</code>
           </InfoRow>
         )}
         <InfoRow label="Data Directory">
-          <code className="text-sm text-on-surface bg-surface-container-high px-2 py-0.5 rounded">{info?.dataDir ?? "..."}</code>
+          <code className="text-sm text-on-surface bg-background-container-high px-2 py-0.5 rounded">{info?.dataDir ?? "..."}</code>
         </InfoRow>
         <InfoRow label="Timezone">
-          <code className="text-sm text-on-surface bg-surface-container-high px-2 py-0.5 rounded">{info?.tz ?? "..."}</code>
+          <code className="text-sm text-on-surface bg-background-container-high px-2 py-0.5 rounded">{info?.tz ?? "..."}</code>
         </InfoRow>
       </SectionCard>
 
@@ -994,7 +994,7 @@ function AboutTab() {
         {releases && releases.map((release, index) => (
           <div
             key={release.id}
-            className="flex items-center justify-between gap-4 bg-surface-container-high rounded-xl px-4 py-3"
+            className="flex items-center justify-between gap-4 bg-background-container-high rounded-xl px-4 py-3"
           >
             <div className="flex items-center gap-3 min-w-0">
               <span className="font-semibold text-on-surface truncate">{release.name || release.tag_name}</span>
@@ -1002,7 +1002,7 @@ function AboutTab() {
                 <span className="flex-shrink-0 text-xs font-medium text-success bg-success/10 px-2 py-0.5 rounded-full border border-success/20">Latest</span>
               )}
               {info?.buildChannel === "stable" && info?.version && (release.name === info.version || release.tag_name === `v${info.version}` || release.tag_name === info.version) && (
-                <span className="flex-shrink-0 text-xs font-medium text-primary bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">Current</span>
+                <span className="flex-shrink-0 text-xs font-medium text-on-surface bg-primary-dim px-2 py-0.5 rounded-full border border-primary-dim">Current</span>
               )}
               <span className="flex-shrink-0 text-xs text-on-surface-variant">
                 {new Date(release.published_at).toLocaleDateString()}
@@ -1010,7 +1010,7 @@ function AboutTab() {
             </div>
             <button
               onClick={() => setChangelogRelease(release)}
-              className="flex-shrink-0 flex items-center gap-1.5 text-on-surface-variant hover:text-on-surface hover:bg-surface-bright text-xs font-medium rounded-lg px-3 py-1.5 transition-colors border border-outline-variant/20"
+              className="flex-shrink-0 flex items-center gap-1.5 text-on-surface-variant hover:text-on-surface hover:bg-background-bright text-xs font-medium rounded-lg px-3 py-1.5 transition-colors border border-outline-variant/20"
             >
               View Changelog
             </button>
@@ -1021,12 +1021,12 @@ function AboutTab() {
       {/* Changelog modal */}
       {changelogRelease && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-          <div className="bg-surface-container rounded-2xl border border-outline-variant/20 shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+          <div className="bg-background-container rounded-2xl border border-outline-variant/20 shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
             <div className="flex items-center justify-between p-5 border-b border-outline-variant/20">
               <h3 className="font-headline font-semibold text-on-surface">{changelogRelease.name || changelogRelease.tag_name} Changelog</h3>
               <button
                 onClick={() => setChangelogRelease(null)}
-                className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors"
+                className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-background-container-high transition-colors"
               >
                 <X size={18} />
               </button>
@@ -1041,7 +1041,7 @@ function AboutTab() {
             <div className="flex justify-end gap-3 p-4 border-t border-outline-variant/20">
               <button
                 onClick={() => setChangelogRelease(null)}
-                className="px-4 py-2 text-sm rounded-xl bg-surface-container-high hover:bg-surface-bright text-on-surface border border-outline-variant/20 transition-colors"
+                className="px-4 py-2 text-sm rounded-xl bg-background-container-high hover:bg-background-bright text-on-surface border border-outline-variant/20 transition-colors"
               >
                 Close
               </button>
@@ -1049,7 +1049,7 @@ function AboutTab() {
                 href={changelogRelease.html_url.startsWith("https://github.com/") ? changelogRelease.html_url : "#"}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="px-4 py-2 text-sm rounded-xl bg-primary hover:bg-primary-dim text-on-primary font-medium transition-colors"
+                className="px-4 py-2 text-sm rounded-xl bg-primary-dim hover:bg-primary text-on-surface font-medium transition-colors"
               >
                 View on GitHub
               </a>
@@ -1147,7 +1147,7 @@ function SeerrTab({
 
   return (
     <div>
-      <div className="bg-surface-container rounded-2xl border border-outline-variant/20 p-5">
+      <div className="bg-background-container rounded-2xl border border-outline-variant/20 p-5">
         <h3 className="font-headline font-semibold text-base text-on-surface mb-4">Seerr Integration</h3>
 
         <div className="space-y-4">
@@ -1186,7 +1186,7 @@ function SeerrTab({
                 setForm((f) => ({ ...f, apiKey: event.target.value }));
               }}
               placeholder=""
-              className="w-full bg-surface-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-on-surface text-sm placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary/50"
+              className="w-full bg-background-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-on-surface text-sm placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary/50"
             />
           </Field>
 
@@ -1221,7 +1221,7 @@ function SeerrTab({
               <button
                 onClick={() => void testConnection()}
                 disabled={testing || !form.baseUrl}
-                className="bg-surface-container-high hover:bg-surface-bright disabled:opacity-50 text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
+                className="bg-background-container-high hover:bg-background-bright disabled:opacity-50 text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
               >
                 {testing ? "Testing..." : "Test Connection"}
               </button>
@@ -1234,7 +1234,7 @@ function SeerrTab({
             <button
               disabled={saving}
               onClick={() => void save()}
-              className="bg-primary hover:bg-primary-dim disabled:opacity-50 text-on-primary text-sm font-semibold rounded-xl px-4 py-2 transition-colors"
+              className="bg-primary-dim hover:bg-primary disabled:opacity-50 text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors"
             >
               {saving ? "Saving..." : "Save Seerr"}
             </button>

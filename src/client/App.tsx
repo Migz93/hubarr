@@ -100,7 +100,7 @@ function MainApp() {
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
-            <span className="text-on-primary font-headline font-bold">H</span>
+            <span className="text-on-surface font-headline font-bold">H</span>
           </div>
           <div className="text-on-surface-variant text-sm">Loading Hubarr...</div>
         </div>

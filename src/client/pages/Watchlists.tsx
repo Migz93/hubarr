@@ -195,9 +195,11 @@ export default function Watchlists() {
           {totalPages > 1 && (
             <div className="flex items-center justify-center gap-3">
               <button
+                aria-label="Previous page"
+                title="Previous page"
                 disabled={page <= 1}
                 onClick={() => setParam({ page: String(page - 1) })}
-                className="p-2 rounded-lg border border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high disabled:opacity-40 transition-colors"
+                className="p-2 rounded-lg border border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:bg-background-container-high disabled:opacity-40 transition-colors"
               >
                 <ChevronLeft size={18} />
               </button>
@@ -205,9 +207,11 @@ export default function Watchlists() {
                 Page {page} of {totalPages}
               </span>
               <button
+                aria-label="Next page"
+                title="Next page"
                 disabled={page >= totalPages}
                 onClick={() => setParam({ page: String(page + 1) })}
-                className="p-2 rounded-lg border border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high disabled:opacity-40 transition-colors"
+                className="p-2 rounded-lg border border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:bg-background-container-high disabled:opacity-40 transition-colors"
               >
                 <ChevronRight size={18} />
               </button>
@@ -215,7 +219,7 @@ export default function Watchlists() {
           )}
         </>
       ) : (
-        <div className="bg-surface-container rounded-2xl border border-outline-variant/20 flex items-center justify-center py-16 text-center">
+        <div className="bg-background-container rounded-2xl border border-outline-variant/20 flex items-center justify-center py-16 text-center">
           <p className="text-on-surface-variant text-sm max-w-xs">
             No watchlist items found. Run a sync to populate watchlists.
           </p>
@@ -248,8 +252,8 @@ function FilterChip({
       onClick={onClick}
       className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-colors border ${
         active
-          ? "bg-primary/10 text-primary border-primary/30"
-          : "bg-surface-container border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:border-outline-variant/40"
+          ? "bg-primary-dim text-on-surface border-primary-dim"
+          : "bg-background-container border-outline-variant/20 text-on-surface-variant hover:text-on-surface hover:border-outline-variant/40"
       }`}
     >
       {getPlexImageSrc(avatarUrl) && (
@@ -261,7 +265,7 @@ function FilterChip({
       )}
       {label}
       {count !== undefined && (
-        <span className={`text-xs ${active ? "text-primary/70" : "text-on-surface-variant/60"}`}>
+        <span className={`text-xs ${active ? "text-on-surface" : "text-on-surface-variant/60"}`}>
           {count}
         </span>
       )}
@@ -291,7 +295,7 @@ function WatchlistPoster({
 
   return (
     <button onClick={onClick} className="group text-left w-full">
-      <div className="relative aspect-[2/3] rounded-xl overflow-hidden bg-surface-container-high transition-transform duration-300 group-hover:scale-105">
+      <div className="relative aspect-[2/3] rounded-xl overflow-hidden bg-background-container-high transition-transform duration-300 group-hover:scale-105">
         {posterSrc ? (
           <img
             src={posterSrc}
@@ -312,21 +316,21 @@ function WatchlistPoster({
         )}
         {/* Gradient overlay — fades in on hover */}
         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
-          style={{ background: "linear-gradient(180deg, rgba(45,55,72,0.2) 0%, rgba(45,55,72,0.95) 100%)" }} />
+          style={{ background: "linear-gradient(180deg, var(--overlay-poster-transparent) 0%, var(--overlay-poster) 100%)" }} />
         {/* Availability icon — always visible, top-right */}
         <div className="absolute top-1.5 right-1.5">
           {item.plexAvailable ? (
             <div className="relative">
-              <div className="absolute inset-[3px] rounded-full bg-[#0a3d1f]" />
+              <div className="absolute inset-[3px] rounded-full bg-(--poster-halo-success)" />
               <CheckCircle size={18} className="relative text-success drop-shadow-[0_0_4px_rgba(0,0,0,1)]" />
             </div>
           ) : seerrEnabled && item.seerrRequested ? (
-            <div className="relative w-[18px] h-[18px] rounded-full bg-surface-container-highest border border-outline-variant/40 flex items-center justify-center drop-shadow-[0_0_4px_rgba(0,0,0,1)]">
+            <div className="relative w-[18px] h-[18px] rounded-full bg-background-container-highest border border-outline-variant/40 flex items-center justify-center drop-shadow-[0_0_4px_rgba(0,0,0,1)]">
               <img src="/seerr-icon.svg" alt="Requested in Seerr" className="w-3 h-3" />
             </div>
           ) : (
             <div className="relative">
-              <div className="absolute inset-[3px] rounded-full bg-[#3d0a0a]" />
+              <div className="absolute inset-[3px] rounded-full bg-(--poster-halo-error)" />
               <XCircle size={18} className="relative text-error drop-shadow-[0_0_4px_rgba(0,0,0,1)]" />
             </div>
           )}

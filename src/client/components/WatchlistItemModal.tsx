@@ -217,11 +217,11 @@ export function WatchlistItemModal({
       onClick={onClose}
     >
       <div
-        className="bg-surface-container rounded-2xl w-full max-w-2xl border border-outline-variant/20 shadow-xl overflow-hidden flex max-h-[88vh]"
+        className="bg-background-container rounded-2xl w-full max-w-2xl border border-outline-variant/20 shadow-xl overflow-hidden flex max-h-[88vh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Left: poster */}
-        <div className="w-44 flex-shrink-0 self-stretch bg-surface-container-high">
+        <div className="w-44 flex-shrink-0 self-stretch bg-background-container-high">
           {posterSrc ? (
             <img
               src={posterSrc}
@@ -246,7 +246,7 @@ export function WatchlistItemModal({
           <div className="flex justify-end p-3 pb-0">
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg bg-surface-container-high text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest transition-colors"
+              className="p-1.5 rounded-lg bg-background-container-high text-on-surface-variant hover:text-on-surface hover:bg-background-container-highest transition-colors"
             >
               <X size={16} />
             </button>
@@ -303,7 +303,7 @@ export function WatchlistItemModal({
             {enrichLoading ? (
               <div className="flex gap-1.5 mb-3">
                 {[60, 72, 50].map((w) => (
-                  <div key={w} className="h-5 rounded-full bg-surface-container-high animate-pulse" style={{ width: w }} />
+                  <div key={w} className="h-5 rounded-full bg-background-container-high animate-pulse" style={{ width: w }} />
                 ))}
               </div>
             ) : rich?.genres && rich.genres.length > 0 ? (
@@ -311,7 +311,7 @@ export function WatchlistItemModal({
                 {rich.genres.map((genre) => (
                   <span
                     key={genre}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant text-xs"
+                    className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-background-container-high text-on-surface-variant text-xs"
                   >
                     <Tag size={10} />
                     {genre}
@@ -328,9 +328,9 @@ export function WatchlistItemModal({
             {/* Summary */}
             {enrichLoading ? (
               <div className="space-y-1.5 mb-4">
-                <div className="h-3 rounded bg-surface-container-high animate-pulse w-full" />
-                <div className="h-3 rounded bg-surface-container-high animate-pulse w-5/6" />
-                <div className="h-3 rounded bg-surface-container-high animate-pulse w-4/6" />
+                <div className="h-3 rounded bg-background-container-high animate-pulse w-full" />
+                <div className="h-3 rounded bg-background-container-high animate-pulse w-5/6" />
+                <div className="h-3 rounded bg-background-container-high animate-pulse w-4/6" />
               </div>
             ) : rich?.summary ? (
               <p className="text-on-surface-variant text-sm leading-relaxed mb-4">
@@ -383,7 +383,7 @@ export function WatchlistItemModal({
                           className="w-6 h-6 rounded-full object-cover flex-shrink-0"
                         />
                       ) : (
-                        <div className="w-6 h-6 rounded-full bg-surface-container-highest flex items-center justify-center flex-shrink-0">
+                        <div className="w-6 h-6 rounded-full bg-background-container-highest flex items-center justify-center flex-shrink-0">
                           <span className="text-on-surface-variant text-xs">
                             {user.displayName.charAt(0).toUpperCase()}
                           </span>
@@ -413,7 +413,7 @@ export function WatchlistItemModal({
                         className="w-6 h-6 rounded-full object-cover flex-shrink-0 opacity-70"
                       />
                     ) : (
-                      <div className="w-6 h-6 rounded-full bg-surface-container-highest flex items-center justify-center flex-shrink-0 opacity-70">
+                      <div className="w-6 h-6 rounded-full bg-background-container-highest flex items-center justify-center flex-shrink-0 opacity-70">
                         <span className="text-on-surface-variant text-xs">
                           {externalRequester.displayName.charAt(0).toUpperCase()}
                         </span>
@@ -428,7 +428,7 @@ export function WatchlistItemModal({
                 {/* Ghost row: item is in Seerr/Radarr but was not requested by any specific user */}
                 {isUnknownRequester && (
                   <div className="flex items-center gap-2.5 border-t border-outline-variant/10 pt-2 mt-0.5">
-                    <div className="w-6 h-6 rounded-full bg-surface-container-highest flex items-center justify-center flex-shrink-0 opacity-70">
+                    <div className="w-6 h-6 rounded-full bg-background-container-highest flex items-center justify-center flex-shrink-0 opacity-70">
                       <span className="text-on-surface-variant text-xs">?</span>
                     </div>
                     <span className="text-on-surface-variant text-sm flex-1 min-w-0 truncate italic">Unknown</span>

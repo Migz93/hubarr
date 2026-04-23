@@ -151,7 +151,7 @@ export default function PlexConfigForm({
             type="button"
             disabled={loadingServers}
             onClick={() => void loadServers()}
-            className="flex items-center justify-center gap-2 bg-surface-container-high hover:bg-surface-bright disabled:opacity-50 text-on-surface text-sm font-medium rounded-xl px-4 py-2.5 transition-colors border border-outline-variant/20"
+            className="flex items-center justify-center gap-2 bg-background-container-high hover:bg-background-bright disabled:opacity-50 text-on-surface text-sm font-medium rounded-xl px-4 py-2.5 transition-colors border border-outline-variant/20"
             aria-label="Load available servers"
           >
             <RefreshCw size={15} className={loadingServers ? "animate-spin" : ""} />
@@ -161,8 +161,8 @@ export default function PlexConfigForm({
 
       <div className="grid grid-cols-1 md:grid-cols-[1fr_140px] gap-4">
         <Field label="Hostname or IP Address*">
-          <div className="flex rounded-lg border border-outline-variant/30 overflow-hidden bg-surface-container-low">
-            <div className="px-3 py-2 text-sm text-on-surface-variant bg-surface-container-high border-r border-outline-variant/20">
+          <div className="flex rounded-lg border border-outline-variant/30 overflow-hidden bg-background-container-low">
+            <div className="px-3 py-2 text-sm text-on-surface-variant bg-background-container-high border-r border-outline-variant/20">
               {useSsl ? "https://" : "http://"}
             </div>
             <input
@@ -200,7 +200,7 @@ export default function PlexConfigForm({
             <button
               type="button"
               onClick={onBack}
-              className="flex items-center gap-1 bg-surface-container-high hover:bg-surface-bright text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
+              className="flex items-center gap-1 bg-background-container-high hover:bg-background-bright text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
             >
               <ChevronLeft size={15} />
               Back
@@ -210,7 +210,7 @@ export default function PlexConfigForm({
             type="button"
             onClick={() => void testConnection()}
             disabled={testing || (!selectedServerUri && !manualConfigValid)}
-            className="bg-surface-container-high hover:bg-surface-bright disabled:opacity-50 text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
+            className="bg-background-container-high hover:bg-background-bright disabled:opacity-50 text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
           >
             {testing ? "Testing..." : "Test Connection"}
           </button>
@@ -227,7 +227,7 @@ export default function PlexConfigForm({
             type="button"
             disabled={saving}
             onClick={() => void save()}
-            className="flex items-center gap-2 bg-primary hover:bg-primary-dim disabled:opacity-50 text-on-primary text-sm font-semibold rounded-xl px-4 py-2 transition-colors"
+            className="flex items-center gap-2 bg-primary-dim hover:bg-primary disabled:opacity-50 text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors"
           >
             {saving ? "Saving..." : saveLabel}
             {!saving && <ChevronRight size={15} />}

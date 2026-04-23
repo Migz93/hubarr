@@ -20,6 +20,8 @@ long gone.
   cleanup responsibilities, and how to add new maintenance work safely
 - [seerr.md](seerr.md) — Seerr integration: configuration, user mapping, request
   flow, service account, failure modes, and API quirks
+- [colour-scheme.md](colour-scheme.md) — the 14-colour palette, each colour's
+  role, contrast ratios, and rules for correct usage
 
 ## When To Read Which Doc
 
@@ -35,6 +37,8 @@ long gone.
   consistency checks, pruning, or other housekeeping tasks.
 - Read [seerr.md](seerr.md) when changing Seerr connectivity, user mapping,
   request logic, or the service account lifecycle.
+- Read [colour-scheme.md](colour-scheme.md) when adding new UI elements or
+  choosing colours for interactive states, text, or status indicators.
 
 ## Maintenance Rule
 

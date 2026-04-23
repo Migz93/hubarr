@@ -97,7 +97,7 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
         </div>
 
         {step === "auth" && (
-          <div className="bg-surface-container rounded-2xl p-6 border border-outline-variant/20 max-w-xl mx-auto">
+          <div className="bg-background-container rounded-2xl p-6 border border-outline-variant/20 max-w-xl mx-auto">
             <h2 className="font-headline font-semibold text-lg text-on-surface mb-1">
               Sign in with Plex
             </h2>
@@ -114,7 +114,7 @@ export default function Onboarding({ authenticated = false, onComplete }: Onboar
             <button
               disabled={authBusy}
               onClick={() => void handlePlexAuth()}
-              className="w-full flex items-center justify-center gap-3 bg-primary hover:bg-primary-dim disabled:opacity-50 disabled:cursor-not-allowed text-on-primary font-semibold rounded-xl px-4 py-3 transition-colors"
+              className="w-full flex items-center justify-center gap-3 bg-primary-dim hover:bg-primary disabled:opacity-50 disabled:cursor-not-allowed text-on-surface font-semibold rounded-xl px-4 py-3 transition-colors"
             >
               {authBusy ? "Waiting for Plex..." : "Sign in with Plex"}
               {!authBusy && <ChevronRight size={18} />}
@@ -308,7 +308,7 @@ function UsersOnboardingStep({ onBack, onSaved }: { onBack: () => void; onSaved:
   const noneSelected = selectedIds.size === 0;
 
   return (
-    <div className="bg-surface-container rounded-2xl p-6 border border-outline-variant/20 max-w-2xl mx-auto">
+    <div className="bg-background-container rounded-2xl p-6 border border-outline-variant/20 max-w-2xl mx-auto">
       <h2 className="font-headline font-semibold text-lg text-on-surface mb-1">
         Choose Your Users
       </h2>
@@ -365,7 +365,7 @@ function UsersOnboardingStep({ onBack, onSaved }: { onBack: () => void; onSaved:
         <button
           disabled={saving}
           onClick={onBack}
-          className="flex items-center gap-1 bg-surface-container-high hover:bg-surface-bright disabled:opacity-50 disabled:cursor-not-allowed text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
+          className="flex items-center gap-1 bg-background-container-high hover:bg-background-bright disabled:opacity-50 disabled:cursor-not-allowed text-on-surface text-sm font-semibold rounded-xl px-4 py-2 transition-colors border border-outline-variant/20"
         >
           <ChevronLeft size={15} />
           Back
@@ -373,7 +373,7 @@ function UsersOnboardingStep({ onBack, onSaved }: { onBack: () => void; onSaved:
         <button
           disabled={saving}
           onClick={() => void save()}
-          className="flex items-center gap-2 bg-primary hover:bg-primary-dim disabled:opacity-50 disabled:cursor-not-allowed text-on-primary font-semibold rounded-xl px-5 py-2.5 text-sm transition-colors"
+          className="flex items-center gap-2 bg-primary-dim hover:bg-primary disabled:opacity-50 disabled:cursor-not-allowed text-on-surface font-semibold rounded-xl px-5 py-2.5 text-sm transition-colors"
         >
           {saving ? (
             <>
@@ -418,7 +418,7 @@ function UserSelectCard({
       className={`flex flex-col items-center gap-2 p-3 rounded-xl w-24 transition-all disabled:opacity-60 disabled:cursor-not-allowed ${
         selected
           ? "bg-primary/10 ring-1 ring-primary/40"
-          : "hover:bg-surface-container-high ring-1 ring-transparent"
+          : "hover:bg-background-container-high ring-1 ring-transparent"
       }`}
     >
       <div className="relative w-14 h-14 shrink-0">
@@ -440,7 +440,7 @@ function UserSelectCard({
 
         {selected && (
           <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-primary flex items-center justify-center">
-            <Check size={11} className="text-on-primary" />
+            <Check size={11} className="text-on-surface" />
           </div>
         )}
       </div>
@@ -599,7 +599,7 @@ function PreloadStep({ onComplete }: { onComplete: () => Promise<void> }) {
   }
 
   return (
-    <div className="bg-surface-container rounded-2xl p-6 border border-outline-variant/20 max-w-xl mx-auto">
+    <div className="bg-background-container rounded-2xl p-6 border border-outline-variant/20 max-w-xl mx-auto">
       <h2 className="font-headline font-semibold text-lg text-on-surface mb-1">
         Getting Hubarr Ready
       </h2>
@@ -680,7 +680,7 @@ function PreloadPhaseRow({ label, state }: { label: string; state: PhaseState })
           </p>
         )}
         {showProgress && (
-          <div className="mt-1.5 h-1 rounded-full bg-surface-container-high overflow-hidden">
+          <div className="mt-1.5 h-1 rounded-full bg-background-container-high overflow-hidden">
             <div
               className="h-full bg-primary rounded-full transition-all duration-300"
               style={{ width: `${progressPercent}%` }}
@@ -784,8 +784,8 @@ function StepDot({
           done
             ? "bg-success text-white"
             : active
-            ? "bg-primary text-on-primary"
-            : "bg-surface-container-high text-on-surface-variant"
+            ? "bg-primary-dim text-on-surface"
+            : "bg-background-container-high text-on-surface-variant"
         }`}
       >
         {done ? <Check size={14} /> : number}
