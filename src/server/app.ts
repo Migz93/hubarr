@@ -46,6 +46,23 @@ function parseCookies(rawCookie = "") {
     }, new Map());
 }
 
+function parsePositiveIntegerQuery(value: unknown): number | undefined {
+  if (typeof value !== "string" || value.trim() === "") {
+    return undefined;
+  }
+
+  if (!/^[1-9]\d*$/.test(value)) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
 function signedValue(secret: string, value: string) {
   return crypto.createHmac("sha256", secret).update(value).digest("hex");
 }
@@ -682,7 +699,11 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   // ---------------------------------------------------------------------------
 
   app.get("/api/watchlists", requireAuth, (req, res) => {
-    const userId = req.query["userId"] ? Number(req.query["userId"]) : undefined;
+    const rawUserId = req.query["userId"];
+    const rawPage = req.query["page"];
+    const rawPageSize = req.query["pageSize"];
+
+    const userId = parsePositiveIntegerQuery(rawUserId);
     const mediaTypeParam = req.query["mediaType"];
     const mediaType =
       mediaTypeParam === "movie" || mediaTypeParam === "show"
@@ -699,8 +720,45 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       sortByParam === "title-asc" || sortByParam === "title-desc"
         ? sortByParam
         : "added-desc";
-    const page = req.query["page"] ? Math.max(1, Number(req.query["page"])) : 1;
-    const pageSize = req.query["pageSize"] ? Math.min(200, Math.max(1, Number(req.query["pageSize"]))) : 50;
+
+    const parsedPage = parsePositiveIntegerQuery(rawPage);
+    const page = parsedPage ?? 1;
+
+    const parsedPageSize = parsePositiveIntegerQuery(rawPageSize);
+    const pageSize = Math.min(200, parsedPageSize ?? 50);
+
+    const invalidFields: string[] = [];
+    const clampedFields: string[] = [];
+    if (rawUserId !== undefined && userId === undefined) {
+      invalidFields.push("userId");
+    }
+    if (rawPage !== undefined && parsedPage === undefined) {
+      invalidFields.push("page");
+    }
+    if (rawPageSize !== undefined && parsedPageSize === undefined) {
+      invalidFields.push("pageSize");
+    }
+    if (parsedPageSize !== undefined && pageSize !== parsedPageSize) {
+      clampedFields.push("pageSize");
+    }
+
+    if (invalidFields.length > 0 || clampedFields.length > 0) {
+      logger.debug("Watchlist query parameters normalized", {
+        originalQuery: {
+          userId: rawUserId,
+          page: rawPage,
+          pageSize: rawPageSize
+        },
+        invalidFields,
+        clampedFields,
+        effectiveValues: {
+          userId,
+          page,
+          pageSize
+        }
+      });
+    }
+
     res.json(db.getWatchlistGrouped({ userId, mediaType, availability, sortBy, page, pageSize }));
   });
 
