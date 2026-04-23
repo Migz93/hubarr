@@ -33,7 +33,16 @@ const migrations: Migration[] = [
           collection_name_override TEXT,
           collection_name TEXT NOT NULL,
           last_synced_at TEXT,
-          last_sync_error TEXT
+          last_sync_error TEXT,
+          collection_sort_order_override TEXT
+        );
+
+        CREATE TABLE managed_users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          plex_user_id TEXT NOT NULL UNIQUE,
+          display_name TEXT NOT NULL,
+          avatar_url TEXT,
+          has_restriction_profile INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE watchlist_cache (
@@ -48,6 +57,7 @@ const migrations: Migration[] = [
           added_at TEXT NOT NULL,
           matched_rating_key TEXT,
           raw_payload TEXT NOT NULL,
+          discover_key TEXT,
           UNIQUE(user_id, plex_item_id),
           FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
@@ -66,6 +76,24 @@ const migrations: Migration[] = [
           UNIQUE(user_id, media_type),
           FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
+
+        CREATE TABLE image_cache (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          cache_key TEXT NOT NULL UNIQUE,
+          kind TEXT NOT NULL CHECK(kind IN ('poster', 'avatar')),
+          entity_id TEXT NOT NULL,
+          source_type TEXT CHECK(source_type IN ('plex-path', 'public-url')),
+          source_value TEXT,
+          local_file_path TEXT,
+          local_web_path TEXT,
+          cached_at TEXT,
+          last_refresh_at TEXT,
+          refresh_after TEXT,
+          last_attempted_at TEXT,
+          last_error TEXT
+        );
+
+        CREATE INDEX idx_image_cache_kind_entity ON image_cache(kind, entity_id);
 
         CREATE TABLE sync_runs (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,71 +124,16 @@ const migrations: Migration[] = [
           updated_at TEXT NOT NULL
         );
 
+        INSERT INTO job_run_state (job_id, last_run_at, last_run_status, updated_at)
+        VALUES ('activity-cache-fetch', NULL, NULL, datetime('now'));
+
         CREATE TABLE sessions (
           id TEXT PRIMARY KEY,
           username TEXT NOT NULL,
           expires_at TEXT NOT NULL,
           created_at TEXT NOT NULL
         );
-      `);
-    }
-  },
-  {
-    version: 2,
-    up(db) {
-      db.exec(`
-        CREATE TABLE managed_users (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          plex_user_id TEXT NOT NULL UNIQUE,
-          display_name TEXT NOT NULL,
-          avatar_url TEXT,
-          has_restriction_profile INTEGER NOT NULL DEFAULT 0
-        );
-      `);
-    }
-  },
-  {
-    version: 3,
-    up(db) {
-      db.exec(`
-        ALTER TABLE watchlist_cache ADD COLUMN cached_thumb TEXT;
-        ALTER TABLE users ADD COLUMN cached_avatar_url TEXT;
-        ALTER TABLE managed_users ADD COLUMN cached_avatar_url TEXT;
-      `);
-    }
-  },
-  {
-    version: 4,
-    up(db) {
-      db.exec(`
-        ALTER TABLE watchlist_cache DROP COLUMN cached_thumb;
-        ALTER TABLE users DROP COLUMN cached_avatar_url;
-        ALTER TABLE managed_users DROP COLUMN cached_avatar_url;
 
-        CREATE TABLE image_cache (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          cache_key TEXT NOT NULL UNIQUE,
-          kind TEXT NOT NULL CHECK(kind IN ('poster', 'avatar')),
-          entity_id TEXT NOT NULL,
-          source_type TEXT CHECK(source_type IN ('plex-path', 'public-url')),
-          source_value TEXT,
-          local_file_path TEXT,
-          local_web_path TEXT,
-          cached_at TEXT,
-          last_refresh_at TEXT,
-          refresh_after TEXT,
-          last_attempted_at TEXT,
-          last_error TEXT
-        );
-
-        CREATE INDEX idx_image_cache_kind_entity ON image_cache(kind, entity_id);
-      `);
-    }
-  },
-  {
-    version: 5,
-    up(db) {
-      db.exec(`
         CREATE TABLE watchlist_activity_cache (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           plex_item_id TEXT NOT NULL,
@@ -171,37 +144,6 @@ const migrations: Migration[] = [
 
         CREATE INDEX idx_wac_item_user ON watchlist_activity_cache(plex_item_id, plex_user_id);
 
-        INSERT OR IGNORE INTO job_run_state (job_id, last_run_at, last_run_status, updated_at)
-        VALUES ('activity-cache-fetch', NULL, NULL, datetime('now'));
-      `);
-    }
-  },
-  {
-    version: 6,
-    up(db) {
-      // Stores an optional per-user collection sort order override.
-      // NULL means the user inherits the global collectionSortOrder setting.
-      db.exec(`
-        ALTER TABLE users ADD COLUMN collection_sort_order_override TEXT;
-      `);
-    }
-  },
-  {
-    version: 7,
-    up(db) {
-      db.exec(`
-        ALTER TABLE watchlist_cache ADD COLUMN discover_key TEXT;
-
-        UPDATE watchlist_cache
-        SET discover_key = json_extract(raw_payload, '$.discoverKey')
-        WHERE discover_key IS NULL;
-      `);
-    }
-  },
-  {
-    version: 8,
-    up(db) {
-      db.exec(`
         CREATE TABLE media_items (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           canonical_plex_item_id TEXT NOT NULL UNIQUE,
@@ -219,6 +161,8 @@ const migrations: Migration[] = [
 
         CREATE INDEX idx_media_item_identifiers_media_item_id
           ON media_item_identifiers(media_item_id);
+        CREATE INDEX idx_media_item_identifiers_value
+          ON media_item_identifiers(identifier_value);
 
         CREATE TABLE user_identifier_aliases (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -231,25 +175,9 @@ const migrations: Migration[] = [
 
         CREATE INDEX idx_user_identifier_aliases_user_id
           ON user_identifier_aliases(user_id);
-      `);
-
-    }
-  },
-  {
-    version: 9,
-    up(db) {
-      db.exec(`
-        CREATE INDEX IF NOT EXISTS idx_user_identifier_aliases_value
+        CREATE INDEX idx_user_identifier_aliases_value
           ON user_identifier_aliases(identifier_value);
-        CREATE INDEX IF NOT EXISTS idx_media_item_identifiers_value
-          ON media_item_identifiers(identifier_value);
-      `);
-    }
-  },
-  {
-    version: 10,
-    up(db) {
-      db.exec(`
+
         CREATE TABLE seerr_user_links (
           user_id INTEGER PRIMARY KEY,
           manual_seerr_user_id INTEGER,
@@ -284,7 +212,7 @@ const migrations: Migration[] = [
           ON seerr_request_state(plex_item_id);
       `);
     }
-  },
+  }
 ];
 
 export function runMigrations(db: Database.Database, logger?: Logger): void {
