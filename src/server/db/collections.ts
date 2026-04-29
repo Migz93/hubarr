@@ -34,6 +34,19 @@ export function upsertCollectionRecord(
   );
 }
 
+export function getCollectionRecord(
+  db: Database.Database,
+  userId: number,
+  mediaType: "movie" | "show"
+): PlexCollectionRecord | null {
+  return (db.prepare(`
+    SELECT id, user_id AS userId, media_type AS mediaType, collection_rating_key AS collectionRatingKey,
+           visible_name AS visibleName, label_name AS labelName, hub_identifier AS hubIdentifier,
+           last_synced_hash AS lastSyncedHash, last_synced_at AS lastSyncedAt, last_sync_error AS lastSyncError
+    FROM plex_collections WHERE user_id = ? AND media_type = ?
+  `).get(userId, mediaType) as PlexCollectionRecord | undefined) ?? null;
+}
+
 export function listCollections(db: Database.Database): PlexCollectionRecord[] {
   return db
     .prepare(`

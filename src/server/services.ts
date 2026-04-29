@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type {
   AppSettings,
   CollectionSortOrder,
@@ -7,7 +8,8 @@ import type {
   SeerrUser,
   UserRecord,
   PlexSettingsInput,
-  WatchlistItem
+  WatchlistItem,
+  VisibilityConfig
 } from "../shared/types.js";
 import pLimit from "p-limit";
 import { HubarrDatabase } from "./db/index.js";
@@ -18,6 +20,31 @@ import { SeerrIntegration, extractTmdbId } from "./integrations/seerr.js";
 import { RssCache, type RssFeedItem } from "./rss-cache.js";
 
 const PLEX_SYNC_CONCURRENCY = 3;
+
+/**
+ * Compute a deterministic hash covering all state that affects what Plex sees
+ * for a single user+mediaType collection. If this hash is unchanged from the
+ * stored value the publish step can be skipped entirely.
+ *
+ * Covers: item list, collection name, sort order, visibility, and label.
+ * Display name is intentionally excluded — it only drives the poster (future).
+ */
+function computePublishStateHash(params: {
+  matchedRatingKeys: string[];
+  collectionName: string;
+  sortOrder: CollectionSortOrder;
+  visibility: VisibilityConfig;
+  labelName: string;
+}): string {
+  const payload = JSON.stringify({
+    keys: params.matchedRatingKeys,
+    name: params.collectionName,
+    sort: params.sortOrder,
+    vis: params.visibility,
+    label: params.labelName
+  });
+  return crypto.createHash("sha256").update(payload).digest("hex");
+}
 
 type SeerrRequestSyncScope =
   | { mode: "all"; triggeredBy: "manual" | "full" }
@@ -410,7 +437,7 @@ export class HubarrServices {
       // ------------------------------------------------------------------
       emit("publish-collections", "running", "Publishing collections...");
       try {
-        await withTimeout(this.runPublishPass(), 120_000, "Publish collections");
+        await withTimeout(this.runPublishPass(true), 120_000, "Publish collections");
         emit("publish-collections", "done", "Collections published");
         this.logger.info("Onboarding preload: collection publish complete");
       } catch (err) {
@@ -1098,6 +1125,7 @@ export class HubarrServices {
     friend: UserRecord,
     items: WatchlistItem[],
     runId: number | null,
+    force: boolean,
     plex = this.getPlexIntegration()
   ) {
     const appSettings = this.db.getAppSettings();
@@ -1109,7 +1137,8 @@ export class HubarrServices {
       isSelf: friend.isSelf,
       totalItems: items.length,
       effectiveSortOrder,
-      sortOrderOverride: friend.collectionSortOrderOverride
+      sortOrderOverride: friend.collectionSortOrderOverride,
+      force
     });
     if (friend.collectionSortOrderOverride) {
       this.logger.info("Using per-user collection sort order override", {
@@ -1152,6 +1181,32 @@ export class HubarrServices {
       }
       const matchedRatingKeys = filteredItems.map((item) => item.matchedRatingKey as string);
       const collectionName = friend.collectionName;
+      const labelName = plex.createCollectionLabel(friend.username);
+      const visibility = friend.visibilityOverride ?? appSettings.visibilityDefaults;
+
+      // Compute a hash of everything that affects what Plex sees for this
+      // collection. If nothing has changed since the last successful publish
+      // and we have a stored rating key, skip all Plex API calls.
+      const stateHash = computePublishStateHash({
+        matchedRatingKeys,
+        collectionName,
+        sortOrder: effectiveSortOrder,
+        visibility,
+        labelName
+      });
+
+      if (!force) {
+        const stored = this.db.getCollectionRecord(friend.id, mediaType);
+        if (stored?.collectionRatingKey && stored.lastSyncedHash === stateHash) {
+          this.logger.debug("Collection state unchanged, skipping publish", {
+            userId: friend.id,
+            mediaType,
+            collectionRatingKey: stored.collectionRatingKey
+          });
+          continue;
+        }
+      }
+
       this.logger.info("Publishing media bucket", {
         userId: friend.id,
         mediaType,
@@ -1218,7 +1273,6 @@ export class HubarrServices {
         matchedItems: cleanedKeys.length
       });
 
-      const labelName = plex.createCollectionLabel(friend.username);
       await plex.applyLabelToCollection(collectionRatingKey, labelName);
       this.logger.info("Collection label applied", {
         userId: friend.id,
@@ -1227,7 +1281,6 @@ export class HubarrServices {
         labelName
       });
 
-      const visibility = friend.visibilityOverride ?? appSettings.visibilityDefaults;
       const hubIdentifier = await plex.updateCollectionVisibility(
         collectionRatingKey,
         libraryId,
@@ -1239,13 +1292,21 @@ export class HubarrServices {
         collectionRatingKey,
         hubIdentifier
       });
-      const hash = plex.hashRatingKeys(cleanedKeys);
+
+      // If stale keys were removed during this publish the stored hash must
+      // reflect the cleaned list, not the pre-sync desired list. That way the
+      // next scheduled run recomputes from the (now-shorter) matched set and
+      // recognises the change, triggering a re-publish to clean up Plex.
+      const storedHash = (syncStaleKeys.size > 0 || reorderStaleKeys.size > 0)
+        ? computePublishStateHash({ matchedRatingKeys: cleanedKeys, collectionName, sortOrder: effectiveSortOrder, visibility, labelName })
+        : stateHash;
+
       this.db.upsertCollectionRecord(friend.id, mediaType, {
         collectionRatingKey,
         visibleName: collectionName,
         labelName,
         hubIdentifier,
-        lastSyncedHash: hash,
+        lastSyncedHash: storedHash,
         lastSyncedAt: new Date().toISOString(),
         lastSyncError: null
       });
@@ -1268,7 +1329,7 @@ export class HubarrServices {
     }
   }
 
-  async runFullSync() {
+  async runFullSync(force = false) {
     const syncStart = Date.now();
     const runId = this.db.createSyncRun("full", "Full sync started.");
     const { trackedUsers, publishingUsers } = this.getUserScopes();
@@ -1358,7 +1419,7 @@ export class HubarrServices {
 
     // Publish pass runs first so stale matchedRatingKey values are cleared before
     // Seerr sync evaluates which items are genuinely missing from Plex.
-    await this.runPublishPass().then(() => {
+    await this.runPublishPass(force).then(() => {
       this.db.addSyncRunItem(runId, "collection.publish.followup", "success", {
         sourceRunKind: "full",
         message: "Triggered collection publish after full sync."
@@ -1435,7 +1496,8 @@ export class HubarrServices {
 
       // Publish pass runs first so stale matchedRatingKey values are cleared before
       // Seerr sync evaluates which items are genuinely missing from Plex.
-      await this.runPublishPass().catch((err) => {
+      // Force is true — manual sync should always push to Plex regardless of hash.
+      await this.runPublishPass(true).catch((err) => {
         this.logger.warn("Collection publish after user sync failed", {
           userId: friend.id,
           message: err instanceof Error ? err.message : String(err)
@@ -1467,10 +1529,10 @@ export class HubarrServices {
   }
 
   async refreshAllWatchlists() {
-    return this.runFullSync();
+    return this.runFullSync(true);
   }
 
-  async runPublishPass() {
+  async runPublishPass(force = false) {
     const syncStart = Date.now();
     const runId = this.db.createSyncRun("publish", "Collection sync started.");
     const { publishingUsers } = this.getUserScopes();
@@ -1478,7 +1540,7 @@ export class HubarrServices {
     const failures: string[] = [];
     const plex = this.getPlexIntegration();
 
-    this.logger.info("Collection sync started", { userCount: friends.length });
+    this.logger.info("Collection sync started", { userCount: friends.length, force });
 
     const publishLimit = pLimit(PLEX_SYNC_CONCURRENCY);
     let publishCompleted = 0;
@@ -1486,7 +1548,7 @@ export class HubarrServices {
     await Promise.all(friends.map((friend) =>
       publishLimit(async () => {
         try {
-          await this.publishUserCollections(friend, this.db.getWatchlistItems(friend.id), runId, plex);
+          await this.publishUserCollections(friend, this.db.getWatchlistItems(friend.id), runId, force, plex);
           this.db.markUserSyncResult(friend.id, null);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);

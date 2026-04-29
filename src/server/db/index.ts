@@ -337,6 +337,10 @@ export class HubarrDatabase {
     collectionsRepo.upsertCollectionRecord(this.db, userId, mediaType, patch);
   }
 
+  getCollectionRecord(userId: number, mediaType: "movie" | "show"): PlexCollectionRecord | null {
+    return collectionsRepo.getCollectionRecord(this.db, userId, mediaType);
+  }
+
   listCollections(): PlexCollectionRecord[] {
     return collectionsRepo.listCollections(this.db);
   }
