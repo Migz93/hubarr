@@ -161,15 +161,15 @@ export class JobScheduler {
     return (this.jobs.get(id)?.activeRuns ?? 0) > 0;
   }
 
-  runNow(id: string) {
+  runNow(id: string, taskOverride?: () => Promise<void>) {
     const job = this.jobs.get(id);
     if (!job) {
       this.logger?.warn("Cannot trigger unknown job", { id });
       return false;
     }
 
-    this.logger?.info("Job triggered manually", { id });
-    void this.execute(job, false);
+    this.logger?.info("Job triggered manually", { id, taskOverride: taskOverride !== undefined });
+    void this.execute(job, false, taskOverride);
     return true;
   }
 
@@ -210,7 +210,7 @@ export class JobScheduler {
     }, Math.max(0, nextRunAt.getTime() - Date.now()));
   }
 
-  private async execute(job: ScheduledJob, scheduled: boolean) {
+  private async execute(job: ScheduledJob, scheduled: boolean, taskOverride?: () => Promise<void>) {
     if (scheduled) {
       this.reschedule(job);
     }
@@ -218,7 +218,7 @@ export class JobScheduler {
     job.activeRuns += 1;
     this.logger?.debug("Job started", { id: job.id, scheduled });
     try {
-      await job.task();
+      await (taskOverride ?? job.task)();
       job.lastRunAt = new Date().toISOString();
       job.lastRunStatus = "success";
       this.persistState(job);
