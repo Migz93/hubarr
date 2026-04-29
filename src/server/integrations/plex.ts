@@ -1287,6 +1287,20 @@ export class PlexIntegration {
     await this.requestServer(`/library/metadata/${ratingKey}?${params.toString()}`, { method: "PUT" });
   }
 
+  async uploadCollectionPoster(ratingKey: string, poster: Buffer): Promise<void> {
+    this.logger.info("Uploading Plex collection poster", {
+      ratingKey,
+      bytes: poster.byteLength
+    });
+    await this.requestServer(`/library/metadata/${ratingKey}/posters`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "image/jpeg"
+      },
+      body: new Blob([new Uint8Array(poster)], { type: "image/jpeg" })
+    });
+  }
+
   async ensureCollection(title: string, username: string, mediaType: MediaType, libraryId: string) {
     const collections = await this.getCollections(libraryId);
     const label = this.createCollectionLabel(username);

@@ -174,6 +174,7 @@ How it works:
 - loads the cached watchlist state for each publishing user
 - builds the movie and TV collections for that user from matched items
 - ensures collection labels and sort behavior are correct
+- generates and uploads Hubarr artwork for each collection
 - updates Plex hub visibility settings
 - reapplies user visibility isolation rules
 

@@ -19,6 +19,9 @@ ARG BUILD_CHANNEL=custom
 ARG COMMIT_SHA=local
 ENV BUILD_CHANNEL=$BUILD_CHANNEL
 ENV COMMIT_SHA=$COMMIT_SHA
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends fontconfig fonts-dejavu-core \
+  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
@@ -26,4 +29,3 @@ RUN mkdir -p /config && chown -R node:node /config /app
 USER node
 EXPOSE 9301
 CMD ["node", "dist/server/server/index.js"]
-
