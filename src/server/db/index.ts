@@ -341,6 +341,10 @@ export class HubarrDatabase {
     return collectionsRepo.getCollectionRecord(this.db, userId, mediaType);
   }
 
+  clearCollectionRatingKey(userId: number, mediaType: "movie" | "show"): void {
+    collectionsRepo.clearCollectionRatingKey(this.db, userId, mediaType);
+  }
+
   listCollections(): PlexCollectionRecord[] {
     return collectionsRepo.listCollections(this.db);
   }

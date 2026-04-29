@@ -47,6 +47,18 @@ export function getCollectionRecord(
   `).get(userId, mediaType) as PlexCollectionRecord | undefined) ?? null;
 }
 
+export function clearCollectionRatingKey(
+  db: Database.Database,
+  userId: number,
+  mediaType: "movie" | "show"
+): void {
+  db.prepare(`
+    UPDATE plex_collections
+    SET collection_rating_key = NULL, last_synced_hash = NULL
+    WHERE user_id = ? AND media_type = ?
+  `).run(userId, mediaType);
+}
+
 export function listCollections(db: Database.Database): PlexCollectionRecord[] {
   return db
     .prepare(`
