@@ -1372,11 +1372,23 @@ export class HubarrServices {
       return;
     }
 
-    const poster = await generateCollectionPoster({
-      collectionName: friend.collectionName,
-      mediaType
-    });
-    await plex.uploadCollectionPoster(collectionRatingKey, poster);
+    try {
+      const poster = await generateCollectionPoster({
+        collectionName: friend.collectionName,
+        mediaType
+      });
+      await plex.uploadCollectionPoster(collectionRatingKey, poster);
+    } catch (err) {
+      this.logger.warn("Collection poster upload failed; continuing collection publish", {
+        posterKey,
+        collectionRatingKey,
+        mediaType,
+        userId: friend.id,
+        message: err instanceof Error ? err.message : String(err)
+      });
+      return;
+    }
+
     this.uploadedCollectionPosterKeys.add(posterKey);
     this.logger.info("Collection poster uploaded", {
       userId: friend.id,
