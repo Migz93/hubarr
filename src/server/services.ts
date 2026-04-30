@@ -154,6 +154,8 @@ export class HubarrServices {
   private usersRssUrl: string | null = null;
   private usersRssPrimed = false;
   private readonly usersRssCache = new RssCache();
+  // Process-local guard to avoid re-uploading generated collection posters during one run.
+  // A restart may upload the same poster again, which is acceptable for this low-frequency path.
   private readonly uploadedCollectionPosterKeys = new Set<string>();
   private seerrRequestSyncActiveRuns = 0;
   private seerrRequestSyncQueue: Promise<void> = Promise.resolve();
