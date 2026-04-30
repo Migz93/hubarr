@@ -12,6 +12,7 @@ import type {
   VisibilityConfig
 } from "../shared/types.js";
 import pLimit from "p-limit";
+import { generateCollectionPoster } from "./collection-artwork.js";
 import { HubarrDatabase } from "./db/index.js";
 import { ImageCacheService } from "./image-cache.js";
 import { Logger } from "./logger.js";
@@ -27,7 +28,8 @@ const PLEX_SYNC_CONCURRENCY = 3;
  * stored value the publish step can be skipped entirely.
  *
  * Covers: item list, collection name, sort order, visibility, and label.
- * Display name is intentionally excluded — it only drives the poster (future).
+ * Poster artwork is intentionally applied during each publish rather than
+ * participating in the skip hash.
  */
 function computePublishStateHash(params: {
   matchedRatingKeys: string[];
@@ -152,6 +154,9 @@ export class HubarrServices {
   private usersRssUrl: string | null = null;
   private usersRssPrimed = false;
   private readonly usersRssCache = new RssCache();
+  // Process-local guard to avoid re-uploading generated collection posters during one run.
+  // A restart may upload the same poster again, which is acceptable for this low-frequency path.
+  private readonly uploadedCollectionPosterKeys = new Set<string>();
   private seerrRequestSyncActiveRuns = 0;
   private seerrRequestSyncQueue: Promise<void> = Promise.resolve();
   private onboardingPreloadSession: {
@@ -1246,6 +1251,7 @@ export class HubarrServices {
         mediaType,
         collectionRatingKey
       });
+      await this.applyCollectionPoster(plex, friend, mediaType, collectionRatingKey);
       await plex.updateCollectionSortTitle(collectionRatingKey, `!10_${collectionName}`);
       await plex.updateCollectionContentSort(collectionRatingKey, effectiveSortOrder);
       const { staleKeys: syncStaleKeys } = await plex.syncCollectionItems(collectionRatingKey, matchedRatingKeys);
@@ -1353,6 +1359,43 @@ export class HubarrServices {
         );
       }
     }
+  }
+
+  private async applyCollectionPoster(
+    plex: PlexIntegration,
+    friend: UserRecord,
+    mediaType: "movie" | "show",
+    collectionRatingKey: string
+  ): Promise<void> {
+    const posterKey = `${collectionRatingKey}:${mediaType}:${friend.collectionName}`;
+    if (this.uploadedCollectionPosterKeys.has(posterKey)) {
+      return;
+    }
+
+    try {
+      const poster = await generateCollectionPoster({
+        collectionName: friend.collectionName,
+        mediaType
+      });
+      await plex.uploadCollectionPoster(collectionRatingKey, poster);
+    } catch (err) {
+      this.logger.warn("Collection poster upload failed; continuing collection publish", {
+        posterKey,
+        collectionRatingKey,
+        mediaType,
+        userId: friend.id,
+        message: err instanceof Error ? err.message : String(err)
+      });
+      return;
+    }
+
+    this.uploadedCollectionPosterKeys.add(posterKey);
+    this.logger.info("Collection poster uploaded", {
+      userId: friend.id,
+      displayName: friend.displayName,
+      mediaType,
+      collectionRatingKey
+    });
   }
 
   async runFullSync(force = false) {
