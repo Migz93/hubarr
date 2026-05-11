@@ -1157,6 +1157,21 @@ export class PlexIntegration {
     return { ratingKey: null, matchedBy: "none", candidates };
   }
 
+  /**
+   * Returns true if the collection ratingKey still exists on the Plex server.
+   * Returns false on HTTP 400/404 (deleted or never existed).
+   * Re-throws on transient errors (auth, network, 5xx) so callers can handle them.
+   */
+  async collectionExists(ratingKey: string): Promise<boolean> {
+    try {
+      await this.requestServer(`/library/metadata/${ratingKey}`);
+      return true;
+    } catch (err) {
+      if (this.isItemMissingError(err)) return false;
+      throw err;
+    }
+  }
+
   async getCollections(libraryId: string) {
     const response = await this.requestServer<{
       MediaContainer?: {
@@ -1270,6 +1285,20 @@ export class PlexIntegration {
       "title.locked": "1"
     });
     await this.requestServer(`/library/metadata/${ratingKey}?${params.toString()}`, { method: "PUT" });
+  }
+
+  async uploadCollectionPoster(ratingKey: string, poster: Buffer): Promise<void> {
+    this.logger.info("Uploading Plex collection poster", {
+      ratingKey,
+      bytes: poster.byteLength
+    });
+    await this.requestServer(`/library/metadata/${ratingKey}/posters`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "image/jpeg"
+      },
+      body: new Blob([new Uint8Array(poster)], { type: "image/jpeg" })
+    });
   }
 
   async ensureCollection(title: string, username: string, mediaType: MediaType, libraryId: string) {

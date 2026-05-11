@@ -2,7 +2,7 @@
   "name": "hubarr",
   "private": true,
   "license": "GPL-3.0-only",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server/index.ts",
@@ -19,13 +19,13 @@
     "@tailwindcss/vite": "^4.2.4",
     "better-sqlite3": "^12.9.0",
     "express": "^5.2.1",
-    "express-rate-limit": "^8.3.2",
+    "express-rate-limit": "^8.5.1",
     "helmet": "^8.1.0",
-    "lucide-react": "^1.8.0",
+    "lucide-react": "^1.14.0",
     "p-limit": "^7.3.0",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
-    "react-router-dom": "^7.14.2",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "react-router-dom": "^7.15.0",
     "sharp": "^0.34.5",
     "tailwindcss": "^4.2.2",
     "winston": "^3.19.0",
@@ -36,7 +36,7 @@
     "@playwright/test": "^1.59.1",
     "@types/better-sqlite3": "^7.6.12",
     "@types/express": "^5.0.1",
-    "@types/node": "^25.6.0",
+    "@types/node": "^25.6.1",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@types/xml2js": "^0.4.14",
@@ -44,6 +44,6 @@
     "dotenv": "^17.4.2",
     "tsx": "^4.19.4",
     "typescript": "^6.0.3",
-    "vite": "^8.0.9"
+    "vite": "^8.0.11"
   }
 }

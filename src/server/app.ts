@@ -1211,14 +1211,24 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     const jobId = req.params.id;
     try {
       if (jobId === "collection-publish") {
-        const triggered = scheduler?.runNow("collection-publish") ?? false;
+        if (!scheduler) {
+          res.status(404).json({ error: "Unknown job." });
+          return;
+        }
+        // Force=true: manual Run Now always pushes to Plex regardless of hash.
+        const triggered = scheduler.runNow("collection-publish", () => services.runPublishPass(true).then(() => undefined));
         if (!triggered) {
           res.status(404).json({ error: "Unknown job." });
           return;
         }
         res.json({ triggered: true });
       } else if (jobId === "full-sync") {
-        const triggered = scheduler?.runNow("full-sync") ?? false;
+        if (!scheduler) {
+          res.status(404).json({ error: "Unknown job." });
+          return;
+        }
+        // Force=true: manual Run Now always pushes to Plex regardless of hash.
+        const triggered = scheduler.runNow("full-sync", () => services.runFullSync(true).then(() => undefined));
         if (!triggered) {
           res.status(404).json({ error: "Unknown job." });
           return;
