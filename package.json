@@ -36,13 +36,13 @@
     "@playwright/test": "^1.60.0",
     "@types/better-sqlite3": "^7.6.12",
     "@types/express": "^5.0.1",
-    "@types/node": "^25.8.0",
-    "@types/react": "^19.1.8",
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.15",
     "@types/react-dom": "^19.1.6",
     "@types/xml2js": "^0.4.14",
     "@vitejs/plugin-react": "^6.0.2",
     "dotenv": "^17.4.2",
-    "tsx": "^4.22.0",
+    "tsx": "^4.22.3",
     "typescript": "^6.0.3",
     "vite": "^8.0.13"
   }
