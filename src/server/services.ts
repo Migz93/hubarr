@@ -1917,6 +1917,8 @@ export class HubarrServices {
     }
 
     const watchedEpisodeKeys = new Set<string>();
+    // Tracks episodes confirmed via the viewCount/lastViewedAt fallback rather than
+    // the play history API — only used in logging meta, not in the removal decision.
     const watchedByMetadataKeys = new Set<string>();
     const historyLimit = pLimit(PLEX_SYNC_CONCURRENCY);
     await Promise.all(discoverEpisodes.map((episode) =>

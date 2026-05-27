@@ -939,11 +939,8 @@ function StepsCollapsible({ items }: { items: HistoryStep[] }) {
     return "border-transparent bg-background-container/50";
   };
 
-  const labelClass = (item: HistoryStep) => {
-    if (item.variant === "removed") return "text-error";
-    if (item.variant === "skipped") return "text-on-surface-variant";
-    return "text-on-surface-variant";
-  };
+  const labelClass = (item: HistoryStep) =>
+    item.variant === "removed" ? "text-error" : "text-on-surface-variant";
 
   return (
     <div>

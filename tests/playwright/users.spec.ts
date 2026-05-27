@@ -96,8 +96,8 @@ test.describe("Users page structure", () => {
     const modal = page.locator("div.fixed.inset-0.z-50");
     await modal.getByRole("button", { name: "Watchlist", exact: true }).click();
 
-    await expect(modal.getByLabel("Remove Movie When Watched")).toBeVisible();
-    await expect(modal.getByLabel("Remove Show When Watched")).toBeVisible();
+    await expect(modal.getByLabel("Remove Movies When Watched")).toBeVisible();
+    await expect(modal.getByLabel("Remove Shows When Watched")).toBeVisible();
     await expect(modal.getByText(/fully viewed after they were watchlisted/i)).toBeVisible();
 
     await modal.getByRole("button", { name: "Cancel", exact: true }).click();

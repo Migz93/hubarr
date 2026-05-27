@@ -754,8 +754,7 @@ export class PlexIntegration {
 
     if (seasons.length === 0) return null;
 
-    const episodes: PlexDiscoverEpisodeRef[] = [];
-    for (const season of seasons) {
+    const seasonResults = await Promise.all(seasons.map(async (season) => {
       const seasonIndex = Number(season.index);
       const seasonJson = await fetchChildren(season.key!);
       const seasonEpisodes = (seasonJson.MediaContainer?.Metadata ?? [])
@@ -770,6 +769,7 @@ export class PlexIntegration {
         return null;
       }
 
+      const episodes: PlexDiscoverEpisodeRef[] = [];
       for (const episode of seasonEpisodes) {
         const episodeIndex = Number(episode.index);
         if (!Number.isFinite(seasonIndex) || !Number.isFinite(episodeIndex)) return null;
@@ -779,9 +779,11 @@ export class PlexIntegration {
           originallyAvailableAt: episode.originallyAvailableAt ?? null
         });
       }
-    }
+      return episodes;
+    }));
 
-    return episodes;
+    if (seasonResults.some((result) => result === null)) return null;
+    return seasonResults.flatMap((result) => result ?? []);
   }
 
   async removeFromWatchlist(item: Pick<WatchlistItem, "plexItemId" | "discoverKey" | "title">, ownerToken: string): Promise<void> {

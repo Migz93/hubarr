@@ -868,14 +868,14 @@ function EditModal({
           {activeTab === "watchlist" && user.isSelf && (
             <div className="space-y-4">
               <ToggleField
-                label="Remove Movie When Watched"
-                hint="Remove movies from watchlist once viewed."
+                label="Remove Movies When Watched"
+                hint="Remove movies from your watchlist once watched."
                 checked={watchlistCleanupMovies}
                 onChange={setWatchlistCleanupMovies}
               />
               <ToggleField
-                label="Remove Show When Watched"
-                hint="Remove show from watchlist once all non special episodes viewed."
+                label="Remove Shows When Watched"
+                hint="Remove shows from your watchlist once all non-special episodes are watched."
                 checked={watchlistCleanupShows}
                 onChange={setWatchlistCleanupShows}
               />
