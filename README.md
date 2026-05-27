@@ -61,6 +61,7 @@ Hubarr uses a few background jobs:
 
 - **Watchlist RSS Sync** watches Plex RSS feeds for quick watchlist changes and stores new items fast
 - **Watchlist GraphQL Sync** regularly performs a fuller watchlist reconciliation to catch anything RSS missed
+- **Watchlist Cleanup** runs the optional watched-item cleanup checks on schedule
 - **Plex Library Scans** help Hubarr notice when something from a watchlist has now actually appeared in your Plex libraries
 - **Collection Sync** is the job that updates the Plex collections and hub rows
 

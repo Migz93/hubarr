@@ -17,7 +17,7 @@ import { test, expect } from "@playwright/test";
 test.describe("Settings — Seerr tab", () => {
   test("Seerr tab button is visible", async ({ page }) => {
     await page.goto("/settings");
-    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
     await expect(page.getByRole("button", { name: "Seerr", exact: true })).toBeVisible();
   });
 

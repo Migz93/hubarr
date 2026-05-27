@@ -15,6 +15,9 @@ export type SettingKey = "admin" | "plex" | "app" | "session_secret" | "seerr";
 export const defaultAppSettings: AppSettings = {
   reconciliationIntervalMinutes: 60,
   activityCacheFetchIntervalMinutes: 60,
+  watchlistCleanupIntervalMinutes: 30,
+  watchlistCleanupMovies: false,
+  watchlistCleanupShows: false,
   rssPollIntervalSeconds: 300,
   rssEnabled: true,
   trackAllUsers: false,
@@ -210,8 +213,14 @@ export function calculateHistoryRetentionEvents(settings: AppSettings): number {
   const fullSyncsPerDay = 1440 / settings.reconciliationIntervalMinutes;
   const rssSyncsPerDay = settings.rssEnabled ? 86400 / settings.rssPollIntervalSeconds : 0;
   const publishSyncsPerDay = 1440 / settings.collectionPublishIntervalMinutes;
-  const totalSyncsPerDay = fullSyncsPerDay + rssSyncsPerDay + publishSyncsPerDay;
-  return Math.max(1, Math.floor(settings.historyRetentionDays * totalSyncsPerDay));
+  const cleanupEnabled = settings.watchlistCleanupMovies || settings.watchlistCleanupShows;
+  const cleanupInterval = settings.watchlistCleanupIntervalMinutes;
+  const cleanupSyncsPerDay = cleanupEnabled && Number.isFinite(cleanupInterval) && cleanupInterval > 0
+    ? 1440 / cleanupInterval
+    : 0;
+  const totalSyncsPerDay = fullSyncsPerDay + rssSyncsPerDay + publishSyncsPerDay + cleanupSyncsPerDay;
+  const finiteTotalSyncsPerDay = Number.isFinite(totalSyncsPerDay) ? totalSyncsPerDay : 0;
+  return Math.max(1, Math.floor(settings.historyRetentionDays * finiteTotalSyncsPerDay));
 }
 
 // -------------------------------------------------------------------------
