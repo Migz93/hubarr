@@ -80,7 +80,7 @@ test.describe("Users page structure", () => {
     const friend = users.find((user) => !user.isSelf);
     test.skip(!friend, "No non-self user exists on this live instance.");
 
-    const friendLabel = friend!.displayNameOverride?.trim() ? friend!.displayName : friend!.username;
+    const friendLabel = friend!.displayNameOverride?.trim() || friend!.displayName || friend!.username;
     const friendCard = page.locator("div.relative").filter({ hasText: friendLabel }).first();
     await expect(friendCard).toBeVisible();
     await friendCard.getByTitle("Edit user").click();
@@ -113,11 +113,12 @@ test.describe("Users page structure", () => {
 
     const cleanupRow = page.locator("tr", { hasText: "Watchlist Cleanup" });
     await expect(cleanupRow).toBeVisible();
-    await expect(cleanupRow).toContainText("Every 30 minutes");
-    await expect(cleanupRow.getByRole("button", { name: "Run Now", exact: true })).toBeEnabled();
 
     const jobs = await request.get("/api/settings/jobs").then((response) => response.json() as Promise<JobInfo[]>);
     const cleanupJob = jobs.find((job) => job.id === "watchlist-cleanup");
     expect(cleanupJob?.isEnabled).toBe(true);
+    expect(cleanupJob?.intervalDescription).toBeTruthy();
+    await expect(cleanupRow).toContainText(cleanupJob!.intervalDescription);
+    await expect(cleanupRow.getByRole("button", { name: "Run Now", exact: true })).toBeEnabled();
   });
 });

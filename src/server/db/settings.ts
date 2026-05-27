@@ -213,11 +213,14 @@ export function calculateHistoryRetentionEvents(settings: AppSettings): number {
   const fullSyncsPerDay = 1440 / settings.reconciliationIntervalMinutes;
   const rssSyncsPerDay = settings.rssEnabled ? 86400 / settings.rssPollIntervalSeconds : 0;
   const publishSyncsPerDay = 1440 / settings.collectionPublishIntervalMinutes;
-  const cleanupSyncsPerDay = (settings.watchlistCleanupMovies || settings.watchlistCleanupShows)
-    ? 1440 / settings.watchlistCleanupIntervalMinutes
+  const cleanupEnabled = settings.watchlistCleanupMovies || settings.watchlistCleanupShows;
+  const cleanupInterval = settings.watchlistCleanupIntervalMinutes;
+  const cleanupSyncsPerDay = cleanupEnabled && Number.isFinite(cleanupInterval) && cleanupInterval > 0
+    ? 1440 / cleanupInterval
     : 0;
   const totalSyncsPerDay = fullSyncsPerDay + rssSyncsPerDay + publishSyncsPerDay + cleanupSyncsPerDay;
-  return Math.max(1, Math.floor(settings.historyRetentionDays * totalSyncsPerDay));
+  const finiteTotalSyncsPerDay = Number.isFinite(totalSyncsPerDay) ? totalSyncsPerDay : 0;
+  return Math.max(1, Math.floor(settings.historyRetentionDays * finiteTotalSyncsPerDay));
 }
 
 // -------------------------------------------------------------------------

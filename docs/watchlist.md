@@ -185,7 +185,7 @@ movie or show cleanup is enabled.
 
 Watchlist cleanup removes items from the admin's Plex watchlist after Hubarr can
 prove they were watched after they were added to the watchlist. The settings live
-in the existing app settings JSON and are exposed in the admin/self user's edit
+in the existing app settings JSON and are exposed in the admin/self-user's edit
 modal under the Watchlist tab:
 
 - `Remove Movie When Watched`

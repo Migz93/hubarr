@@ -1329,15 +1329,23 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         res.json({ triggered: true });
       } else if (jobId === "watchlist-cleanup") {
         const settings = db.getAppSettings();
+        const meta = {
+          jobId,
+          movieEnabled: settings.watchlistCleanupMovies,
+          showEnabled: settings.watchlistCleanupShows
+        };
         if (!settings.watchlistCleanupMovies && !settings.watchlistCleanupShows) {
+          logger.warn("Manual job run rejected", { ...meta, reason: "watchlist-cleanup-disabled" });
           res.status(400).json({ error: "Watchlist Cleanup is disabled." });
           return;
         }
         const triggered = scheduler?.runNow("watchlist-cleanup") ?? false;
         if (!triggered) {
+          logger.warn("Manual job run rejected", { ...meta, reason: "scheduler-rejected" });
           res.status(404).json({ error: "Unknown job." });
           return;
         }
+        logger.info("Manual job run requested", meta);
         res.json({ triggered: true });
       } else if (jobId === "seerr-request-sync") {
         services.runSeerrRequestSync({ mode: "all", triggeredBy: "manual" }).catch((err) => {
@@ -1390,6 +1398,10 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         intervalMs: updated.watchlistCleanupIntervalMinutes * 60 * 1000,
         enabled: updated.watchlistCleanupMovies || updated.watchlistCleanupShows
       });
+      logger.info("Job schedule updated", {
+        jobId,
+        intervalMinutes: updated.watchlistCleanupIntervalMinutes
+      });
       res.json({ updated: true });
     } else if (jobId === "rss-sync" && body.intervalMinutes) {
       const updated = db.updateAppSettings({ rssPollIntervalSeconds: body.intervalMinutes * 60 });
@@ -1406,6 +1418,13 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       });
       res.json({ updated: true });
     } else {
+      if (jobId === "watchlist-cleanup") {
+        logger.warn("Job schedule update rejected", {
+          jobId,
+          intervalMinutes: body.intervalMinutes,
+          reason: "missing-or-invalid-interval"
+        });
+      }
       res.status(400).json({ error: "Unknown job or missing interval." });
     }
   });

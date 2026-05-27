@@ -47,7 +47,9 @@ const ACTION_LABELS: Record<string, string> = {
   "seerr.request.failed": "Seerr request failed",
   "watchlist.cleanup.removed": "Watchlist cleanup removed",
   "watchlist.cleanup.skipped": "Watchlist cleanup skipped",
-  "watchlist.cleanup.failed": "Watchlist cleanup failed"
+  "watchlist.cleanup.failed": "Watchlist cleanup failed",
+  "watchlist.cleanup.failed-item": "Watchlist cleanup item failed",
+  "watchlist.publish.failed": "Watchlist cleanup publish failed"
 };
 
 const VALID_KINDS: KindFilter[] = ["all", "full", "rss", "user", "publish", "seerr", "watchlist-cleanup"];

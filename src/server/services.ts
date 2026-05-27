@@ -1708,9 +1708,10 @@ export class HubarrServices {
       .filter((item) => item.type === "movie" ? cleanupMovies : cleanupShows);
     let removed = 0;
     let skipped = 0;
+    let failed = 0;
 
     const logDecision = (
-      level: "info" | "warn",
+      level: "info" | "warn" | "error",
       message: string,
       item: WatchlistItem,
       meta: Record<string, unknown>
@@ -1730,82 +1731,105 @@ export class HubarrServices {
       for (const item of items) {
         const details = { plexItemId: item.plexItemId, title: item.title, type: item.type, addedAt: item.addedAt };
 
-        if (!item.matchedRatingKey) {
-          skipped++;
-          logDecision("info", "Watchlist Cleanup skipped item", item, {
-            reason: "not-matched-locally",
-            message: "Item is not matched to a local Plex library item."
-          });
-          this.db.addSyncRunItem(runId, "watchlist.cleanup.skipped", "success", {
-            ...details,
-            reason: "not-matched-locally",
-            message: "Item is not matched to a local Plex library item."
-          }, selfUser.id);
-          continue;
-        }
+        try {
+          if (!item.matchedRatingKey) {
+            skipped++;
+            logDecision("info", "Watchlist Cleanup skipped item", item, {
+              reason: "not-matched-locally",
+              message: "Item is not matched to a local Plex library item."
+            });
+            this.db.addSyncRunItem(runId, "watchlist.cleanup.skipped", "success", {
+              ...details,
+              reason: "not-matched-locally",
+              message: "Item is not matched to a local Plex library item."
+            }, selfUser.id);
+            continue;
+          }
 
-        const addedAtMs = Date.parse(item.addedAt);
-        if (!Number.isFinite(addedAtMs) || item.addedAt === WATCHLIST_DATE_UNKNOWN_SENTINEL) {
-          skipped++;
-          logDecision("info", "Watchlist Cleanup skipped item", item, {
-            reason: "watchlist-date-unknown",
-            message: "Item does not have a trustworthy watchlisted date."
-          });
-          this.db.addSyncRunItem(runId, "watchlist.cleanup.skipped", "success", {
-            ...details,
-            reason: "watchlist-date-unknown",
-            message: "Item does not have a trustworthy watchlisted date."
-          }, selfUser.id);
-          continue;
-        }
+          const addedAtMs = Date.parse(item.addedAt);
+          if (!Number.isFinite(addedAtMs) || item.addedAt === WATCHLIST_DATE_UNKNOWN_SENTINEL) {
+            skipped++;
+            logDecision("info", "Watchlist Cleanup skipped item", item, {
+              reason: "watchlist-date-unknown",
+              message: "Item does not have a trustworthy watchlisted date."
+            });
+            this.db.addSyncRunItem(runId, "watchlist.cleanup.skipped", "success", {
+              ...details,
+              reason: "watchlist-date-unknown",
+              message: "Item does not have a trustworthy watchlisted date."
+            }, selfUser.id);
+            continue;
+          }
 
-        const decision = item.type === "movie"
-          ? await this.shouldRemoveWatchedMovie(item, plex, addedAtMs, selfServerAccountId)
-          : await this.shouldRemoveWatchedShow(item, plex, addedAtMs, selfServerAccountId);
+          const decision = item.type === "movie"
+            ? await this.shouldRemoveWatchedMovie(item, plex, addedAtMs, selfServerAccountId)
+            : await this.shouldRemoveWatchedShow(item, plex, addedAtMs, selfServerAccountId);
 
-        if (!decision.remove) {
-          skipped++;
-          logDecision("info", "Watchlist Cleanup skipped item", item, {
+          if (!decision.remove) {
+            skipped++;
+            logDecision("info", "Watchlist Cleanup skipped item", item, {
+              reason: decision.reason,
+              message: decision.message,
+              ...decision.meta
+            });
+            this.db.addSyncRunItem(runId, "watchlist.cleanup.skipped", "success", {
+              ...details,
+              reason: decision.reason,
+              message: decision.message,
+              ...decision.meta
+            }, selfUser.id);
+            continue;
+          }
+
+          await plex.removeFromWatchlist(item, owner.plexToken);
+          const deletedRows = this.db.deleteWatchlistItem(selfUser.id, item.plexItemId);
+          removed++;
+          logDecision("info", "Watchlist Cleanup removed item", item, {
             reason: decision.reason,
             message: decision.message,
+            deletedRows,
             ...decision.meta
           });
-          this.db.addSyncRunItem(runId, "watchlist.cleanup.skipped", "success", {
+          this.db.addSyncRunItem(runId, "watchlist.cleanup.removed", "success", {
             ...details,
             reason: decision.reason,
             message: decision.message,
+            deletedRows,
             ...decision.meta
           }, selfUser.id);
-          continue;
+        } catch (error) {
+          failed++;
+          const message = error instanceof Error ? error.message : String(error);
+          logDecision("error", "Watchlist Cleanup item failed", item, {
+            reason: "item-processing-failed",
+            message
+          });
+          this.db.addSyncRunItem(runId, "watchlist.cleanup.failed-item", "error", {
+            ...details,
+            reason: "item-processing-failed",
+            message
+          }, selfUser.id);
         }
-
-        await plex.removeFromWatchlist(item, owner.plexToken);
-        const deletedRows = this.db.deleteWatchlistItem(selfUser.id, item.plexItemId);
-        removed++;
-        logDecision("info", "Watchlist Cleanup removed item", item, {
-          reason: decision.reason,
-          message: decision.message,
-          deletedRows,
-          ...decision.meta
-        });
-        this.db.addSyncRunItem(runId, "watchlist.cleanup.removed", "success", {
-          ...details,
-          reason: decision.reason,
-          message: decision.message,
-          deletedRows,
-          ...decision.meta
-        }, selfUser.id);
       }
 
       const summary = removed > 0
-        ? `Watchlist Cleanup removed ${removed} item${removed !== 1 ? "s" : ""}; skipped ${skipped}.`
-        : `Watchlist Cleanup skipped: no watched items to remove (${skipped} checked).`;
+        ? `Watchlist Cleanup removed ${removed} item${removed !== 1 ? "s" : ""}; skipped ${skipped}; failed ${failed}.`
+        : `Watchlist Cleanup skipped: no watched items to remove (${skipped} skipped; ${failed} failed).`;
       this.db.completeSyncRun(runId, "success", summary, null);
-      this.logger.info("Watchlist Cleanup complete", { removed, skipped, durationMs: Date.now() - startedAt });
+      this.logger.info("Watchlist Cleanup complete", { removed, skipped, failed, durationMs: Date.now() - startedAt });
 
       if (removed > 0) {
         this.logger.info("Collection publish queued after Watchlist Cleanup removed items", { removed });
-        await this.runPublishPass();
+        try {
+          await this.runPublishPass();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.error("Collection publish after Watchlist Cleanup failed", { removed, message });
+          this.db.addSyncRunItem(runId, "watchlist.publish.failed", "error", {
+            removed,
+            message
+          });
+        }
       }
 
       return { removed, skipped };
