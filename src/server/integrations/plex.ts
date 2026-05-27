@@ -265,10 +265,35 @@ const PLEX_TV_PING_URL = "https://plex.tv/api/v2/ping";
 const PLEX_TV_RESOURCES_URL = "https://plex.tv/api/v2/resources";
 
 const RSS_PLEX_UUID_PATH = /^\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+const COLLECTION_REORDER_MAX_PASSES = 8;
+const COLLECTION_REORDER_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000, 12_000];
 
 // Sentinel value used when no real watchlist date can be determined.
 // Stored in the DB so it can be overwritten later if a real date is found.
 export const WATCHLIST_DATE_UNKNOWN_SENTINEL = "2001-01-01T00:00:00.000Z";
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function ratingKeyOrderMatches(actual: string[], expected: string[]): boolean {
+  return actual.length === expected.length && actual.every((key, i) => key === expected[i]);
+}
+
+function buildOrderMismatchMeta(actual: string[], expected: string[]) {
+  const mismatchIndex = expected.findIndex((key, i) => actual[i] !== key);
+  const firstMismatchIndex = mismatchIndex === -1 && actual.length !== expected.length
+    ? Math.min(actual.length, expected.length)
+    : mismatchIndex;
+
+  return {
+    expectedCount: expected.length,
+    actualCount: actual.length,
+    firstMismatchIndex,
+    expectedSample: expected.slice(0, 8),
+    actualSample: actual.slice(0, 8)
+  };
+}
 
 export class PlexIntegration {
   private resolvedMachineIdentifier: string | null = null;
@@ -1620,41 +1645,58 @@ export class PlexIntegration {
 
   /**
    * Enforce a specific item order in a custom-sorted collection.
-   * Moves every item into position sequentially — simple and guaranteed correct.
+   * Moves the first misplaced item into position, re-fetches live order, and
+   * repeats with progressive backoff so Plex has time to settle each move.
    * Skips the whole operation if the collection is already in the desired order.
    */
-  async reorderCollectionItems(collectionRatingKey: string, orderedRatingKeys: string[]): Promise<{ staleKeys: Set<string> }> {
+  async reorderCollectionItems(collectionRatingKey: string, orderedRatingKeys: string[]): Promise<{
+    staleKeys: Set<string>;
+    converged: boolean;
+    finalOrder: string[];
+  }> {
     const staleKeys = new Set<string>();
 
-    if (orderedRatingKeys.length <= 1) return { staleKeys };
-
-    const currentOrder = await this.getCollectionItems(collectionRatingKey);
-
-    if (
-      currentOrder.length === orderedRatingKeys.length &&
-      currentOrder.every((key, i) => key === orderedRatingKeys[i])
-    ) {
-      return { staleKeys }; // already in correct order
+    if (orderedRatingKeys.length <= 1) {
+      const finalOrder = await this.getCollectionItems(collectionRatingKey);
+      return { staleKeys, converged: true, finalOrder };
     }
 
-    // Track the last successfully placed key so the anchor for subsequent moves
-    // stays valid even when stale keys are skipped mid-sequence.
-    let lastPlacedKey: string | null = null;
+    let currentOrder = await this.getCollectionItems(collectionRatingKey);
 
-    for (const itemKey of orderedRatingKeys) {
+    if (ratingKeyOrderMatches(currentOrder, orderedRatingKeys)) {
+      return { staleKeys, converged: true, finalOrder: currentOrder }; // already in correct order
+    }
+
+    let remainingKeys = [...orderedRatingKeys];
+
+    for (let pass = 0; pass < COLLECTION_REORDER_MAX_PASSES; pass++) {
+      const itemKey = remainingKeys.find((key, i) => currentOrder[i] !== key);
+      if (!itemKey) {
+        return { staleKeys, converged: true, finalOrder: currentOrder };
+      }
+      const targetIndex = remainingKeys.indexOf(itemKey);
+      const afterKey = targetIndex > 0 ? remainingKeys[targetIndex - 1] : null;
+
       try {
-        if (lastPlacedKey === null) {
+        this.logger.debug("Moving collection item into desired position", {
+          collectionRatingKey,
+          itemKey,
+          afterKey,
+          targetIndex,
+          pass: pass + 1
+        });
+
+        if (afterKey === null) {
           await this.requestServer(
             `/library/collections/${collectionRatingKey}/items/${itemKey}/move`,
             { method: "PUT" }
           );
         } else {
           await this.requestServer(
-            `/library/collections/${collectionRatingKey}/items/${itemKey}/move?after=${lastPlacedKey}`,
+            `/library/collections/${collectionRatingKey}/items/${itemKey}/move?after=${afterKey}`,
             { method: "PUT" }
           );
         }
-        lastPlacedKey = itemKey;
       } catch (err) {
         if (!this.isItemMissingError(err)) throw err;
         this.logger.warn("Skipping stale rating key during collection reorder", {
@@ -1663,10 +1705,39 @@ export class PlexIntegration {
           error: err instanceof Error ? err.message : String(err)
         });
         staleKeys.add(itemKey);
+        remainingKeys = remainingKeys.filter((key) => key !== itemKey);
+        currentOrder = currentOrder.filter((key) => key !== itemKey);
+        continue;
       }
+
+      const delayMs = COLLECTION_REORDER_RETRY_DELAYS_MS[
+        Math.min(pass, COLLECTION_REORDER_RETRY_DELAYS_MS.length - 1)
+      ];
+      await sleep(delayMs);
+      currentOrder = await this.getCollectionItems(collectionRatingKey);
+      if (ratingKeyOrderMatches(currentOrder, remainingKeys)) {
+        return { staleKeys, converged: true, finalOrder: currentOrder };
+      }
+
+      this.logger.warn("Collection order still mismatched after item move", {
+        collectionRatingKey,
+        movedKey: itemKey,
+        targetIndex,
+        pass: pass + 1,
+        nextDelayMs: COLLECTION_REORDER_RETRY_DELAYS_MS[
+          Math.min(pass + 1, COLLECTION_REORDER_RETRY_DELAYS_MS.length - 1)
+        ],
+        ...buildOrderMismatchMeta(currentOrder, remainingKeys)
+      });
     }
 
-    return { staleKeys };
+    this.logger.warn("Collection reorder did not converge within bounded attempts", {
+      collectionRatingKey,
+      attempts: COLLECTION_REORDER_MAX_PASSES,
+      ...buildOrderMismatchMeta(currentOrder, remainingKeys)
+    });
+
+    return { staleKeys, converged: false, finalOrder: currentOrder };
   }
 
   /**
