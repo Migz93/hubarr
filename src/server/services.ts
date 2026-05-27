@@ -16,7 +16,7 @@ import { generateCollectionPoster } from "./collection-artwork.js";
 import { HubarrDatabase } from "./db/index.js";
 import { ImageCacheService } from "./image-cache.js";
 import { Logger } from "./logger.js";
-import { PlexIntegration, WATCHLIST_DATE_UNKNOWN_SENTINEL, type PlexLibraryItemMatch, type ResolvedWatchlistItem } from "./integrations/plex.js";
+import { PlexIntegration, WATCHLIST_DATE_UNKNOWN_SENTINEL, type PlexDiscoverEpisodeRef, type PlexEpisodeRef, type PlexLibraryItemMatch, type ResolvedWatchlistItem } from "./integrations/plex.js";
 import { SeerrIntegration, extractTmdbId } from "./integrations/seerr.js";
 import { RssCache, type RssFeedItem } from "./rss-cache.js";
 
@@ -58,6 +58,16 @@ type SeerrRequestProcessingOptions = {
 };
 
 type SeerrRequestWorkItem = { user: UserRecord; items: WatchlistItem[] };
+
+function buildEpisodeKey(episode: Pick<PlexEpisodeRef | PlexDiscoverEpisodeRef, "seasonIndex" | "episodeIndex">): string {
+  return `${episode.seasonIndex}:${episode.episodeIndex}`;
+}
+
+function isPastOrTodayDate(value: string | null, todayUtc: Date): boolean {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.getTime() <= todayUtc.getTime();
+}
 
 /**
  * Compare two watchlist items by release date for Plex collection ordering.
@@ -1660,6 +1670,272 @@ export class HubarrServices {
     }
 
     return this.db.listSyncRuns(1)[0];
+  }
+
+  async runWatchlistCleanup() {
+    const startedAt = Date.now();
+    const settings = this.db.getAppSettings();
+    const runId = this.db.createSyncRun("watchlist-cleanup", "Watchlist Cleanup started.");
+    const cleanupMovies = settings.watchlistCleanupMovies;
+    const cleanupShows = settings.watchlistCleanupShows;
+
+    this.logger.info("Watchlist Cleanup started", { cleanupMovies, cleanupShows });
+
+    if (!cleanupMovies && !cleanupShows) {
+      this.db.addSyncRunItem(runId, "watchlist.cleanup.skipped", "success", {
+        reason: "cleanup-disabled",
+        message: "Watchlist cleanup is disabled."
+      });
+      this.db.completeSyncRun(runId, "success", "Watchlist Cleanup skipped: cleanup is disabled.", null);
+      this.logger.info("Watchlist Cleanup skipped because cleanup is disabled");
+      return { removed: 0, skipped: 1 };
+    }
+
+    const selfUser = this.db.listUsers().find((user) => user.isSelf);
+    const owner = this.db.getPlexOwner();
+    if (!selfUser || !owner) {
+      this.db.addSyncRunItem(runId, "watchlist.cleanup.skipped", "success", {
+        reason: "missing-admin-user",
+        message: "Admin/self user is not configured."
+      });
+      this.db.completeSyncRun(runId, "success", "Watchlist Cleanup skipped: admin user is not configured.", null);
+      return { removed: 0, skipped: 1 };
+    }
+
+    const plex = this.getPlexIntegration();
+    const selfServerAccountId = await this.resolveSelfServerAccountId(plex, selfUser.username);
+    const items = this.db.getWatchlistItems(selfUser.id)
+      .filter((item) => item.type === "movie" ? cleanupMovies : cleanupShows);
+    let removed = 0;
+    let skipped = 0;
+
+    const logDecision = (
+      level: "info" | "warn",
+      message: string,
+      item: WatchlistItem,
+      meta: Record<string, unknown>
+    ) => {
+      this.logger[level](message, {
+        userId: selfUser.id,
+        title: item.title,
+        type: item.type,
+        plexItemId: item.plexItemId,
+        matchedRatingKey: item.matchedRatingKey,
+        addedAt: item.addedAt,
+        ...meta
+      });
+    };
+
+    try {
+      for (const item of items) {
+        const details = { plexItemId: item.plexItemId, title: item.title, type: item.type, addedAt: item.addedAt };
+
+        if (!item.matchedRatingKey) {
+          skipped++;
+          logDecision("info", "Watchlist Cleanup skipped item", item, {
+            reason: "not-matched-locally",
+            message: "Item is not matched to a local Plex library item."
+          });
+          this.db.addSyncRunItem(runId, "watchlist.cleanup.skipped", "success", {
+            ...details,
+            reason: "not-matched-locally",
+            message: "Item is not matched to a local Plex library item."
+          }, selfUser.id);
+          continue;
+        }
+
+        const addedAtMs = Date.parse(item.addedAt);
+        if (!Number.isFinite(addedAtMs) || item.addedAt === WATCHLIST_DATE_UNKNOWN_SENTINEL) {
+          skipped++;
+          logDecision("info", "Watchlist Cleanup skipped item", item, {
+            reason: "watchlist-date-unknown",
+            message: "Item does not have a trustworthy watchlisted date."
+          });
+          this.db.addSyncRunItem(runId, "watchlist.cleanup.skipped", "success", {
+            ...details,
+            reason: "watchlist-date-unknown",
+            message: "Item does not have a trustworthy watchlisted date."
+          }, selfUser.id);
+          continue;
+        }
+
+        const decision = item.type === "movie"
+          ? await this.shouldRemoveWatchedMovie(item, plex, addedAtMs, selfServerAccountId)
+          : await this.shouldRemoveWatchedShow(item, plex, addedAtMs, selfServerAccountId);
+
+        if (!decision.remove) {
+          skipped++;
+          logDecision("info", "Watchlist Cleanup skipped item", item, {
+            reason: decision.reason,
+            message: decision.message,
+            ...decision.meta
+          });
+          this.db.addSyncRunItem(runId, "watchlist.cleanup.skipped", "success", {
+            ...details,
+            reason: decision.reason,
+            message: decision.message,
+            ...decision.meta
+          }, selfUser.id);
+          continue;
+        }
+
+        await plex.removeFromWatchlist(item, owner.plexToken);
+        const deletedRows = this.db.deleteWatchlistItem(selfUser.id, item.plexItemId);
+        removed++;
+        logDecision("info", "Watchlist Cleanup removed item", item, {
+          reason: decision.reason,
+          message: decision.message,
+          deletedRows,
+          ...decision.meta
+        });
+        this.db.addSyncRunItem(runId, "watchlist.cleanup.removed", "success", {
+          ...details,
+          reason: decision.reason,
+          message: decision.message,
+          deletedRows,
+          ...decision.meta
+        }, selfUser.id);
+      }
+
+      const summary = removed > 0
+        ? `Watchlist Cleanup removed ${removed} item${removed !== 1 ? "s" : ""}; skipped ${skipped}.`
+        : `Watchlist Cleanup skipped: no watched items to remove (${skipped} checked).`;
+      this.db.completeSyncRun(runId, "success", summary, null);
+      this.logger.info("Watchlist Cleanup complete", { removed, skipped, durationMs: Date.now() - startedAt });
+
+      if (removed > 0) {
+        this.logger.info("Collection publish queued after Watchlist Cleanup removed items", { removed });
+        await this.runPublishPass();
+      }
+
+      return { removed, skipped };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.db.addSyncRunItem(runId, "watchlist.cleanup.failed", "error", { message });
+      this.db.completeSyncRun(runId, "error", "Watchlist Cleanup failed.", message);
+      this.logger.error("Watchlist Cleanup failed", { message, durationMs: Date.now() - startedAt });
+      throw error;
+    }
+  }
+
+  private async resolveSelfServerAccountId(plex: PlexIntegration, selfUsername: string): Promise<string> {
+    const accounts = await plex.fetchServerAccounts();
+    const selfAccount = accounts.find((account) => account.name.toLowerCase() === selfUsername.toLowerCase());
+    if (!selfAccount) {
+      throw new Error(`Unable to resolve Plex server account ID for self user "${selfUsername}".`);
+    }
+    return selfAccount.id;
+  }
+
+  private async shouldRemoveWatchedMovie(item: WatchlistItem, plex: PlexIntegration, addedAtMs: number, selfServerAccountId: string) {
+    const viewedAt = await plex.fetchPlayHistoryViewedAt(item.matchedRatingKey!, selfServerAccountId);
+    const watchedAfter = viewedAt.filter((value) => Date.parse(value) > addedAtMs);
+
+    if (watchedAfter.length > 0) {
+      return {
+        remove: true as const,
+        reason: "watched-after-watchlist-date",
+        message: "Movie was watched after it was added to the watchlist.",
+        meta: { watchedAfter }
+      };
+    }
+
+    return {
+      remove: false as const,
+      reason: viewedAt.length > 0 ? "watched-before-watchlist-date" : "not-watched",
+      message: viewedAt.length > 0
+        ? "Movie was only watched before it was added to the watchlist."
+        : "Movie has no completed play history.",
+      meta: { viewedAt }
+    };
+  }
+
+  private async shouldRemoveWatchedShow(item: WatchlistItem, plex: PlexIntegration, addedAtMs: number, selfServerAccountId: string) {
+    const [localEpisodes, discoverEpisodes] = await Promise.all([
+      plex.fetchLocalShowEpisodes(item.matchedRatingKey!),
+      plex.fetchDiscoverShowEpisodes(item)
+    ]);
+
+    if (!discoverEpisodes?.length) {
+      return {
+        remove: false as const,
+        reason: "discover-data-incomplete",
+        message: "Plex Discover did not return a complete non-special episode list.",
+        meta: { localEpisodeCount: localEpisodes.length }
+      };
+    }
+
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const uncertainEpisode = discoverEpisodes.find((episode) => !isPastOrTodayDate(episode.originallyAvailableAt, today));
+    if (uncertainEpisode) {
+      return {
+        remove: false as const,
+        reason: "future-or-uncertain-episodes",
+        message: "Show has future, current-season, or uncertain Discover episode data.",
+        meta: { episode: uncertainEpisode, expectedEpisodeCount: discoverEpisodes.length }
+      };
+    }
+
+    const localBySeasonEpisode = new Map(localEpisodes.map((episode) => [
+      buildEpisodeKey(episode),
+      episode
+    ]));
+
+    const missingLocal = discoverEpisodes.filter((episode) => !localBySeasonEpisode.has(buildEpisodeKey(episode)));
+    if (missingLocal.length > 0) {
+      return {
+        remove: false as const,
+        reason: "local-episodes-incomplete",
+        message: "Not every expected non-special episode exists in the local Plex library.",
+        meta: { missingLocalCount: missingLocal.length, expectedEpisodeCount: discoverEpisodes.length }
+      };
+    }
+
+    const watchedEpisodeKeys = new Set<string>();
+    const watchedByMetadataKeys = new Set<string>();
+    const historyLimit = pLimit(PLEX_SYNC_CONCURRENCY);
+    await Promise.all(discoverEpisodes.map((episode) =>
+      historyLimit(async () => {
+        const localEpisode = localBySeasonEpisode.get(buildEpisodeKey(episode));
+        if (!localEpisode) return;
+        const viewedAt = await plex.fetchPlayHistoryViewedAt(localEpisode.ratingKey, selfServerAccountId);
+        if (viewedAt.some((value) => Date.parse(value) > addedAtMs)) {
+          watchedEpisodeKeys.add(buildEpisodeKey(episode));
+          return;
+        }
+        if ((localEpisode.viewCount ?? 0) > 0 && localEpisode.lastViewedAt && Date.parse(localEpisode.lastViewedAt) > addedAtMs) {
+          watchedEpisodeKeys.add(buildEpisodeKey(episode));
+          watchedByMetadataKeys.add(buildEpisodeKey(episode));
+        }
+      })
+    ));
+
+    if (watchedEpisodeKeys.size === discoverEpisodes.length) {
+      return {
+        remove: true as const,
+        reason: "all-episodes-watched-after-watchlist-date",
+        message: "Every required non-special episode was watched after the show was added to the watchlist.",
+        meta: {
+          watchedEpisodeCount: watchedEpisodeKeys.size,
+          expectedEpisodeCount: discoverEpisodes.length,
+          watchedByMetadataCount: watchedByMetadataKeys.size
+        }
+      };
+    }
+
+    return {
+      remove: false as const,
+      reason: watchedEpisodeKeys.size > 0 ? "partially-watched-after-watchlist-date" : "watched-before-watchlist-date",
+      message: watchedEpisodeKeys.size > 0
+        ? "Only some required non-special episodes were watched after the watchlist date."
+        : "No required non-special episodes were watched after the watchlist date.",
+      meta: {
+        watchedEpisodeCount: watchedEpisodeKeys.size,
+        expectedEpisodeCount: discoverEpisodes.length,
+        watchedByMetadataCount: watchedByMetadataKeys.size
+      }
+    };
   }
 
   // ---------------------------------------------------------------------------

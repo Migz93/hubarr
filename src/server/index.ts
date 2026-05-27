@@ -132,6 +132,15 @@ scheduler.registerRecurringJob({
   })
 });
 
+scheduler.registerRecurringJob({
+  id: "watchlist-cleanup",
+  intervalMs: appSettings.watchlistCleanupIntervalMinutes * 60 * 1000,
+  enabled: appSettings.watchlistCleanupMovies || appSettings.watchlistCleanupShows,
+  task: requiresSetup(async () => {
+    await services.runWatchlistCleanup();
+  })
+});
+
 if (setupReady && appSettings.rssEnabled) {
   services.initRss().catch((error) => {
     logger.warn("RSS initialization failed at startup", {

@@ -69,6 +69,9 @@ export type WatchlistSortBy = "added-desc" | "added-asc" | "title-asc" | "title-
 export interface AppSettings {
   reconciliationIntervalMinutes: number;
   activityCacheFetchIntervalMinutes: number;
+  watchlistCleanupIntervalMinutes: number;
+  watchlistCleanupMovies: boolean;
+  watchlistCleanupShows: boolean;
   rssPollIntervalSeconds: number;
   rssEnabled: boolean;
   trackAllUsers: boolean;
@@ -226,7 +229,7 @@ export interface PlexCollectionRecord {
 
 export interface SyncRun {
   id: number;
-  kind: "full" | "user" | "rss" | "publish" | "seerr";
+  kind: "full" | "user" | "rss" | "publish" | "seerr" | "watchlist-cleanup";
   status: SyncStatus;
   startedAt: string;
   completedAt: string | null;
@@ -355,6 +358,7 @@ export interface JobInfo {
   id: string;
   name: string;
   intervalDescription: string;
+  isEnabled: boolean;
   nextRunAt: string | null;
   nextRunLabel?: string;
   lastRunAt: string | null;
@@ -383,6 +387,10 @@ export interface SettingsResponse {
     reconciliationIntervalMinutes: number;
     rssPollIntervalSeconds: number;
     rssEnabled: boolean;
+  };
+  watchlistCleanup: {
+    movieEnabled: boolean;
+    showEnabled: boolean;
   };
   plex: PlexSettingsView | null;
   collections: {

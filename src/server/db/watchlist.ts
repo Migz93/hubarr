@@ -301,6 +301,11 @@ export function clearMatchedRatingKeyByValue(db: Database.Database, ratingKey: s
   ).run(ratingKey);
 }
 
+export function deleteWatchlistItem(db: Database.Database, userId: number, plexItemId: string): number {
+  const result = db.prepare("DELETE FROM watchlist_cache WHERE user_id = ? AND plex_item_id = ?").run(userId, plexItemId);
+  return result.changes;
+}
+
 export function upsertWatchlistItem(db: Database.Database, userId: number, item: WatchlistItem): void {
   const discoverKey = item.discoverKey ?? null;
   db.prepare(`

@@ -631,6 +631,7 @@ const JOB_PRESETS: Record<string, { unit: "minutes" | "hours"; values: number[] 
   "full-sync": { unit: "minutes", values: [5, 10, 15, 20, 30, 60, 120, 240, 360, 720, 1440] },
   "rss-sync":  { unit: "minutes", values: [1, 2, 5, 10, 15, 30] },
   "activity-cache-fetch": { unit: "minutes", values: [30, 60, 120, 240, 360, 720, 1440] },
+  "watchlist-cleanup": { unit: "minutes", values: [15, 30, 60, 120, 240, 360, 720, 1440] },
 };
 
 const JOBS_FAST_REFRESH_MS = 2_500;
@@ -856,15 +857,16 @@ function JobsTab() {
                       <div className="flex items-center justify-end gap-2">
                         {JOB_PRESETS[job.id] && (
                           <button
+                            disabled={!job.isEnabled}
                             onClick={() => openEdit(job)}
-                            className="flex items-center gap-1.5 text-on-surface-variant hover:text-on-surface hover:bg-background-container-high text-xs font-medium rounded-lg px-3 py-1.5 transition-colors border border-outline-variant/20"
+                            className="flex items-center gap-1.5 text-on-surface-variant hover:text-on-surface hover:bg-background-container-high disabled:opacity-50 disabled:hover:bg-transparent text-xs font-medium rounded-lg px-3 py-1.5 transition-colors border border-outline-variant/20"
                           >
                             <Pencil size={13} />
                             Edit
                           </button>
                         )}
                         <button
-                          disabled={runningId === job.id || job.isRunning}
+                          disabled={!job.isEnabled || runningId === job.id || job.isRunning}
                           onClick={() => void runJob(job.id)}
                           className="flex items-center gap-1.5 bg-primary-dim hover:bg-primary disabled:opacity-50 text-on-surface text-xs font-medium rounded-lg px-3 py-1.5 transition-colors border border-primary-dim"
                         >

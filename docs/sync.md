@@ -6,6 +6,7 @@ Hubarr uses separate background jobs so each job has one clear responsibility:
 
 - `Watchlist RSS Sync`
 - `Watchlist GraphQL Sync`
+- `Watchlist Cleanup`
 - `Activity Cache Fetch`
 - `Plex Recently Added Scan`
 - `Plex Full Library Scan`
@@ -14,8 +15,8 @@ Hubarr uses separate background jobs so each job has one clear responsibility:
 - `Plex Refresh Token`
 - `Maintenance Tasks`
 
-For a detailed explanation of how the three watchlist-specific jobs work together
-— including date resolution, RSS deduplication, and the activity feed cache —
+For a detailed explanation of how the watchlist-specific jobs work together
+— including date resolution, RSS deduplication, cleanup, and the activity feed cache —
 see [docs/watchlist.md](watchlist.md).
 
 ---
@@ -67,6 +68,7 @@ The most important data groups are:
 
 - `Watchlist RSS Sync` interval
 - `Watchlist GraphQL Sync` interval
+- `Watchlist Cleanup` interval and enablement
 - `Activity Cache Fetch` interval
 - `Collection Sync` interval
 - `Plex Recently Added Scan` interval

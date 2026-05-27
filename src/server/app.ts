@@ -847,6 +847,10 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         rssPollIntervalSeconds: app.rssPollIntervalSeconds,
         rssEnabled: app.rssEnabled
       },
+      watchlistCleanup: {
+        movieEnabled: app.watchlistCleanupMovies,
+        showEnabled: app.watchlistCleanupShows
+      },
       plex: plexView,
       collections: {
         collectionNamePattern: app.collectionNamePattern,
@@ -874,6 +878,10 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         reconciliationIntervalMinutes?: number;
         rssPollIntervalSeconds?: number;
         rssEnabled?: boolean;
+      };
+      watchlistCleanup?: {
+        movieEnabled?: boolean;
+        showEnabled?: boolean;
       };
     };
 
@@ -935,6 +943,15 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       }
     }
 
+    if (body.watchlistCleanup) {
+      if (typeof body.watchlistCleanup.movieEnabled === "boolean") {
+        patch.watchlistCleanupMovies = body.watchlistCleanup.movieEnabled;
+      }
+      if (typeof body.watchlistCleanup.showEnabled === "boolean") {
+        patch.watchlistCleanupShows = body.watchlistCleanup.showEnabled;
+      }
+    }
+
     const updated = services.updateSettings(patch);
 
     scheduler?.updateJob("full-sync", {
@@ -944,6 +961,10 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     scheduler?.updateJob("rss-sync", {
       intervalMs: updated.rssPollIntervalSeconds * 1000,
       enabled: updated.rssEnabled
+    });
+    scheduler?.updateJob("watchlist-cleanup", {
+      intervalMs: updated.watchlistCleanupIntervalMinutes * 60 * 1000,
+      enabled: updated.watchlistCleanupMovies || updated.watchlistCleanupShows
     });
 
     logger.info("Application settings updated", {
@@ -1085,13 +1106,16 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     const lastPublish = recentRuns.find((r) => r.kind === "publish" && r.completedAt);
     const lastRss = recentRuns.find((r) => r.kind === "rss" && r.completedAt);
     const lastSeerr = recentRuns.find((r) => r.kind === "seerr" && r.completedAt);
+    const lastCleanup = recentRuns.find((r) => r.kind === "watchlist-cleanup" && r.completedAt);
     const seerrJobState = db.getJobRunState("seerr-request-sync");
+    const cleanupEnabled = settings.watchlistCleanupMovies || settings.watchlistCleanupShows;
 
     const jobs: JobInfo[] = [
       {
         id: "collection-publish",
         name: "Collection Sync",
         intervalDescription: `Every ${settings.collectionPublishIntervalMinutes} minutes`,
+        isEnabled: true,
         isRunning: scheduler?.isRunning("collection-publish") ?? false,
         nextRunAt:
           scheduler?.getNextRunAt("collection-publish") ??
@@ -1108,6 +1132,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "full-sync",
         name: "Watchlist GraphQL Sync",
         intervalDescription: `Every ${settings.reconciliationIntervalMinutes} minutes`,
+        isEnabled: true,
         isRunning: scheduler?.isRunning("full-sync") ?? false,
         nextRunAt:
           scheduler?.getNextRunAt("full-sync") ??
@@ -1123,6 +1148,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "plex-recently-added-scan",
         name: "Plex Recently Added Scan",
         intervalDescription: `Every ${settings.plexRecentlyAddedScanIntervalMinutes} minutes`,
+        isEnabled: true,
         isRunning: scheduler?.isRunning("plex-recently-added-scan") ?? false,
         nextRunAt: scheduler?.getNextRunAt("plex-recently-added-scan") ?? null,
         lastRunAt: scheduler?.getLastRunAt("plex-recently-added-scan") ?? null,
@@ -1132,6 +1158,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "plex-full-library-scan",
         name: "Plex Full Library Scan",
         intervalDescription: `Every ${settings.plexFullLibraryScanIntervalMinutes / 60} hour${settings.plexFullLibraryScanIntervalMinutes / 60 !== 1 ? "s" : ""}`,
+        isEnabled: true,
         isRunning: scheduler?.isRunning("plex-full-library-scan") ?? false,
         nextRunAt: scheduler?.getNextRunAt("plex-full-library-scan") ?? null,
         lastRunAt: scheduler?.getLastRunAt("plex-full-library-scan") ?? null,
@@ -1141,6 +1168,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "plex-refresh-token",
         name: "Plex Refresh Token",
         intervalDescription: "Daily at 5:00 AM",
+        isEnabled: true,
         isRunning: scheduler?.isRunning("plex-refresh-token") ?? false,
         nextRunAt: scheduler?.getNextRunAt("plex-refresh-token") ?? null,
         lastRunAt: scheduler?.getLastRunAt("plex-refresh-token") ?? null,
@@ -1150,6 +1178,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "users-discover",
         name: "Refresh Users",
         intervalDescription: "Daily at 5:00 AM",
+        isEnabled: true,
         isRunning: scheduler?.isRunning("users-discover") ?? false,
         nextRunAt: scheduler?.getNextRunAt("users-discover") ?? null,
         lastRunAt: scheduler?.getLastRunAt("users-discover") ?? null,
@@ -1159,6 +1188,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "maintenance-tasks",
         name: "Maintenance Tasks",
         intervalDescription: "Daily at 5:30 AM",
+        isEnabled: true,
         isRunning: scheduler?.isRunning("maintenance-tasks") ?? false,
         nextRunAt: scheduler?.getNextRunAt("maintenance-tasks") ?? null,
         lastRunAt: scheduler?.getLastRunAt("maintenance-tasks") ?? null,
@@ -1170,6 +1200,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         intervalDescription: settings.rssEnabled
           ? `Every ${settings.rssPollIntervalSeconds / 60} minute${settings.rssPollIntervalSeconds / 60 !== 1 ? "s" : ""}`
           : "Disabled",
+        isEnabled: settings.rssEnabled,
         isRunning: scheduler?.isRunning("rss-sync") ?? false,
         nextRunAt: scheduler?.getNextRunAt("rss-sync") ?? null,
         lastRunAt: lastRss?.completedAt ?? null,
@@ -1179,10 +1210,23 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "activity-cache-fetch",
         name: "Watchlist Activity Cache",
         intervalDescription: `Every ${settings.activityCacheFetchIntervalMinutes} minutes`,
+        isEnabled: true,
         isRunning: scheduler?.isRunning("activity-cache-fetch") ?? false,
         nextRunAt: scheduler?.getNextRunAt("activity-cache-fetch") ?? null,
         lastRunAt: scheduler?.getLastRunAt("activity-cache-fetch") ?? null,
         lastRunStatus: scheduler?.getLastRunStatus("activity-cache-fetch") ?? null
+      },
+      {
+        id: "watchlist-cleanup",
+        name: "Watchlist Cleanup",
+        intervalDescription: cleanupEnabled
+          ? `Every ${settings.watchlistCleanupIntervalMinutes} minutes`
+          : "Disabled",
+        isEnabled: cleanupEnabled,
+        isRunning: scheduler?.isRunning("watchlist-cleanup") ?? false,
+        nextRunAt: scheduler?.getNextRunAt("watchlist-cleanup") ?? null,
+        lastRunAt: lastCleanup?.completedAt ?? null,
+        lastRunStatus: lastCleanup?.status === "success" || lastCleanup?.status === "error" ? lastCleanup.status : null
       }
     ];
 
@@ -1191,6 +1235,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         id: "seerr-request-sync",
         name: "Seerr Request Sync",
         intervalDescription: "Manual",
+        isEnabled: true,
         isRunning: services.isSeerrRequestSyncRunning(),
         nextRunAt: null,
         nextRunLabel: "Manual",
@@ -1282,6 +1327,18 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
           logger.warn("Manual activity cache fetch failed", { error: err instanceof Error ? err.message : String(err) });
         });
         res.json({ triggered: true });
+      } else if (jobId === "watchlist-cleanup") {
+        const settings = db.getAppSettings();
+        if (!settings.watchlistCleanupMovies && !settings.watchlistCleanupShows) {
+          res.status(400).json({ error: "Watchlist Cleanup is disabled." });
+          return;
+        }
+        const triggered = scheduler?.runNow("watchlist-cleanup") ?? false;
+        if (!triggered) {
+          res.status(404).json({ error: "Unknown job." });
+          return;
+        }
+        res.json({ triggered: true });
       } else if (jobId === "seerr-request-sync") {
         services.runSeerrRequestSync({ mode: "all", triggeredBy: "manual" }).catch((err) => {
           logger.warn("Manual Seerr request sync failed", { error: err instanceof Error ? err.message : String(err) });
@@ -1325,6 +1382,13 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       scheduler?.updateJob("plex-full-library-scan", {
         intervalMs: updated.plexFullLibraryScanIntervalMinutes * 60 * 1000,
         enabled: true
+      });
+      res.json({ updated: true });
+    } else if (jobId === "watchlist-cleanup" && body.intervalMinutes) {
+      const updated = db.updateAppSettings({ watchlistCleanupIntervalMinutes: body.intervalMinutes });
+      scheduler?.updateJob("watchlist-cleanup", {
+        intervalMs: updated.watchlistCleanupIntervalMinutes * 60 * 1000,
+        enabled: updated.watchlistCleanupMovies || updated.watchlistCleanupShows
       });
       res.json({ updated: true });
     } else if (jobId === "rss-sync" && body.intervalMinutes) {

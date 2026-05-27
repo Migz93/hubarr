@@ -241,6 +241,20 @@ export interface PlexLibraryItemMatch {
   guids: string[];
 }
 
+export interface PlexEpisodeRef {
+  ratingKey: string;
+  seasonIndex: number;
+  episodeIndex: number;
+  viewCount: number | null;
+  lastViewedAt: string | null;
+}
+
+export interface PlexDiscoverEpisodeRef {
+  seasonIndex: number;
+  episodeIndex: number;
+  originallyAvailableAt: string | null;
+}
+
 const COMMUNITY_API_URL = "https://community.plex.tv/api";
 const DISCOVER_ORIGIN = "https://discover.provider.plex.tv";
 const DISCOVER_RSS_PATH = "/rss";
@@ -297,15 +311,25 @@ export class PlexIntegration {
   }
 
   private buildDiscoverMetadataUrl(rawEndpoint: string) {
-    const match = rawEndpoint.trim().match(/^\/?library\/metadata\/(.+)$/);
+    const match = rawEndpoint.trim().match(/^\/?library\/metadata\/([a-f0-9]{24})(\/children)?$/i);
     if (!match) {
       throw new Error(`Unsupported discover metadata endpoint: ${rawEndpoint}`);
     }
 
     const url = new URL(DISCOVER_ORIGIN);
-    url.pathname = `/library/metadata/${this.normalizeMetadataId(match[1])}`;
+    url.pathname = `/library/metadata/${this.normalizeMetadataId(match[1])}${match[2] ?? ""}`;
     url.searchParams.set("format", "json");
     return url;
+  }
+
+  private getDiscoverMetadataEndpoint(item: Pick<WatchlistItem, "plexItemId" | "discoverKey">): string | null {
+    const plexItemId = item.plexItemId.trim();
+    const plexGuidMatch = plexItemId.match(/^plex:\/\/(?:movie|show)\/([a-f0-9]{24})$/i);
+    const plexGuidHex = plexGuidMatch
+      ? plexGuidMatch[1].toLowerCase()
+      : (/^[a-f0-9]{24}$/i.test(plexItemId) ? plexItemId.toLowerCase() : null);
+
+    return item.discoverKey?.replace(/^\//, "") ?? (plexGuidHex ? `library/metadata/${plexGuidHex}` : null);
   }
 
   private buildDiscoverRssRequestUrl(rawUrl: string) {
@@ -496,17 +520,9 @@ export class PlexIntegration {
     // (extract the hex part) or a bare 24-char hex. RSS items temporarily use a
     // stableKey as plexItemId before enrichment resolves the real GUID, and that
     // format is not a valid discover endpoint path.
-    const plexGuidHex = (() => {
-      const plexItemId = item.plexItemId.trim();
-      const m = plexItemId.match(/^plex:\/\/(?:movie|show)\/([a-f0-9]{24})$/i);
-      if (m) return m[1].toLowerCase();
-      if (/^[a-f0-9]{24}$/i.test(plexItemId)) return plexItemId.toLowerCase();
-      return null;
-    })();
-
     const endpoints = Array.from(new Set([
       item.discoverKey ? item.discoverKey.replace(/^\//, "") : null,
-      plexGuidHex ? `library/metadata/${plexGuidHex}` : null,
+      this.getDiscoverMetadataEndpoint(item),
     ].filter((endpoint): endpoint is string => Boolean(endpoint))));
 
     let lastErr: Error | null = null;
@@ -632,6 +648,165 @@ export class PlexIntegration {
       }
     }
     return null;
+  }
+
+  async fetchPlayHistoryViewedAt(ratingKey: string, accountId?: string): Promise<string[]> {
+    const params = new URLSearchParams({ metadataItemID: ratingKey });
+    const response = await this.requestServer<{
+      MediaContainer?: {
+        Metadata?: Array<{ viewedAt?: string | number; accountID?: string | number }>;
+      };
+    }>(`/status/sessions/history/all?${params.toString()}`);
+
+    return (response.MediaContainer?.Metadata ?? [])
+      .filter((entry) => accountId === undefined || String(entry.accountID ?? "") === accountId)
+      .map((entry) => {
+        if (entry.viewedAt === undefined || entry.viewedAt === null) return null;
+        const seconds = Number(entry.viewedAt);
+        if (!Number.isFinite(seconds)) return null;
+        return new Date(seconds * 1000).toISOString();
+      })
+      .filter((value): value is string => Boolean(value));
+  }
+
+  async fetchServerAccounts(): Promise<Array<{ id: string; name: string }>> {
+    const response = await this.requestServer<{
+      MediaContainer?: {
+        Account?: Array<{ id?: string | number; name?: string }>;
+      };
+    }>("/accounts");
+
+    return (response.MediaContainer?.Account ?? [])
+      .map((account) => ({
+        id: String(account.id ?? ""),
+        name: account.name ?? ""
+      }))
+      .filter((account) => account.id && account.name);
+  }
+
+  async fetchLocalShowEpisodes(showRatingKey: string): Promise<PlexEpisodeRef[]> {
+    const response = await this.requestServer<{
+      MediaContainer?: {
+        Metadata?: Array<{
+          ratingKey?: string;
+          parentIndex?: string | number;
+          index?: string | number;
+          viewCount?: string | number;
+          lastViewedAt?: string | number;
+        }>;
+      };
+    }>(`/library/metadata/${encodeURIComponent(showRatingKey)}/allLeaves`);
+
+    return (response.MediaContainer?.Metadata ?? [])
+      .map((episode) => {
+        const ratingKey = episode.ratingKey;
+        const seasonIndex = Number(episode.parentIndex);
+        const episodeIndex = Number(episode.index);
+        if (!ratingKey || !Number.isFinite(seasonIndex) || !Number.isFinite(episodeIndex)) return null;
+        const lastViewedAtSeconds = Number(episode.lastViewedAt);
+        return {
+          ratingKey,
+          seasonIndex,
+          episodeIndex,
+          viewCount: episode.viewCount === undefined ? null : Number(episode.viewCount),
+          lastViewedAt: Number.isFinite(lastViewedAtSeconds) ? new Date(lastViewedAtSeconds * 1000).toISOString() : null
+        };
+      })
+      .filter((episode): episode is PlexEpisodeRef => Boolean(episode));
+  }
+
+  async fetchDiscoverShowEpisodes(item: Pick<WatchlistItem, "plexItemId" | "discoverKey">): Promise<PlexDiscoverEpisodeRef[] | null> {
+    const endpoint = this.getDiscoverMetadataEndpoint(item);
+    if (!endpoint) return null;
+
+    const fetchChildren = async (parentEndpoint: string) => {
+      const normalizedEndpoint = parentEndpoint.replace(/\/$/, "");
+      const childrenEndpoint = normalizedEndpoint.endsWith("/children")
+        ? normalizedEndpoint
+        : `${normalizedEndpoint}/children`;
+      const response = await fetch(this.buildDiscoverMetadataUrl(childrenEndpoint), {
+        headers: {
+          "User-Agent": PLEX_USER_AGENT,
+          "X-Plex-Token": this.settings.token,
+          Accept: "application/json"
+        }
+      });
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        throw new Error(`Discover children request failed with HTTP ${response.status}: ${body}`);
+      }
+      return (await response.json()) as {
+        MediaContainer?: {
+          Metadata?: Array<{
+            key?: string;
+            type?: string;
+            index?: number;
+            leafCount?: number;
+            originallyAvailableAt?: string;
+          }>;
+        };
+      };
+    };
+
+    const seasonsJson = await fetchChildren(endpoint);
+    const seasons = (seasonsJson.MediaContainer?.Metadata ?? [])
+      .filter((season) => season.type === "season" && Number(season.index) > 0 && season.key);
+
+    if (seasons.length === 0) return null;
+
+    const episodes: PlexDiscoverEpisodeRef[] = [];
+    for (const season of seasons) {
+      const seasonIndex = Number(season.index);
+      const seasonJson = await fetchChildren(season.key!);
+      const seasonEpisodes = (seasonJson.MediaContainer?.Metadata ?? [])
+        .filter((episode) => episode.type === "episode");
+
+      if (typeof season.leafCount === "number" && season.leafCount !== seasonEpisodes.length) {
+        this.logger.warn("Discover episode data did not match season leaf count", {
+          seasonIndex,
+          leafCount: season.leafCount,
+          episodeChildren: seasonEpisodes.length
+        });
+        return null;
+      }
+
+      for (const episode of seasonEpisodes) {
+        const episodeIndex = Number(episode.index);
+        if (!Number.isFinite(seasonIndex) || !Number.isFinite(episodeIndex)) return null;
+        episodes.push({
+          seasonIndex,
+          episodeIndex,
+          originallyAvailableAt: episode.originallyAvailableAt ?? null
+        });
+      }
+    }
+
+    return episodes;
+  }
+
+  async removeFromWatchlist(item: Pick<WatchlistItem, "plexItemId" | "discoverKey" | "title">, ownerToken: string): Promise<void> {
+    const endpoint = this.getDiscoverMetadataEndpoint(item);
+    const match = endpoint?.match(/^library\/metadata\/([a-f0-9]{24})$/i);
+    const ratingKey = match?.[1];
+    if (!ratingKey) {
+      throw new Error(`Cannot remove "${item.title}" from watchlist because it has no Discover rating key.`);
+    }
+
+    const url = new URL(`${DISCOVER_ORIGIN}/actions/removeFromWatchlist`);
+    url.searchParams.set("ratingKey", ratingKey);
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "User-Agent": PLEX_USER_AGENT,
+        "X-Plex-Token": ownerToken,
+        Accept: "application/json"
+      }
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`Plex watchlist removal failed: ${response.status} ${response.statusText}. Response: ${body}`);
+    }
   }
 
   /**
