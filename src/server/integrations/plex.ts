@@ -4,6 +4,7 @@ import type { RssFeedItem } from "../rss-cache.js";
 import type { Logger } from "../logger.js";
 import { PLEX_USER_AGENT } from "../version.js";
 import type { CollectionSortOrder, UserRecord, MediaType, PlexSettingsInput, RichItemMetadata, SearchCandidate, WatchlistItem } from "../../shared/types.js";
+import { buildOrderMismatchMeta, ratingKeyOrderMatches } from "../utils/collection-order.js";
 
 export interface ResolvedWatchlistItem extends WatchlistItem {
   searchCandidates?: SearchCandidate[];
@@ -266,7 +267,7 @@ const PLEX_TV_RESOURCES_URL = "https://plex.tv/api/v2/resources";
 
 const RSS_PLEX_UUID_PATH = /^\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const COLLECTION_REORDER_MAX_PASSES = 8;
-const COLLECTION_REORDER_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000, 12_000];
+const COLLECTION_REORDER_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000, 12_000, 16_000];
 
 // Sentinel value used when no real watchlist date can be determined.
 // Stored in the DB so it can be overwritten later if a real date is found.
@@ -274,25 +275,6 @@ export const WATCHLIST_DATE_UNKNOWN_SENTINEL = "2001-01-01T00:00:00.000Z";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function ratingKeyOrderMatches(actual: string[], expected: string[]): boolean {
-  return actual.length === expected.length && actual.every((key, i) => key === expected[i]);
-}
-
-function buildOrderMismatchMeta(actual: string[], expected: string[]) {
-  const mismatchIndex = expected.findIndex((key, i) => actual[i] !== key);
-  const firstMismatchIndex = mismatchIndex === -1 && actual.length !== expected.length
-    ? Math.min(actual.length, expected.length)
-    : mismatchIndex;
-
-  return {
-    expectedCount: expected.length,
-    actualCount: actual.length,
-    firstMismatchIndex,
-    expectedSample: expected.slice(0, 8),
-    actualSample: actual.slice(0, 8)
-  };
 }
 
 export class PlexIntegration {

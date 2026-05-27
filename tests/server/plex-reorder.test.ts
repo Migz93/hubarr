@@ -26,7 +26,7 @@ function moveItem(order: string[], itemKey: string, afterKey: string | null): st
 
   const afterIndex = withoutItem.indexOf(afterKey);
   if (afterIndex === -1) {
-    return withoutItem;
+    throw new Error(`afterKey not found in test order: ${afterKey} for item ${itemKey}`);
   }
 
   return [
@@ -66,6 +66,8 @@ test("reorderCollectionItems retries progressively until Plex reports the desire
   const result = await plex.reorderCollectionItems("collection-1", ["a", "b", "c"]);
 
   assert.equal(result.staleKeys.size, 0);
+  assert.equal(result.converged, true);
+  assert.deepEqual(result.finalOrder, ["a", "b", "c"]);
   assert.deepEqual(order, ["a", "b", "c"]);
   assert.equal(moveCalls, 2);
   assert.ok(entries.some((entry) => entry.message === "Collection order still mismatched after item move"));
@@ -96,8 +98,11 @@ test("reorderCollectionItems moves only the first misplaced item when that conve
     return {};
   };
 
-  await plex.reorderCollectionItems("collection-1", ["a", "b", "c"]);
+  const result = await plex.reorderCollectionItems("collection-1", ["a", "b", "c"]);
 
+  assert.equal(result.staleKeys.size, 0);
+  assert.equal(result.converged, true);
+  assert.deepEqual(result.finalOrder, ["a", "b", "c"]);
   assert.deepEqual(order, ["a", "b", "c"]);
   assert.deepEqual(moved, [{ itemKey: "b", afterKey: "a" }]);
 });

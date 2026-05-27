@@ -19,6 +19,7 @@ import { Logger } from "./logger.js";
 import { PlexIntegration, WATCHLIST_DATE_UNKNOWN_SENTINEL, type PlexDiscoverEpisodeRef, type PlexEpisodeRef, type PlexLibraryItemMatch, type ResolvedWatchlistItem } from "./integrations/plex.js";
 import { SeerrIntegration, extractTmdbId } from "./integrations/seerr.js";
 import { RssCache, type RssFeedItem } from "./rss-cache.js";
+import { buildOrderMismatchMeta, ratingKeyOrderMatches } from "./utils/collection-order.js";
 
 const PLEX_SYNC_CONCURRENCY = 3;
 
@@ -50,25 +51,6 @@ function computePublishStateHash(params: {
 
 function isCustomCollectionSort(sortOrder: CollectionSortOrder): boolean {
   return sortOrder !== "title";
-}
-
-function ratingKeyOrderMatches(actual: string[], expected: string[]): boolean {
-  return actual.length === expected.length && actual.every((key, i) => key === expected[i]);
-}
-
-function buildOrderMismatchMeta(actual: string[], expected: string[]) {
-  const mismatchIndex = expected.findIndex((key, i) => actual[i] !== key);
-  const firstMismatchIndex = mismatchIndex === -1 && actual.length !== expected.length
-    ? Math.min(actual.length, expected.length)
-    : mismatchIndex;
-
-  return {
-    expectedCount: expected.length,
-    actualCount: actual.length,
-    firstMismatchIndex,
-    expectedSample: expected.slice(0, 8),
-    actualSample: actual.slice(0, 8)
-  };
 }
 
 type SeerrRequestSyncScope =
