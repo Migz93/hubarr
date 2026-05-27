@@ -313,7 +313,7 @@ function formatStepLabel(item: SyncRunItem): string {
 
   if (item.action === "collection.publish.followup") {
     const details = item.details as { message?: string } | null;
-    return details?.message ?? "Triggered collection publish after full sync";
+    return details?.message ?? "Triggered collection publish";
   }
 
   return ACTION_LABELS[item.action] ?? item.action;

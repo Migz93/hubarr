@@ -754,7 +754,8 @@ export class PlexIntegration {
 
     if (seasons.length === 0) return null;
 
-    const seasonResults = await Promise.all(seasons.map(async (season) => {
+    const seasonResults: Array<PlexDiscoverEpisodeRef[] | null> = [];
+    for (const season of seasons) {
       const seasonIndex = Number(season.index);
       const seasonJson = await fetchChildren(season.key!);
       const seasonEpisodes = (seasonJson.MediaContainer?.Metadata ?? [])
@@ -766,21 +767,23 @@ export class PlexIntegration {
           leafCount: season.leafCount,
           episodeChildren: seasonEpisodes.length
         });
-        return null;
+        seasonResults.push(null);
+        continue;
       }
 
       const episodes: PlexDiscoverEpisodeRef[] = [];
+      let invalid = false;
       for (const episode of seasonEpisodes) {
         const episodeIndex = Number(episode.index);
-        if (!Number.isFinite(seasonIndex) || !Number.isFinite(episodeIndex)) return null;
+        if (!Number.isFinite(seasonIndex) || !Number.isFinite(episodeIndex)) { invalid = true; break; }
         episodes.push({
           seasonIndex,
           episodeIndex,
           originallyAvailableAt: episode.originallyAvailableAt ?? null
         });
       }
-      return episodes;
-    }));
+      seasonResults.push(invalid ? null : episodes);
+    }
 
     if (seasonResults.some((result) => result === null)) return null;
     return seasonResults.flatMap((result) => result ?? []);

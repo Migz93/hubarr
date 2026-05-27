@@ -85,6 +85,7 @@ test.describe("Users page structure", () => {
     await expect(friendCard).toBeVisible();
     await friendCard.getByTitle("Edit user").click();
 
+    await expect(modal.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
     await expect(modal.getByRole("button", { name: "Watchlist", exact: true })).toHaveCount(0);
   });
 

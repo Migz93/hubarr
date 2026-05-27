@@ -1392,8 +1392,18 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         enabled: true
       });
       res.json({ updated: true });
-    } else if (jobId === "watchlist-cleanup" && body.intervalMinutes) {
-      const updated = db.updateAppSettings({ watchlistCleanupIntervalMinutes: body.intervalMinutes });
+    } else if (jobId === "watchlist-cleanup") {
+      const intervalMinutes = body.intervalMinutes;
+      if (typeof intervalMinutes !== "number" || !Number.isInteger(intervalMinutes) || intervalMinutes < 1) {
+        logger.warn("Job schedule update rejected", {
+          jobId,
+          intervalMinutes,
+          reason: "missing-or-invalid-interval"
+        });
+        res.status(400).json({ error: "intervalMinutes must be a positive integer." });
+        return;
+      }
+      const updated = db.updateAppSettings({ watchlistCleanupIntervalMinutes: intervalMinutes });
       scheduler?.updateJob("watchlist-cleanup", {
         intervalMs: updated.watchlistCleanupIntervalMinutes * 60 * 1000,
         enabled: updated.watchlistCleanupMovies || updated.watchlistCleanupShows
