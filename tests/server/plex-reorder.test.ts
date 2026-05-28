@@ -1,22 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PlexIntegration } from "../../src/server/integrations/plex.js";
-import type { Logger } from "../../src/server/logger.js";
-
-type LogEntry = { level: "debug" | "info" | "warn" | "error"; message: string; meta?: unknown };
-
-function createCapturingLogger() {
-  const entries: LogEntry[] = [];
-  const logger = {
-    debug: (message: string, meta?: unknown) => entries.push({ level: "debug", message, meta }),
-    info: (message: string, meta?: unknown) => entries.push({ level: "info", message, meta }),
-    warn: (message: string, meta?: unknown) => entries.push({ level: "warn", message, meta }),
-    error: (message: string, meta?: unknown) => entries.push({ level: "error", message, meta }),
-    getRecentLogs: () => entries
-  } as unknown as Logger;
-
-  return { logger, entries };
-}
+import { createCapturingLogger } from "./test-helpers.js";
 
 function moveItem(order: string[], itemKey: string, afterKey: string | null): string[] {
   const withoutItem = order.filter((key) => key !== itemKey);

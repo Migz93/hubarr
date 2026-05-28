@@ -266,8 +266,9 @@ const PLEX_TV_PING_URL = "https://plex.tv/api/v2/ping";
 const PLEX_TV_RESOURCES_URL = "https://plex.tv/api/v2/resources";
 
 const RSS_PLEX_UUID_PATH = /^\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
-const COLLECTION_REORDER_MAX_PASSES = 8;
-const COLLECTION_REORDER_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000, 12_000, 16_000];
+const COLLECTION_REORDER_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000];
+// How many times to retry a single item move before giving up on the whole collection.
+const COLLECTION_REORDER_MAX_ITEM_RETRIES = COLLECTION_REORDER_RETRY_DELAYS_MS.length;
 
 // Sentinel value used when no real watchlist date can be determined.
 // Stored in the DB so it can be overwritten later if a real date is found.
@@ -1630,6 +1631,8 @@ export class PlexIntegration {
    * Moves the first misplaced item into position, re-fetches live order, and
    * repeats with progressive backoff so Plex has time to settle each move.
    * Skips the whole operation if the collection is already in the desired order.
+   * Retries are tracked per-item: if the same item fails to settle after
+   * COLLECTION_REORDER_MAX_ITEM_RETRIES attempts, the whole reorder is abandoned.
    */
   async reorderCollectionItems(collectionRatingKey: string, orderedRatingKeys: string[]): Promise<{
     staleKeys: Set<string>;
@@ -1639,8 +1642,7 @@ export class PlexIntegration {
     const staleKeys = new Set<string>();
 
     if (orderedRatingKeys.length <= 1) {
-      const finalOrder = await this.getCollectionItems(collectionRatingKey);
-      return { staleKeys, converged: true, finalOrder };
+      return { staleKeys, converged: true, finalOrder: [...orderedRatingKeys] };
     }
 
     let currentOrder = await this.getCollectionItems(collectionRatingKey);
@@ -1650,24 +1652,43 @@ export class PlexIntegration {
     }
 
     let remainingKeys = [...orderedRatingKeys];
+    let lastAttemptedKey: string | null = null;
+    let consecutiveRetries = 0;
 
-    for (let pass = 0; pass < COLLECTION_REORDER_MAX_PASSES; pass++) {
-      const itemKey = remainingKeys.find((key, i) => currentOrder[i] !== key);
-      if (!itemKey) {
+    while (true) {
+      const mismatchIndex = remainingKeys.findIndex((key, i) => currentOrder[i] !== key);
+      if (mismatchIndex === -1) {
         return { staleKeys, converged: true, finalOrder: currentOrder };
       }
-      const targetIndex = remainingKeys.indexOf(itemKey);
-      const afterKey = targetIndex > 0 ? remainingKeys[targetIndex - 1] : null;
+
+      const itemKey = remainingKeys[mismatchIndex];
+      const afterKey = mismatchIndex > 0 ? remainingKeys[mismatchIndex - 1] : null;
+
+      if (itemKey === lastAttemptedKey) {
+        consecutiveRetries++;
+        if (consecutiveRetries >= COLLECTION_REORDER_MAX_ITEM_RETRIES) {
+          this.logger.warn("Collection reorder did not converge within bounded attempts", {
+            collectionRatingKey,
+            stuckKey: itemKey,
+            itemRetries: consecutiveRetries,
+            ...buildOrderMismatchMeta(currentOrder, remainingKeys)
+          });
+          return { staleKeys, converged: false, finalOrder: currentOrder };
+        }
+      } else {
+        consecutiveRetries = 0;
+        lastAttemptedKey = itemKey;
+      }
+
+      this.logger.debug("Moving collection item into desired position", {
+        collectionRatingKey,
+        itemKey,
+        afterKey,
+        targetIndex: mismatchIndex,
+        consecutiveRetries
+      });
 
       try {
-        this.logger.debug("Moving collection item into desired position", {
-          collectionRatingKey,
-          itemKey,
-          afterKey,
-          targetIndex,
-          pass: pass + 1
-        });
-
         if (afterKey === null) {
           await this.requestServer(
             `/library/collections/${collectionRatingKey}/items/${itemKey}/move`,
@@ -1689,11 +1710,13 @@ export class PlexIntegration {
         staleKeys.add(itemKey);
         remainingKeys = remainingKeys.filter((key) => key !== itemKey);
         currentOrder = currentOrder.filter((key) => key !== itemKey);
+        consecutiveRetries = 0;
+        lastAttemptedKey = null;
         continue;
       }
 
       const delayMs = COLLECTION_REORDER_RETRY_DELAYS_MS[
-        Math.min(pass, COLLECTION_REORDER_RETRY_DELAYS_MS.length - 1)
+        Math.min(consecutiveRetries, COLLECTION_REORDER_RETRY_DELAYS_MS.length - 1)
       ];
       await sleep(delayMs);
       currentOrder = await this.getCollectionItems(collectionRatingKey);
@@ -1704,22 +1727,11 @@ export class PlexIntegration {
       this.logger.warn("Collection order still mismatched after item move", {
         collectionRatingKey,
         movedKey: itemKey,
-        targetIndex,
-        pass: pass + 1,
-        nextDelayMs: COLLECTION_REORDER_RETRY_DELAYS_MS[
-          Math.min(pass + 1, COLLECTION_REORDER_RETRY_DELAYS_MS.length - 1)
-        ],
+        targetIndex: mismatchIndex,
+        consecutiveRetries,
         ...buildOrderMismatchMeta(currentOrder, remainingKeys)
       });
     }
-
-    this.logger.warn("Collection reorder did not converge within bounded attempts", {
-      collectionRatingKey,
-      attempts: COLLECTION_REORDER_MAX_PASSES,
-      ...buildOrderMismatchMeta(currentOrder, remainingKeys)
-    });
-
-    return { staleKeys, converged: false, finalOrder: currentOrder };
   }
 
   /**

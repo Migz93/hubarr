@@ -1242,7 +1242,7 @@ export class HubarrServices {
               try {
                 liveKeys = await plex.getCollectionItems(stored.collectionRatingKey);
               } catch (err) {
-                this.logger.warn("Could not validate collection item order, proceeding with full publish", {
+                this.logger.warn("Could not validate collection item order, falling through to republish", {
                   userId: friend.id,
                   mediaType,
                   collectionRatingKey: stored.collectionRatingKey,
