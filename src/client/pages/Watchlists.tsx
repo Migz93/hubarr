@@ -65,7 +65,7 @@ export default function Watchlists() {
   const { settings } = useSettings();
   const seerrEnabled = Boolean(settings?.seerr?.enabled);
 
-  async function load(background = false) {
+  const load = useCallback(async (background = false) => {
     setLoading((current) => current || !background);
     const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE), sortBy });
     if (selectedUserId !== null) params.set("userId", String(selectedUserId));
@@ -80,22 +80,16 @@ export default function Watchlists() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [availability, page, selectedMediaType, selectedUserId, sortBy]);
 
   const getIntervalMs = useCallback(() => WATCHLISTS_REFRESH_MS, []);
+  const loadBackground = useCallback(() => load(true), [load]);
 
-  useLiveRefresh(
-    async () => {
-      await load(true);
-    },
-    {
-      getIntervalMs
-    }
-  );
+  useLiveRefresh(loadBackground, { getIntervalMs });
 
   useEffect(() => {
     void load();
-  }, [selectedUserId, selectedMediaType, availability, sortBy, page]);
+  }, [load]);
 
   const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0;
 

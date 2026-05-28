@@ -88,7 +88,7 @@ class AdaptiveItemLimiter {
         if (this.is429(err)) {
           attempts++;
           if (attempts > maxRetries) {
-            throw new Error(`Rate limit exceeded after ${maxRetries} retries`);
+            throw new Error(`Rate limit exceeded after ${maxRetries} retries`, { cause: err });
           }
           this.onRateLimit(logger);
         } else {

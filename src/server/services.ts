@@ -4,7 +4,6 @@ import type {
   CollectionSortOrder,
   PreloadPhase,
   PreloadProgressEvent,
-  SeerrRequestState,
   SeerrUser,
   UserRecord,
   PlexSettingsInput,
