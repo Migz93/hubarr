@@ -70,10 +70,12 @@ test.describe("History — Seerr filter", () => {
 
     // Either a run row or the empty-state message must be visible — never an unhandled error.
     const hasRuns = await page.locator("div.space-y-2 > div").first().isVisible().catch(() => false);
+    /* eslint-disable playwright/no-conditional-expect, playwright/no-conditional-in-test -- Live instances may have no Seerr history yet. */
     if (!hasRuns) {
       await expect(page.getByText("No sync history matches the current filter.")).toBeVisible();
       return;
     }
+    /* eslint-enable playwright/no-conditional-expect, playwright/no-conditional-in-test */
 
     // Seerr runs exist on this instance — expand the first one and verify it loads.
     const firstRun = page.locator("div.space-y-2 > div").first();
@@ -104,6 +106,7 @@ test.describe("Users edit modal — Seerr section", () => {
     const modal = page.locator("div.fixed.inset-0.z-50");
     await expect(modal).toBeVisible();
 
+    /* eslint-disable playwright/no-conditional-expect, playwright/no-conditional-in-test -- Assertion depends on the live Seerr integration setting. */
     if (seerrEnabled) {
       // When Seerr is enabled a Seerr tab should be present
       await expect(modal.getByRole("button", { name: "Seerr", exact: true })).toBeVisible();
@@ -111,6 +114,7 @@ test.describe("Users edit modal — Seerr section", () => {
       // When Seerr is disabled no Seerr tab should appear in the modal
       await expect(modal.getByRole("button", { name: "Seerr", exact: true })).not.toBeVisible();
     }
+    /* eslint-enable playwright/no-conditional-expect, playwright/no-conditional-in-test */
 
     await modal.getByRole("button", { name: "Cancel" }).click();
   });

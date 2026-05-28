@@ -50,11 +50,10 @@ export default tseslint.config(
     },
     rules: {
       ...playwright.configs["flat/recommended"].rules,
+      // The auth setup is a bootstrap script and some live-instance tests have
+      // optional data paths; keep noisy style-only rules out of the global gate.
       "playwright/expect-expect": "off",
-      "playwright/no-conditional-expect": "off",
-      "playwright/no-conditional-in-test": "off",
       "playwright/no-networkidle": "off",
-      "playwright/no-skipped-test": "off",
       "playwright/no-useless-not": "off"
     }
   }

@@ -78,6 +78,8 @@ test.describe("Users page structure", () => {
     await modal.getByRole("button", { name: "Cancel", exact: true }).click();
 
     const friend = users.find((user) => !user.isSelf);
+    // Live instances may only have the self user configured.
+    // eslint-disable-next-line playwright/no-skipped-test
     test.skip(!friend, "No non-self user exists on this live instance.");
 
     const friendLabel = friend!.displayNameOverride?.trim() || friend!.displayName || friend!.username;
@@ -107,6 +109,8 @@ test.describe("Users page structure", () => {
   test("Watchlist Cleanup job is enabled when cleanup settings are already enabled", async ({ page, request }) => {
     const settings = await request.get("/api/settings").then((response) => response.json() as Promise<SettingsResponse>);
     const cleanupEnabled = settings.watchlistCleanup.movieEnabled || settings.watchlistCleanup.showEnabled;
+    // This read-only assertion only applies after cleanup has been enabled on the live instance.
+    // eslint-disable-next-line playwright/no-skipped-test
     test.skip(!cleanupEnabled, "Watchlist cleanup is currently disabled on this live instance.");
 
     await page.goto("/settings?tab=jobs");

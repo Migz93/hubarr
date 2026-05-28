@@ -2,6 +2,8 @@ import { test as setup } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 
+/* eslint-disable playwright/no-conditional-in-test -- Auth setup branches around saved-session state and SESSION_COOKIE availability. */
+
 const authFile = "tests/playwright/.auth/storageState.json";
 const baseURL = process.env.BASE_URL ?? "http://localhost:3000";
 
