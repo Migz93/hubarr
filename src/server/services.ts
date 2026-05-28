@@ -1221,9 +1221,9 @@ export class HubarrServices {
         if (stored?.collectionRatingKey && stored.lastSyncedHash === stateHash) {
           // Hash matches — validate the collection still exists in Plex before
           // skipping. A transient error (network, auth) falls through to the
-          // full publish rather than silently skipping; a definitive 400/404
+          // full publish without clearing the stored key; a definitive false
           // means the collection was externally deleted and needs to be recreated.
-          let exists: boolean;
+          let exists: boolean | null;
           try {
             exists = await plex.collectionExists(stored.collectionRatingKey);
           } catch (err) {
@@ -1233,10 +1233,10 @@ export class HubarrServices {
               collectionRatingKey: stored.collectionRatingKey,
               error: err instanceof Error ? err.message : String(err)
             });
-            exists = false; // fall through to full publish
+            exists = null; // fall through to full publish without treating the collection as deleted
           }
 
-          if (exists) {
+          if (exists === true) {
             if (isCustomCollectionSort(effectiveSortOrder)) {
               let liveKeys: string[] | null;
               try {
@@ -1281,7 +1281,7 @@ export class HubarrServices {
               });
               continue;
             }
-          } else {
+          } else if (exists === false) {
             this.logger.info("Stored collection no longer exists in Plex, clearing and republishing", {
               userId: friend.id,
               mediaType,

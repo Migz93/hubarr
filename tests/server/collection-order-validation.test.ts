@@ -25,9 +25,11 @@ function createMovie(plexItemId: string, title: string, releaseDate: string, mat
 
 function createPlexMock(options: {
   collectionOrder: string[];
+  collectionExistsError?: Error;
   reorderAppliesOrder?: boolean;
 }) {
   let collectionOrder = [...options.collectionOrder];
+  let collectionExistsError = options.collectionExistsError;
   const calls = {
     collectionExists: 0,
     ensureCollection: 0,
@@ -41,11 +43,17 @@ function createPlexMock(options: {
     setCollectionOrder(nextOrder: string[]) {
       collectionOrder = [...nextOrder];
     },
+    setCollectionExistsError(error: Error | undefined) {
+      collectionExistsError = error;
+    },
     createCollectionLabel(username: string) {
       return `hubarr:${username}`;
     },
     async collectionExists() {
       calls.collectionExists += 1;
+      if (collectionExistsError) {
+        throw collectionExistsError;
+      }
       return true;
     },
     async ensureCollection() {
@@ -158,6 +166,37 @@ test("title collection sort still skips on hash match after existence validation
 
     assert.equal(plex.calls.collectionExists, 1);
     assert.equal(plex.calls.ensureCollection, 1);
+  } finally {
+    cleanup();
+  }
+});
+
+test("collection existence validation errors do not clear the stored collection key", async () => {
+  const { logger, entries } = createCapturingLogger();
+  const { service, db, cleanup } = createService(logger);
+
+  try {
+    const user = createUser(db, "title");
+    const items = [
+      createMovie("movie-new", "New Movie", "2026-01-01", "rk-new"),
+      createMovie("movie-old", "Old Movie", "2024-01-01", "rk-old")
+    ];
+    const plex = createPlexMock({ collectionOrder: ["rk-old", "rk-new"] });
+    const originalClearCollectionRatingKey = db.clearCollectionRatingKey.bind(db);
+    let clearCollectionRatingKeyCalls = 0;
+    db.clearCollectionRatingKey = ((userId, mediaType) => {
+      clearCollectionRatingKeyCalls += 1;
+      return originalClearCollectionRatingKey(userId, mediaType);
+    }) as typeof db.clearCollectionRatingKey;
+
+    await service.publishUserCollections(user, items, null, false, plex);
+    plex.setCollectionExistsError(new Error("Plex temporarily unavailable"));
+    await service.publishUserCollections(user, items, null, false, plex);
+
+    assert.equal(plex.calls.collectionExists, 1);
+    assert.equal(plex.calls.ensureCollection, 2);
+    assert.equal(clearCollectionRatingKeyCalls, 0);
+    assert.ok(entries.some((entry) => entry.message === "Could not validate collection existence, proceeding with full publish"));
   } finally {
     cleanup();
   }
