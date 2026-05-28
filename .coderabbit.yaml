@@ -42,6 +42,8 @@ reviews:
       requirements: "PR title must start with a conventional commit type: feat:, fix:, chore:, docs:, refactor:, ci:"
     description:
       mode: "warning"
+    docstring_coverage:
+      mode: "disabled"
 
   finishing_touches:
     docstrings:
