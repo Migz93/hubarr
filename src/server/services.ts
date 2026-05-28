@@ -1732,6 +1732,7 @@ export class HubarrServices {
     const { publishingUsers } = this.getUserScopes();
     const friends = publishingUsers;
     const failures: string[] = [];
+    const failedUserIds = new Set<number>();
     const plex = this.getPlexIntegration();
 
     this.logger.info("Collection sync started", { userCount: friends.length, force });
@@ -1746,6 +1747,7 @@ export class HubarrServices {
           if (publishFailures.length > 0) {
             const message = publishFailures.join(" | ");
             this.db.markUserSyncResult(friend.id, message);
+            failedUserIds.add(friend.id);
             failures.push(...publishFailures);
           } else {
             this.db.markUserSyncResult(friend.id, null);
@@ -1763,6 +1765,7 @@ export class HubarrServices {
             displayName: friend.displayName,
             message
           }, friend.id);
+          failedUserIds.add(friend.id);
           failures.push(`${friend.displayName}: ${message}`);
         } finally {
           publishCompleted++;
@@ -1774,11 +1777,12 @@ export class HubarrServices {
     await this.applyIsolationFilters(friends, runId);
 
     if (failures.length > 0) {
-      const summary = `Collection sync finished: ${friends.length - failures.length}/${friends.length} users succeeded.`;
+      const failedUsers = failedUserIds.size;
+      const summary = `Collection sync finished: ${friends.length - failedUsers}/${friends.length} users succeeded.`;
       this.db.completeSyncRun(runId, "error", summary, failures.join(" | "));
       this.logger.info("Collection sync complete", {
-        succeeded: friends.length - failures.length,
-        failed: failures.length,
+        succeeded: friends.length - failedUsers,
+        failed: failedUsers,
         durationMs: Date.now() - syncStart
       });
     } else {
