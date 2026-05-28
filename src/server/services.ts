@@ -19,6 +19,7 @@ import { Logger } from "./logger.js";
 import { PlexIntegration, WATCHLIST_DATE_UNKNOWN_SENTINEL, type PlexDiscoverEpisodeRef, type PlexEpisodeRef, type PlexLibraryItemMatch, type ResolvedWatchlistItem } from "./integrations/plex.js";
 import { SeerrIntegration, extractTmdbId } from "./integrations/seerr.js";
 import { RssCache, type RssFeedItem } from "./rss-cache.js";
+import { buildOrderMismatchMeta, ratingKeyOrderMatches } from "./utils/collection-order.js";
 
 const PLEX_SYNC_CONCURRENCY = 3;
 
@@ -46,6 +47,10 @@ function computePublishStateHash(params: {
     label: params.labelName
   });
   return crypto.createHash("sha256").update(payload).digest("hex");
+}
+
+function isCustomCollectionSort(sortOrder: CollectionSortOrder): boolean {
+  return sortOrder !== "title";
 }
 
 type SeerrRequestSyncScope =
@@ -1142,7 +1147,8 @@ export class HubarrServices {
     runId: number | null,
     force: boolean,
     plex = this.getPlexIntegration()
-  ) {
+  ): Promise<string[]> {
+    const publishFailures: string[] = [];
     const appSettings = this.db.getAppSettings();
     // Per-user override takes precedence over the global setting; null means use global.
     const effectiveSortOrder = friend.collectionSortOrderOverride ?? appSettings.collectionSortOrder ?? "date-desc";
@@ -1215,9 +1221,9 @@ export class HubarrServices {
         if (stored?.collectionRatingKey && stored.lastSyncedHash === stateHash) {
           // Hash matches — validate the collection still exists in Plex before
           // skipping. A transient error (network, auth) falls through to the
-          // full publish rather than silently skipping; a definitive 400/404
+          // full publish without clearing the stored key; a definitive false
           // means the collection was externally deleted and needs to be recreated.
-          let exists: boolean;
+          let exists: boolean | null;
           try {
             exists = await plex.collectionExists(stored.collectionRatingKey);
           } catch (err) {
@@ -1227,24 +1233,62 @@ export class HubarrServices {
               collectionRatingKey: stored.collectionRatingKey,
               error: err instanceof Error ? err.message : String(err)
             });
-            exists = false; // fall through to full publish
+            exists = null; // fall through to full publish without treating the collection as deleted
           }
 
-          if (exists) {
-            this.logger.debug("Collection state unchanged and collection validated, skipping publish", {
+          if (exists === true) {
+            if (isCustomCollectionSort(effectiveSortOrder)) {
+              let liveKeys: string[] | null;
+              try {
+                liveKeys = await plex.getCollectionItems(stored.collectionRatingKey);
+              } catch (err) {
+                this.logger.warn("Could not validate collection item order, falling through to republish", {
+                  userId: friend.id,
+                  mediaType,
+                  collectionRatingKey: stored.collectionRatingKey,
+                  effectiveSortOrder,
+                  error: err instanceof Error ? err.message : String(err)
+                });
+                liveKeys = null;
+              }
+
+              if (liveKeys && ratingKeyOrderMatches(liveKeys, matchedRatingKeys)) {
+                this.logger.debug("Collection state unchanged and collection order validated, skipping publish", {
+                  userId: friend.id,
+                  mediaType,
+                  collectionRatingKey: stored.collectionRatingKey,
+                  effectiveSortOrder
+                });
+                continue;
+              }
+
+              if (liveKeys) {
+                this.logger.info("Collection item order differs from desired state, republishing", {
+                  userId: friend.id,
+                  mediaType,
+                  collectionRatingKey: stored.collectionRatingKey,
+                  effectiveSortOrder,
+                  ...buildOrderMismatchMeta(liveKeys, matchedRatingKeys)
+                });
+              }
+              // Hash matches but Plex order drifted, so keep the stored
+              // collection identity and fall through to the reorder path.
+            } else {
+              this.logger.debug("Collection state unchanged and collection validated, skipping publish", {
+                userId: friend.id,
+                mediaType,
+                collectionRatingKey: stored.collectionRatingKey
+              });
+              continue;
+            }
+          } else if (exists === false) {
+            this.logger.info("Stored collection no longer exists in Plex, clearing and republishing", {
               userId: friend.id,
               mediaType,
               collectionRatingKey: stored.collectionRatingKey
             });
-            continue;
+            this.db.clearCollectionRatingKey(friend.id, mediaType);
           }
-
-          this.logger.info("Stored collection no longer exists in Plex, clearing and republishing", {
-            userId: friend.id,
-            mediaType,
-            collectionRatingKey: stored.collectionRatingKey
-          });
-          this.db.clearCollectionRatingKey(friend.id, mediaType);
         }
       }
 
@@ -1285,11 +1329,16 @@ export class HubarrServices {
       // For custom-order modes (date/watchlist-date, collectionSort=2) push
       // explicit item positions which also catches stale keys via 404 failures.
       let reorderStaleKeys: Set<string>;
+      let reorderConverged = true;
+      let reorderFinalOrder: string[] | null = null;
       if (effectiveSortOrder === "title") {
         const liveKeys = new Set(await plex.getCollectionItems(collectionRatingKey));
         reorderStaleKeys = new Set(reorderKeys.filter((k) => !liveKeys.has(k)));
       } else {
-        ({ staleKeys: reorderStaleKeys } = await plex.reorderCollectionItems(collectionRatingKey, reorderKeys));
+        const reorderResult = await plex.reorderCollectionItems(collectionRatingKey, reorderKeys);
+        reorderStaleKeys = reorderResult.staleKeys;
+        reorderConverged = reorderResult.converged;
+        reorderFinalOrder = reorderResult.finalOrder;
       }
       if (reorderStaleKeys.size > 0) {
         this.logger.warn("Clearing stale matched rating keys found during post-sync validation", {
@@ -1314,6 +1363,60 @@ export class HubarrServices {
         collectionRatingKey,
         matchedItems: cleanedKeys.length
       });
+
+      let customOrderValidated = true;
+      let collectionPublishErrorDetails: Record<string, unknown> | null = null;
+      if (isCustomCollectionSort(effectiveSortOrder)) {
+        try {
+          const liveKeys = reorderFinalOrder ?? await plex.getCollectionItems(collectionRatingKey);
+          customOrderValidated = ratingKeyOrderMatches(liveKeys, cleanedKeys);
+          if (!customOrderValidated) {
+            const mismatch = buildOrderMismatchMeta(liveKeys, cleanedKeys);
+            this.logger.warn("Collection item order still differs after reorder; leaving sync hash dirty", {
+              userId: friend.id,
+              mediaType,
+              collectionRatingKey,
+              effectiveSortOrder,
+              reorderConverged,
+              ...mismatch
+            });
+            collectionPublishErrorDetails = {
+              userId: friend.id,
+              displayName: friend.displayName,
+              mediaType,
+              collectionName,
+              collectionRatingKey,
+              effectiveSortOrder,
+              matchedItems: cleanedKeys.length,
+              reason: reorderConverged ? "post-reorder-validation-mismatch" : "reorder-did-not-converge",
+              message: "Plex collection order does not match Hubarr's desired order after bounded reorder attempts.",
+              ...mismatch
+            };
+          }
+        } catch (err) {
+          customOrderValidated = false;
+          const error = err instanceof Error ? err.message : String(err);
+          this.logger.warn("Could not validate collection item order after reorder; leaving sync hash dirty", {
+            userId: friend.id,
+            mediaType,
+            collectionRatingKey,
+            effectiveSortOrder,
+            error
+          });
+          collectionPublishErrorDetails = {
+            userId: friend.id,
+            displayName: friend.displayName,
+            mediaType,
+            collectionName,
+            collectionRatingKey,
+            effectiveSortOrder,
+            matchedItems: cleanedKeys.length,
+            reason: "post-reorder-validation-error",
+            message: "Hubarr could not verify Plex collection order after reorder.",
+            error
+          };
+        }
+      }
 
       await plex.applyLabelToCollection(collectionRatingKey, labelName);
       this.logger.info("Collection label applied", {
@@ -1348,27 +1451,39 @@ export class HubarrServices {
         visibleName: collectionName,
         labelName,
         hubIdentifier,
-        lastSyncedHash: storedHash,
+        lastSyncedHash: customOrderValidated ? storedHash : null,
         lastSyncedAt: new Date().toISOString(),
-        lastSyncError: null
+        lastSyncError: collectionPublishErrorDetails
+          ? String(collectionPublishErrorDetails.message)
+          : null
       });
       if (runId !== null) {
-        this.db.addSyncRunItem(
-          runId,
-          "collection.publish",
-          "success",
-          {
-            userId: friend.id,
-            displayName: friend.displayName,
-            mediaType,
-            collectionName,
-            collectionRatingKey,
-            matchedItems: cleanedKeys.length
-          },
-          friend.id
-        );
+        if (collectionPublishErrorDetails) {
+          this.db.addSyncRunItem(runId, "collection.publish", "error", collectionPublishErrorDetails, friend.id);
+        } else {
+          this.db.addSyncRunItem(
+            runId,
+            "collection.publish",
+            "success",
+            {
+              userId: friend.id,
+              displayName: friend.displayName,
+              mediaType,
+              collectionName,
+              collectionRatingKey,
+              matchedItems: cleanedKeys.length
+            },
+            friend.id
+          );
+        }
+      }
+
+      if (collectionPublishErrorDetails) {
+        publishFailures.push(`${friend.displayName} ${mediaType} collection ${collectionRatingKey}: ${collectionPublishErrorDetails.message}`);
       }
     }
+
+    return publishFailures;
   }
 
   private async applyCollectionPoster(
@@ -1617,6 +1732,7 @@ export class HubarrServices {
     const { publishingUsers } = this.getUserScopes();
     const friends = publishingUsers;
     const failures: string[] = [];
+    const failedUserIds = new Set<number>();
     const plex = this.getPlexIntegration();
 
     this.logger.info("Collection sync started", { userCount: friends.length, force });
@@ -1627,8 +1743,15 @@ export class HubarrServices {
     await Promise.all(friends.map((friend) =>
       publishLimit(async () => {
         try {
-          await this.publishUserCollections(friend, this.db.getWatchlistItems(friend.id), runId, force, plex);
-          this.db.markUserSyncResult(friend.id, null);
+          const publishFailures = await this.publishUserCollections(friend, this.db.getWatchlistItems(friend.id), runId, force, plex);
+          if (publishFailures.length > 0) {
+            const message = publishFailures.join(" | ");
+            this.db.markUserSyncResult(friend.id, message);
+            failedUserIds.add(friend.id);
+            failures.push(...publishFailures);
+          } else {
+            this.db.markUserSyncResult(friend.id, null);
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           this.logger.error("Collection sync failed for user — continuing with remaining users", {
@@ -1642,6 +1765,7 @@ export class HubarrServices {
             displayName: friend.displayName,
             message
           }, friend.id);
+          failedUserIds.add(friend.id);
           failures.push(`${friend.displayName}: ${message}`);
         } finally {
           publishCompleted++;
@@ -1653,11 +1777,12 @@ export class HubarrServices {
     await this.applyIsolationFilters(friends, runId);
 
     if (failures.length > 0) {
-      const summary = `Collection sync finished: ${friends.length - failures.length}/${friends.length} users succeeded.`;
+      const failedUsers = failedUserIds.size;
+      const summary = `Collection sync finished: ${friends.length - failedUsers}/${friends.length} users succeeded.`;
       this.db.completeSyncRun(runId, "error", summary, failures.join(" | "));
       this.logger.info("Collection sync complete", {
-        succeeded: friends.length - failures.length,
-        failed: failures.length,
+        succeeded: friends.length - failedUsers,
+        failed: failedUsers,
         durationMs: Date.now() - syncStart
       });
     } else {

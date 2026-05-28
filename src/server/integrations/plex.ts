@@ -4,6 +4,7 @@ import type { RssFeedItem } from "../rss-cache.js";
 import type { Logger } from "../logger.js";
 import { PLEX_USER_AGENT } from "../version.js";
 import type { CollectionSortOrder, UserRecord, MediaType, PlexSettingsInput, RichItemMetadata, SearchCandidate, WatchlistItem } from "../../shared/types.js";
+import { buildOrderMismatchMeta, ratingKeyOrderMatches } from "../utils/collection-order.js";
 
 export interface ResolvedWatchlistItem extends WatchlistItem {
   searchCandidates?: SearchCandidate[];
@@ -265,10 +266,17 @@ const PLEX_TV_PING_URL = "https://plex.tv/api/v2/ping";
 const PLEX_TV_RESOURCES_URL = "https://plex.tv/api/v2/resources";
 
 const RSS_PLEX_UUID_PATH = /^\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+const COLLECTION_REORDER_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000];
+// How many times to retry a single item move before giving up on the whole collection.
+const COLLECTION_REORDER_MAX_ITEM_RETRIES = COLLECTION_REORDER_RETRY_DELAYS_MS.length;
 
 // Sentinel value used when no real watchlist date can be determined.
 // Stored in the DB so it can be overwritten later if a real date is found.
 export const WATCHLIST_DATE_UNKNOWN_SENTINEL = "2001-01-01T00:00:00.000Z";
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export class PlexIntegration {
   private resolvedMachineIdentifier: string | null = null;
@@ -1620,41 +1628,78 @@ export class PlexIntegration {
 
   /**
    * Enforce a specific item order in a custom-sorted collection.
-   * Moves every item into position sequentially — simple and guaranteed correct.
+   * Moves the first misplaced item into position, re-fetches live order, and
+   * repeats with progressive backoff so Plex has time to settle each move.
    * Skips the whole operation if the collection is already in the desired order.
+   * Retries are tracked per-item: if the same item fails to settle after
+   * COLLECTION_REORDER_MAX_ITEM_RETRIES attempts, the whole reorder is abandoned.
    */
-  async reorderCollectionItems(collectionRatingKey: string, orderedRatingKeys: string[]): Promise<{ staleKeys: Set<string> }> {
+  async reorderCollectionItems(collectionRatingKey: string, orderedRatingKeys: string[]): Promise<{
+    staleKeys: Set<string>;
+    converged: boolean;
+    finalOrder: string[];
+  }> {
     const staleKeys = new Set<string>();
 
-    if (orderedRatingKeys.length <= 1) return { staleKeys };
-
-    const currentOrder = await this.getCollectionItems(collectionRatingKey);
-
-    if (
-      currentOrder.length === orderedRatingKeys.length &&
-      currentOrder.every((key, i) => key === orderedRatingKeys[i])
-    ) {
-      return { staleKeys }; // already in correct order
+    if (orderedRatingKeys.length <= 1) {
+      return { staleKeys, converged: true, finalOrder: [...orderedRatingKeys] };
     }
 
-    // Track the last successfully placed key so the anchor for subsequent moves
-    // stays valid even when stale keys are skipped mid-sequence.
-    let lastPlacedKey: string | null = null;
+    let currentOrder = await this.getCollectionItems(collectionRatingKey);
 
-    for (const itemKey of orderedRatingKeys) {
+    if (ratingKeyOrderMatches(currentOrder, orderedRatingKeys)) {
+      return { staleKeys, converged: true, finalOrder: currentOrder }; // already in correct order
+    }
+
+    let remainingKeys = [...orderedRatingKeys];
+    let lastAttemptedKey: string | null = null;
+    let consecutiveRetries = 0;
+
+    while (true) {
+      const mismatchIndex = remainingKeys.findIndex((key, i) => currentOrder[i] !== key);
+      if (mismatchIndex === -1) {
+        return { staleKeys, converged: true, finalOrder: currentOrder };
+      }
+
+      const itemKey = remainingKeys[mismatchIndex];
+      const afterKey = mismatchIndex > 0 ? remainingKeys[mismatchIndex - 1] : null;
+
+      if (itemKey === lastAttemptedKey) {
+        consecutiveRetries++;
+        if (consecutiveRetries >= COLLECTION_REORDER_MAX_ITEM_RETRIES) {
+          this.logger.warn("Collection reorder did not converge within bounded attempts", {
+            collectionRatingKey,
+            stuckKey: itemKey,
+            itemRetries: consecutiveRetries,
+            ...buildOrderMismatchMeta(currentOrder, remainingKeys)
+          });
+          return { staleKeys, converged: false, finalOrder: currentOrder };
+        }
+      } else {
+        consecutiveRetries = 0;
+        lastAttemptedKey = itemKey;
+      }
+
+      this.logger.debug("Moving collection item into desired position", {
+        collectionRatingKey,
+        itemKey,
+        afterKey,
+        targetIndex: mismatchIndex,
+        consecutiveRetries
+      });
+
       try {
-        if (lastPlacedKey === null) {
+        if (afterKey === null) {
           await this.requestServer(
             `/library/collections/${collectionRatingKey}/items/${itemKey}/move`,
             { method: "PUT" }
           );
         } else {
           await this.requestServer(
-            `/library/collections/${collectionRatingKey}/items/${itemKey}/move?after=${lastPlacedKey}`,
+            `/library/collections/${collectionRatingKey}/items/${itemKey}/move?after=${afterKey}`,
             { method: "PUT" }
           );
         }
-        lastPlacedKey = itemKey;
       } catch (err) {
         if (!this.isItemMissingError(err)) throw err;
         this.logger.warn("Skipping stale rating key during collection reorder", {
@@ -1663,10 +1708,30 @@ export class PlexIntegration {
           error: err instanceof Error ? err.message : String(err)
         });
         staleKeys.add(itemKey);
+        remainingKeys = remainingKeys.filter((key) => key !== itemKey);
+        currentOrder = currentOrder.filter((key) => key !== itemKey);
+        consecutiveRetries = 0;
+        lastAttemptedKey = null;
+        continue;
       }
-    }
 
-    return { staleKeys };
+      const delayMs = COLLECTION_REORDER_RETRY_DELAYS_MS[
+        Math.min(consecutiveRetries, COLLECTION_REORDER_RETRY_DELAYS_MS.length - 1)
+      ];
+      await sleep(delayMs);
+      currentOrder = await this.getCollectionItems(collectionRatingKey);
+      if (ratingKeyOrderMatches(currentOrder, remainingKeys)) {
+        return { staleKeys, converged: true, finalOrder: currentOrder };
+      }
+
+      this.logger.warn("Collection order still mismatched after item move", {
+        collectionRatingKey,
+        movedKey: itemKey,
+        targetIndex: mismatchIndex,
+        consecutiveRetries,
+        ...buildOrderMismatchMeta(currentOrder, remainingKeys)
+      });
+    }
   }
 
   /**
