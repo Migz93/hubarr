@@ -7,7 +7,7 @@ import { formatRelativeTime } from "../lib/utils";
 import PlexConfigForm from "../components/PlexConfigForm";
 import CollectionsConfigForm from "../components/CollectionsConfigForm";
 import { Field, SaveBar, SectionCard, TextInput, ToggleField } from "../components/FormControls";
-import type { AboutInfo, JobInfo, LogEntry, LogsPageResponse, SeerrSettingsView, SeerrUser, SettingsResponse } from "../../shared/types";
+import type { AboutInfo, JobInfo, LogEntry, LogsPageResponse, SeerrSettingsView, SettingsResponse } from "../../shared/types";
 
 type Tab = "general" | "plex" | "collections" | "seerr" | "logs" | "jobs" | "about";
 
@@ -673,7 +673,7 @@ function JobsTab() {
   const [saving, setSaving] = useState(false);
   const [fastRefreshUntil, setFastRefreshUntil] = useState<number | null>(null);
 
-  async function load(background = false) {
+  const load = useCallback(async (background = false) => {
     setLoading((current) => current || !background);
     try {
       const result = await apiGet<JobInfo[]>("/api/settings/jobs");
@@ -681,7 +681,7 @@ function JobsTab() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   const hasRunningJob = jobs.some((job) => job.isRunning);
   const shouldUseFastRefresh = hasRunningJob || (fastRefreshUntil !== null && fastRefreshUntil > Date.now());
@@ -689,14 +689,8 @@ function JobsTab() {
     () => (shouldUseFastRefresh ? JOBS_FAST_REFRESH_MS : JOBS_IDLE_REFRESH_MS),
     [shouldUseFastRefresh]
   );
-  const { refreshNow } = useLiveRefresh(
-    async () => {
-      await load(true);
-    },
-    {
-      getIntervalMs
-    }
-  );
+  const loadBackground = useCallback(() => load(true), [load]);
+  const { refreshNow } = useLiveRefresh(loadBackground, { getIntervalMs });
 
   async function runJob(id: string) {
     setRunningId(id);
@@ -731,7 +725,7 @@ function JobsTab() {
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
 
   return (
     <>

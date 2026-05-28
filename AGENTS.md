@@ -274,6 +274,12 @@ See `SECURITY.md` for the full Snyk tooling guide, scan commands, and philosophy
 
 When implementing new functionality, the agent should treat logging and code clarity as part of the feature work, not as optional polish.
 
+#### Linting
+
+- Hubarr uses ESLint for TypeScript, React, Node, and Playwright files. When code changes touch linted files, run `npm run lint` before closing out the work.
+- Keep ESLint changes practical and correctness-focused. Do not introduce broad style-only rule churn as part of unrelated feature work.
+- If a new file category is added, check whether `eslint.config.js` needs an additional file group, globals, or ignore entry.
+
 #### Logging
 
 - Consider logging for every new feature, workflow, integration, or background process where runtime visibility would help with debugging, support, or diagnosing failures
