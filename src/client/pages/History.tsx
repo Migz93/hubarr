@@ -291,6 +291,18 @@ interface SyncUserErrorDetails {
   message?: string;
 }
 
+interface SeerrRequestDetails {
+  userId?: number;
+  displayName?: string;
+  plexItemId?: string;
+  title?: string;
+  type?: string;
+  tmdbId?: number;
+  outcome?: string;
+  reason?: string;
+  error?: string;
+}
+
 function titleCaseStatus(status: SyncRun["status"]): string {
   return capitalizeSentence(status);
 }
@@ -323,7 +335,34 @@ function formatMediaTypeLabel(mediaType?: string): string {
   return "Items";
 }
 
+function formatSeerrOutcomeLabel(item: SyncRunItem, details: SeerrRequestDetails | null): string {
+  if (item.action === "seerr.request.created") return "requested in Seerr";
+  if (item.action === "seerr.request.failed") return "Seerr request failed";
+  if (item.action === "seerr.request.skipped") {
+    if (details?.reason === "missing_tmdb_id") return "skipped: missing TMDB ID";
+    if (details?.reason === "unlinked_user") return "skipped: no linked Seerr user";
+    return "Seerr request skipped";
+  }
+
+  if (details?.outcome === "already_requested") return "already requested in Seerr";
+  if (details?.outcome === "already_available") return "already in Seerr";
+  if (details?.outcome === "added_directly") return "already added in Seerr";
+  return "already in Seerr";
+}
+
+function formatSeerrStepLabel(item: SyncRunItem): string {
+  const details = item.details as SeerrRequestDetails | null;
+  const title = details?.title ?? "Unknown item";
+  const type = details?.type ? ` (${details.type})` : "";
+  const name = details?.displayName ?? "Unknown user";
+  return `${title}${type} for ${name}: ${formatSeerrOutcomeLabel(item, details)}`;
+}
+
 function formatStepLabel(item: SyncRunItem): string {
+  if (item.action.startsWith("seerr.request.")) {
+    return formatSeerrStepLabel(item);
+  }
+
   if (item.action === "sync.user" && item.status === "error") {
     const details = item.details as SyncUserErrorDetails | null;
     return details?.displayName
@@ -390,6 +429,12 @@ function formatStepMeta(item: SyncRunItem): string | undefined {
     if (item.status === "error") return details?.message;
     if (details?.checked === false) return "Feed was not initialized for this run.";
     return `${details?.found ?? 0} new item${details?.found === 1 ? "" : "s"} found`;
+  }
+
+  if (item.action.startsWith("seerr.request.")) {
+    const details = item.details as SeerrRequestDetails | null;
+    if (item.status === "error") return details?.error;
+    return undefined;
   }
 
   if (item.details && typeof item.details === "object") {

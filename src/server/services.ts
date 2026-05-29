@@ -2977,18 +2977,30 @@ export class HubarrServices {
     return this.db.getWatchlistItems(userId).filter((item) => !item.matchedRatingKey);
   }
 
+  private isSeerrRequestWorkEnabled(userId: number): boolean {
+    const link = this.db.getSeerrUserLink(userId);
+    return Boolean(link?.autoRequestEnabled);
+  }
+
   private buildSeerrRequestWork(scope: SeerrRequestSyncScope): SeerrRequestWorkItem[] {
     if (scope.mode === "all") {
       const { trackedUsers } = this.getUserScopes();
-      return trackedUsers.map((user) => ({
-        user,
-        items: this.getMissingWatchlistItemsForUser(user.id)
-      })).filter((entry) => entry.items.length > 0);
+      return trackedUsers
+        .filter((user) => this.isSeerrRequestWorkEnabled(user.id))
+        .map((user) => ({
+          user,
+          items: this.getMissingWatchlistItemsForUser(user.id)
+        }))
+        .filter((entry) => entry.items.length > 0);
     }
 
     const user = this.db.getUser(scope.userId);
     if (!user) {
       throw new Error("User not found.");
+    }
+
+    if (!this.isSeerrRequestWorkEnabled(user.id)) {
+      return [];
     }
 
     if (scope.mode === "items") {
@@ -3052,6 +3064,7 @@ export class HubarrServices {
       const work = this.dedupeSeerrRequestWork(rawWork);
       const requireAutoRequest = scope.mode !== "all";
       const itemCount = work.reduce((sum, entry) => sum + entry.items.length, 0);
+      const rawItemCount = rawWork.reduce((sum, entry) => sum + entry.items.length, 0);
       let processedUsers = 0;
 
       this.logger.info("Seerr request sync work prepared", {
@@ -3059,6 +3072,8 @@ export class HubarrServices {
         triggeredBy: scope.triggeredBy,
         userCount: work.length,
         itemCount,
+        rawUserCount: rawWork.length,
+        rawItemCount,
         requireAutoRequest
       });
 
