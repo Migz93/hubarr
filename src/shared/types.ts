@@ -1,4 +1,5 @@
 export type SyncStatus = "idle" | "running" | "success" | "error";
+export type SyncRunActivity = "changes" | "no_changes" | "unknown";
 export type MediaType = "movie" | "show";
 
 export interface BootstrapStatus {
@@ -231,6 +232,7 @@ export interface SyncRun {
   id: number;
   kind: "full" | "user" | "rss" | "publish" | "seerr" | "watchlist-cleanup";
   status: SyncStatus;
+  activity: SyncRunActivity;
   startedAt: string;
   completedAt: string | null;
   summary: string;

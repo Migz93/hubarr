@@ -8,6 +8,7 @@ import type { HistoryPageResponse, SearchCandidate, SyncRun, SyncRunDetail, Sync
 
 type KindFilter = "all" | "full" | "rss" | "user" | "publish" | "seerr" | "watchlist-cleanup";
 type StatusFilter = "all" | "success" | "error" | "running";
+type ActivityFilter = "changes" | "no_changes" | "all";
 
 const KIND_LABELS: Record<string, string> = {
   full: "GraphQL",
@@ -56,6 +57,7 @@ const ACTION_LABELS: Record<string, string> = {
 
 const VALID_KINDS: KindFilter[] = ["all", "full", "rss", "user", "publish", "seerr", "watchlist-cleanup"];
 const VALID_STATUSES: StatusFilter[] = ["all", "success", "error", "running"];
+const VALID_ACTIVITIES: ActivityFilter[] = ["all", "changes", "no_changes"];
 const VALID_PAGE_SIZES = [10, 25, 50, 100];
 const HISTORY_FAST_REFRESH_MS = 2_500;
 const HISTORY_IDLE_REFRESH_MS = 15_000;
@@ -65,6 +67,7 @@ export default function History() {
 
   const kind = (VALID_KINDS.includes(searchParams.get("type") as KindFilter) ? searchParams.get("type") : "all") as KindFilter;
   const status = (VALID_STATUSES.includes(searchParams.get("status") as StatusFilter) ? searchParams.get("status") : "all") as StatusFilter;
+  const activity = (VALID_ACTIVITIES.includes(searchParams.get("activity") as ActivityFilter) ? searchParams.get("activity") : "all") as ActivityFilter;
   const page = Math.max(1, Number(searchParams.get("page") ?? 1));
   const pageSize = VALID_PAGE_SIZES.includes(Number(searchParams.get("pageSize"))) ? Number(searchParams.get("pageSize")) : 10;
 
@@ -84,7 +87,7 @@ export default function History() {
   const load = useCallback(async (background = false) => {
     setLoading((current) => current || !background);
     try {
-      const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize), kind, status });
+      const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize), kind, status, activity });
       const result = await apiGet<HistoryPageResponse>(`/api/history?${params.toString()}`);
       setData(result);
       setError(null);
@@ -93,7 +96,7 @@ export default function History() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, kind, status]);
+  }, [page, pageSize, kind, status, activity]);
 
   const runs = data?.results ?? [];
   const pageInfo = data?.pageInfo;
@@ -123,7 +126,7 @@ export default function History() {
       {/* Filters */}
       <div className="flex flex-wrap gap-2 mb-4 items-center">
         {/* Kind filter */}
-        <div className="flex rounded-lg overflow-hidden border border-outline-variant/30">
+        <div role="group" aria-label="Type filter" className="flex rounded-lg overflow-hidden border border-outline-variant/30">
           {VALID_KINDS.map((k) => (
             <button
               key={k}
@@ -134,13 +137,13 @@ export default function History() {
                   : "bg-background-container text-on-surface-variant hover:text-on-surface"
               }`}
             >
-              {k === "all" ? "All types" : KIND_LABELS[k] ?? k}
+              {k === "all" ? "All" : KIND_LABELS[k] ?? k}
             </button>
           ))}
         </div>
 
         {/* Status filter */}
-        <div className="flex rounded-lg overflow-hidden border border-outline-variant/30">
+        <div role="group" aria-label="Status filter" className="flex rounded-lg overflow-hidden border border-outline-variant/30">
           {(["all", "success", "error", "running"] as StatusFilter[]).map((s) => (
             <button
               key={s}
@@ -151,7 +154,24 @@ export default function History() {
                   : "bg-background-container text-on-surface-variant hover:text-on-surface"
               }`}
             >
-              {s === "all" ? "All status" : titleCaseStatus(s)}
+              {s === "all" ? "All" : titleCaseStatus(s)}
+            </button>
+          ))}
+        </div>
+
+        {/* Activity filter */}
+        <div role="group" aria-label="Activity filter" className="flex rounded-lg overflow-hidden border border-outline-variant/30">
+          {VALID_ACTIVITIES.map((a) => (
+            <button
+              key={a}
+              onClick={() => setParam("activity", a, true)}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                activity === a
+                  ? "bg-primary-dim text-on-surface"
+                  : "bg-background-container text-on-surface-variant hover:text-on-surface"
+              }`}
+            >
+              {activityLabel(a)}
             </button>
           ))}
         </div>
@@ -273,6 +293,13 @@ interface SyncUserErrorDetails {
 
 function titleCaseStatus(status: SyncRun["status"]): string {
   return capitalizeSentence(status);
+}
+
+function activityLabel(activity: ActivityFilter | SyncRun["activity"]): string {
+  if (activity === "changes") return "Changes";
+  if (activity === "no_changes") return "No Changes";
+  if (activity === "unknown") return "Unknown";
+  return "All";
 }
 
 function formatRunDuration(run: SyncRun, now = Date.now()): string | null {
@@ -682,6 +709,8 @@ function RunRow({ run }: { run: SyncRun }) {
 
   const config = statusConfig[liveRun.status];
   const durationText = formatRunDuration(liveRun, now);
+  const showActivityBadge = liveRun.status === "success" &&
+    (liveRun.activity === "changes" || liveRun.activity === "no_changes");
 
   return (
     <div className="bg-background-container rounded-xl border border-outline-variant/20 overflow-hidden">
@@ -698,6 +727,11 @@ function RunRow({ run }: { run: SyncRun }) {
             <span className={`text-xs px-1.5 py-0.5 rounded-full border font-medium ${config.badge}`}>
               {titleCaseStatus(liveRun.status)}
             </span>
+            {showActivityBadge && (
+              <span className="text-xs px-1.5 py-0.5 rounded-full border border-outline-variant/20 bg-background-container-high text-on-surface-variant font-medium">
+                {activityLabel(liveRun.activity)}
+              </span>
+            )}
           </div>
           <div className="text-on-surface-variant text-xs mt-0.5 truncate">
             {capitalizeSentence(stripKindPrefix(liveRun.summary))}

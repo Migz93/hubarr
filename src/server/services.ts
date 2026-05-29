@@ -4,6 +4,7 @@ import type {
   CollectionSortOrder,
   PreloadPhase,
   PreloadProgressEvent,
+  SeerrRequestState,
   SeerrUser,
   UserRecord,
   PlexSettingsInput,
@@ -465,7 +466,8 @@ export class HubarrServices {
           runId,
           runStatus,
           `Onboarding preload: ${succeeded}/${total} users synced.`,
-          failures.length > 0 ? failures.join(" | ") : null
+          failures.length > 0 ? failures.join(" | ") : null,
+          runStatus === "success" ? this.classifySyncRunActivity(runId) : undefined
         );
         emit("graphql-sync", "done", `Synced watchlists for ${succeeded} of ${total} user${total !== 1 ? "s" : ""}`, { progress: total, total });
         this.logger.info("Onboarding preload: watchlist sync complete", { succeeded, failed: total - succeeded });
@@ -1057,6 +1059,8 @@ export class HubarrServices {
       return item;
     });
 
+    const watchlistChanges = this.diffWatchlistItems(existingItems, mergedWithDates);
+
     this.db.replaceWatchlistItems(friend.id, mergedWithDates);
 
     const plexSettings = this.db.getPlexSettings();
@@ -1102,7 +1106,11 @@ export class HubarrServices {
         isSelf: friend.isSelf,
         itemCount: mergedWithDates.length,
         matched: matchedCount,
-        unmatched: unmatchedItems.length
+        unmatched: unmatchedItems.length,
+        changed: watchlistChanges.changed,
+        added: watchlistChanges.added,
+        removed: watchlistChanges.removed,
+        updated: watchlistChanges.updated
       },
       friend.id
     );
@@ -1158,6 +1166,90 @@ export class HubarrServices {
     });
 
     return mergedWithDates;
+  }
+
+  private diffWatchlistItems(
+    before: WatchlistItem[],
+    after: WatchlistItem[]
+  ): { changed: boolean; added: number; removed: number; updated: number } {
+    const beforeById = new Map(before.map((item) => [item.plexItemId, item]));
+    const afterById = new Map(after.map((item) => [item.plexItemId, item]));
+    let added = 0;
+    let removed = 0;
+    let updated = 0;
+
+    for (const [plexItemId, item] of afterById) {
+      const existing = beforeById.get(plexItemId);
+      if (!existing) {
+        added++;
+        continue;
+      }
+      if (this.watchlistItemChanged(existing, item)) {
+        updated++;
+      }
+    }
+
+    for (const plexItemId of beforeById.keys()) {
+      if (!afterById.has(plexItemId)) {
+        removed++;
+      }
+    }
+
+    return {
+      changed: added > 0 || removed > 0 || updated > 0,
+      added,
+      removed,
+      updated
+    };
+  }
+
+  private watchlistItemChanged(before: WatchlistItem, after: WatchlistItem): boolean {
+    const beforeGuids = [...(before.guids ?? [])].sort();
+    const afterGuids = [...(after.guids ?? [])].sort();
+    return before.title !== after.title ||
+      before.type !== after.type ||
+      before.year !== after.year ||
+      before.releaseDate !== after.releaseDate ||
+      before.thumb !== after.thumb ||
+      before.discoverKey !== after.discoverKey ||
+      before.source !== after.source ||
+      before.addedAt !== after.addedAt ||
+      before.matchedRatingKey !== after.matchedRatingKey ||
+      beforeGuids.length !== afterGuids.length ||
+      beforeGuids.some((guid, index) => guid !== afterGuids[index]);
+  }
+
+  private classifySyncRunActivity(runId: number): "changes" | "no_changes" {
+    const run = this.db.getSyncRunWithItems(runId);
+    const hasChanges = run?.items.some((item) => {
+      if (item.status !== "success") return false;
+      if (item.action === "watchlist.fetch") {
+        const details = item.details as { changed?: unknown };
+        return details.changed === true;
+      }
+      if (item.action === "isolation.filters") {
+        const details = item.details as { updated?: unknown };
+        return typeof details.updated === "number" && details.updated > 0;
+      }
+      return item.action === "collection.publish" ||
+        item.action === "watchlist.cleanup.removed" ||
+        item.action === "seerr.request.created" ||
+        (item.action === "seerr.request.existing" && (item.details as { stateChanged?: unknown }).stateChanged === true);
+    }) ?? false;
+
+    return hasChanges ? "changes" : "no_changes";
+  }
+
+  private seerrRequestStateChanged(before: SeerrRequestState | null, after: SeerrRequestState): boolean {
+    if (!before) return true;
+    return before.plexItemId !== after.plexItemId ||
+      before.seerrRequestId !== after.seerrRequestId ||
+      before.seerrMediaId !== after.seerrMediaId ||
+      before.tmdbId !== after.tmdbId ||
+      before.outcome !== after.outcome ||
+      before.lastError !== after.lastError ||
+      before.effectiveSeerrUserId !== after.effectiveSeerrUserId ||
+      before.executionSeerrUserId !== after.executionSeerrUserId;
   }
 
   private async publishUserCollections(
@@ -1636,7 +1728,7 @@ export class HubarrServices {
         durationMs: Date.now() - syncStart
       });
     } else {
-      this.db.completeSyncRun(runId, "success", `Full sync finished for ${friends.length} users.`, null);
+      this.db.completeSyncRun(runId, "success", `Full sync finished for ${friends.length} users.`, null, this.classifySyncRunActivity(runId));
       this.logger.info("Full sync complete", {
         succeeded: friends.length,
         failed: 0,
@@ -1719,7 +1811,7 @@ export class HubarrServices {
       }
 
       const items = await this.syncUser(friend, runId, rssDateMap);
-      this.db.completeSyncRun(runId, "success", `Manual sync finished for ${label}.`, null);
+      this.db.completeSyncRun(runId, "success", `Manual sync finished for ${label}.`, null, this.classifySyncRunActivity(runId));
 
       // Publish pass runs first so stale matchedRatingKey values are cleared before
       // Seerr sync evaluates which items are genuinely missing from Plex.
@@ -1822,7 +1914,7 @@ export class HubarrServices {
         durationMs: Date.now() - syncStart
       });
     } else {
-      this.db.completeSyncRun(runId, "success", `Collection sync finished for ${friends.length} users.`, null);
+      this.db.completeSyncRun(runId, "success", `Collection sync finished for ${friends.length} users.`, null, this.classifySyncRunActivity(runId));
       this.logger.info("Collection sync complete", {
         succeeded: friends.length,
         failed: 0,
@@ -1847,7 +1939,7 @@ export class HubarrServices {
         reason: "cleanup-disabled",
         message: "Watchlist cleanup is disabled."
       });
-      this.db.completeSyncRun(runId, "success", "Watchlist Cleanup skipped: cleanup is disabled.", null);
+      this.db.completeSyncRun(runId, "success", "Watchlist Cleanup skipped: cleanup is disabled.", null, "no_changes");
       this.logger.info("Watchlist Cleanup skipped because cleanup is disabled");
       return { removed: 0, skipped: 1 };
     }
@@ -1859,7 +1951,7 @@ export class HubarrServices {
         reason: "missing-admin-user",
         message: "Admin/self user is not configured."
       });
-      this.db.completeSyncRun(runId, "success", "Watchlist Cleanup skipped: admin user is not configured.", null);
+      this.db.completeSyncRun(runId, "success", "Watchlist Cleanup skipped: admin user is not configured.", null, "no_changes");
       return { removed: 0, skipped: 1 };
     }
 
@@ -1976,7 +2068,7 @@ export class HubarrServices {
       const summary = removed > 0
         ? `Watchlist Cleanup removed ${removed} item${removed !== 1 ? "s" : ""}; skipped ${skipped}; failed ${failed}.`
         : `Watchlist Cleanup skipped: no watched items to remove (${skipped} skipped; ${failed} failed).`;
-      this.db.completeSyncRun(runId, "success", summary, null);
+      this.db.completeSyncRun(runId, "success", summary, null, removed > 0 ? "changes" : "no_changes");
       this.logger.info("Watchlist Cleanup complete", { removed, skipped, failed, durationMs: Date.now() - startedAt });
 
       if (removed > 0) {
@@ -2340,7 +2432,7 @@ export class HubarrServices {
       }
 
       if (!this.selfRssPrimed && !this.usersRssPrimed) {
-        this.db.completeSyncRun(runId, "success", "RSS sync skipped: neither feed is initialized.", null);
+        this.db.completeSyncRun(runId, "success", "RSS sync skipped: neither feed is initialized.", null, "no_changes");
         return this.db.listSyncRuns(1)[0];
       }
 
@@ -2449,7 +2541,8 @@ export class HubarrServices {
         total > 0
           ? `RSS sync: ${total} new item(s) processed (self: ${selfProcessed}, friends: ${friendsProcessed}).`
           : "RSS sync: 0 new items.",
-        null
+        null,
+        total > 0 ? "changes" : "no_changes"
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2943,7 +3036,7 @@ export class HubarrServices {
     try {
       const seerrSettings = this.db.getSeerrSettings();
       if (!seerrSettings.enabled || !seerrSettings.baseUrl || !seerrSettings.apiKey) {
-        this.db.completeSyncRun(runId, "success", "Seerr request sync skipped: Seerr is not configured.", null);
+        this.db.completeSyncRun(runId, "success", "Seerr request sync skipped: Seerr is not configured.", null, "no_changes");
         this.db.saveJobRunState("seerr-request-sync", {
           lastRunAt: new Date().toISOString(),
           lastRunStatus: "success"
@@ -2978,7 +3071,7 @@ export class HubarrServices {
       const summary = itemCount > 0
         ? `Seerr request sync finished for ${work.length} user(s) and ${itemCount} missing item(s).`
         : "Seerr request sync: 0 missing items.";
-      this.db.completeSyncRun(runId, "success", summary, null);
+      this.db.completeSyncRun(runId, "success", summary, null, this.classifySyncRunActivity(runId));
       this.db.saveJobRunState("seerr-request-sync", {
         lastRunAt: new Date().toISOString(),
         lastRunStatus: "success"
@@ -3190,7 +3283,8 @@ export class HubarrServices {
 
       if (evaluation) {
         // Item is already known to Seerr — update cached state and move on
-        this.db.upsertSeerrRequestState({
+        const previousState = this.db.getSeerrRequestState(friend.id, item.plexItemId);
+        const savedState = this.db.upsertSeerrRequestState({
           userId: friend.id,
           plexItemId: item.plexItemId,
           seerrRequestId: evaluation.seerrRequestId,
@@ -3200,6 +3294,7 @@ export class HubarrServices {
           effectiveSeerrUserId: requesterSeerrUserId,
           executionSeerrUserId
         });
+        const stateChanged = this.seerrRequestStateChanged(previousState, savedState);
         this.db.addSyncRunItem(runId, "seerr.request.existing", "success", {
           userId: friend.id,
           displayName: friend.displayName,
@@ -3209,7 +3304,8 @@ export class HubarrServices {
           tmdbId,
           outcome: evaluation.outcome,
           seerrRequestId: evaluation.seerrRequestId,
-          seerrMediaId: evaluation.seerrMediaId
+          seerrMediaId: evaluation.seerrMediaId,
+          stateChanged
         }, friend.id);
         continue;
       }

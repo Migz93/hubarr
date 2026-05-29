@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import type { DashboardResponse, RecentlyAddedItem, SyncRun } from "../../shared/types.js";
+import type { DashboardResponse, RecentlyAddedItem, SyncRun, SyncRunActivity } from "../../shared/types.js";
 import type { Logger } from "../logger.js";
 import { buildGuidMergePlan, mergeRawPayloadGuids } from "./guid-dedupe.js";
 import { listSeerrRequestedPlexItemIds } from "./seerr.js";
@@ -82,10 +82,15 @@ export function completeSyncRun(
   id: number,
   status: SyncRun["status"],
   summary: string,
-  error: string | null
+  error: string | null,
+  activity: SyncRunActivity = "unknown"
 ): void {
-  db.prepare("UPDATE sync_runs SET status = ?, completed_at = ?, summary = ?, error = ? WHERE id = ?")
-    .run(status, new Date().toISOString(), summary, error, id);
+  // Non-success runs always store "unknown": a partial-failure run may have done real
+  // work, but classifying its activity reliably is ambiguous, so we leave it to the
+  // "changes" filter's broad OR fallback (status IN ('running', 'error')) instead.
+  const runActivity = status === "success" ? activity : "unknown";
+  db.prepare("UPDATE sync_runs SET status = ?, completed_at = ?, summary = ?, error = ?, activity = ? WHERE id = ?")
+    .run(status, new Date().toISOString(), summary, error, runActivity, id);
 }
 
 export function updateSyncRunSummary(db: Database.Database, id: number, summary: string): void {
@@ -109,7 +114,7 @@ export function addSyncRunItem(
 export function listSyncRuns(db: Database.Database, limit = 10): SyncRun[] {
   return db
     .prepare(
-      "SELECT id, kind, status, started_at AS startedAt, completed_at AS completedAt, summary, error FROM sync_runs ORDER BY started_at DESC LIMIT ?"
+      "SELECT id, kind, status, activity, started_at AS startedAt, completed_at AS completedAt, summary, error FROM sync_runs ORDER BY started_at DESC LIMIT ?"
     )
     .all(limit) as SyncRun[];
 }
@@ -121,9 +126,10 @@ export function listSyncRunsPaginated(
     pageSize: number;
     kind?: string;
     status?: string;
+    activity?: string;
   }
 ): { results: SyncRun[]; total: number } {
-  const { page, pageSize, kind, status } = options;
+  const { page, pageSize, kind, status, activity } = options;
   const conditions: string[] = [];
   const params: unknown[] = [];
 
@@ -135,13 +141,20 @@ export function listSyncRunsPaginated(
     conditions.push("status = ?");
     params.push(status);
   }
+  if (activity === "changes") {
+    conditions.push("(activity = 'changes' OR status IN ('running', 'error'))");
+  } else if (activity === "no_changes") {
+    conditions.push("(status = 'success' AND activity = 'no_changes')");
+  } else if (activity === "unknown") {
+    conditions.push("activity = 'unknown'");
+  }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const offset = (page - 1) * pageSize;
 
   const total = (db.prepare(`SELECT COUNT(*) AS count FROM sync_runs ${where}`).get(...params) as { count: number }).count;
   const results = db
-    .prepare(`SELECT id, kind, status, started_at AS startedAt, completed_at AS completedAt, summary, error FROM sync_runs ${where} ORDER BY started_at DESC LIMIT ? OFFSET ?`)
+    .prepare(`SELECT id, kind, status, activity, started_at AS startedAt, completed_at AS completedAt, summary, error FROM sync_runs ${where} ORDER BY started_at DESC LIMIT ? OFFSET ?`)
     .all(...params, pageSize, offset) as SyncRun[];
 
   return { results, total };
@@ -152,7 +165,7 @@ export function getSyncRunWithItems(
   runId: number
 ): (SyncRun & { items: Array<{ id: number; runId: number; userId: number | null; action: string; status: string; details: unknown; createdAt: string }> }) | null {
   const run = db
-    .prepare("SELECT id, kind, status, started_at AS startedAt, completed_at AS completedAt, summary, error FROM sync_runs WHERE id = ?")
+    .prepare("SELECT id, kind, status, activity, started_at AS startedAt, completed_at AS completedAt, summary, error FROM sync_runs WHERE id = ?")
     .get(runId) as SyncRun | undefined;
 
   if (!run) return null;

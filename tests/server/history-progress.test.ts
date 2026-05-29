@@ -24,3 +24,33 @@ test("updateSyncRunSummary refreshes the live history summary for running syncs"
     cleanup();
   }
 });
+
+test("history activity filtering separates changes from no-change success runs", () => {
+  const { db, cleanup } = createTestDatabase();
+
+  try {
+    const changesRunId = db.createSyncRun("rss", "RSS sync started.");
+    db.completeSyncRun(changesRunId, "success", "RSS sync: 1 new item processed.", null, "changes");
+
+    const noChangesRunId = db.createSyncRun("rss", "RSS sync started.");
+    db.completeSyncRun(noChangesRunId, "success", "RSS sync: 0 new items.", null, "no_changes");
+
+    const runningRunId = db.createSyncRun("publish", "Collection sync started.");
+    const errorRunId = db.createSyncRun("full", "Full sync started.");
+    db.completeSyncRun(errorRunId, "error", "Full sync failed.", "Boom");
+
+    const changes = db.listSyncRunsPaginated({ page: 1, pageSize: 10, activity: "changes" }).results;
+    assert.deepEqual(
+      changes.map((run) => run.id).sort((a, b) => a - b),
+      [changesRunId, runningRunId, errorRunId].sort((a, b) => a - b)
+    );
+
+    const noChanges = db.listSyncRunsPaginated({ page: 1, pageSize: 10, activity: "no_changes" }).results;
+    assert.deepEqual(noChanges.map((run) => run.id), [noChangesRunId]);
+
+    const all = db.listSyncRunsPaginated({ page: 1, pageSize: 10, activity: "all" }).results;
+    assert.equal(all.length, 4);
+  } finally {
+    cleanup();
+  }
+});
