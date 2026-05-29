@@ -357,6 +357,18 @@ export class HubarrDatabase {
     collectionsRepo.clearCollections(this.db);
   }
 
+  getIsolationFilterState(): settingsRepo.IsolationFilterState | null {
+    return settingsRepo.getIsolationFilterState(this.db);
+  }
+
+  saveIsolationFilterState(inputHash: string): settingsRepo.IsolationFilterState {
+    return settingsRepo.saveIsolationFilterState(this.db, inputHash);
+  }
+
+  clearIsolationFilterState(): void {
+    settingsRepo.clearIsolationFilterState(this.db);
+  }
+
   // -------------------------------------------------------------------------
   // Sync Runs
   // -------------------------------------------------------------------------

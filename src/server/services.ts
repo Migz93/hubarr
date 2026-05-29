@@ -48,6 +48,26 @@ function computePublishStateHash(params: {
   return crypto.createHash("sha256").update(payload).digest("hex");
 }
 
+function computeIsolationFilterInputHash(
+  enabledUsers: UserRecord[],
+  getEffectiveVisibility: (user: UserRecord) => VisibilityConfig
+): string {
+  // version: bump this when the payload schema changes to force a one-time global re-run.
+  const users = enabledUsers
+    .map((user) => ({
+      id: user.id,
+      plexUserId: user.plexUserId,
+      username: user.username,
+      visibility: getEffectiveVisibility(user)
+    }))
+    .sort((a, b) => a.id - b.id);
+  const payload = JSON.stringify({
+    version: 2,
+    users
+  });
+  return crypto.createHash("sha256").update(payload).digest("hex");
+}
+
 function isCustomCollectionSort(sortOrder: CollectionSortOrder): boolean {
   return sortOrder !== "title";
 }
@@ -1236,6 +1256,8 @@ export class HubarrServices {
           }
 
           if (exists === true) {
+            let skipPublish = false;
+
             if (isCustomCollectionSort(effectiveSortOrder)) {
               let liveKeys: string[] | null;
               try {
@@ -1258,10 +1280,8 @@ export class HubarrServices {
                   collectionRatingKey: stored.collectionRatingKey,
                   effectiveSortOrder
                 });
-                continue;
-              }
-
-              if (liveKeys) {
+                skipPublish = true;
+              } else if (liveKeys) {
                 this.logger.info("Collection item order differs from desired state, republishing", {
                   userId: friend.id,
                   mediaType,
@@ -1270,14 +1290,28 @@ export class HubarrServices {
                   ...buildOrderMismatchMeta(liveKeys, matchedRatingKeys)
                 });
               }
-              // Hash matches but Plex order drifted, so keep the stored
-              // collection identity and fall through to the reorder path.
+              // Hash matches but Plex order drifted — fall through to the reorder path.
             } else {
               this.logger.debug("Collection state unchanged and collection validated, skipping publish", {
                 userId: friend.id,
                 mediaType,
                 collectionRatingKey: stored.collectionRatingKey
               });
+              skipPublish = true;
+            }
+
+            if (skipPublish) {
+              if (runId !== null) {
+                this.db.addSyncRunItem(runId, "collection.publish.skipped", "success", {
+                  userId: friend.id,
+                  displayName: friend.displayName,
+                  mediaType,
+                  collectionName,
+                  collectionRatingKey: stored.collectionRatingKey,
+                  matchedItems: matchedRatingKeys.length,
+                  reason: "state-unchanged"
+                }, friend.id);
+              }
               continue;
             }
           } else if (exists === false) {
@@ -1773,7 +1807,7 @@ export class HubarrServices {
       })
     ));
 
-    await this.applyIsolationFilters(friends, runId);
+    await this.applyIsolationFilters(friends, runId, force, plex);
 
     if (failures.length > 0) {
       const failedUsers = failedUserIds.size;
@@ -2771,16 +2805,56 @@ export class HubarrServices {
    * only sees their own watchlist hub row. Non-throwing — a failure here is
    * logged as a warning so it doesn't abort a sync run.
    */
-  async applyIsolationFilters(enabledUsers: UserRecord[], runId: number): Promise<void> {
+  async applyIsolationFilters(
+    enabledUsers: UserRecord[],
+    runId: number,
+    force = false,
+    plex = this.getPlexIntegration()
+  ): Promise<void> {
+    const appSettings = this.db.getAppSettings();
+    const inputHash = computeIsolationFilterInputHash(
+      enabledUsers,
+      (user) => user.visibilityOverride ?? appSettings.visibilityDefaults
+    );
+    const previousState = this.db.getIsolationFilterState();
+
+    // Skip is based on local input hash only — out-of-band Plex filter changes are not
+    // detected here and will not be repaired until force=true (manual refresh / user sync).
+    if (!force && previousState?.inputHash === inputHash) {
+      this.logger.info("Isolation filters skipped because isolation inputs are unchanged", {
+        userCount: enabledUsers.length,
+        inputHash,
+        lastSyncedAt: previousState.lastSyncedAt
+      });
+      this.db.addSyncRunItem(runId, "isolation.filters.skipped", "success", {
+        reason: "inputs-unchanged",
+        forced: false,
+        userCount: enabledUsers.length,
+        inputHash,
+        lastSyncedAt: previousState.lastSyncedAt
+      });
+      return;
+    }
+
     try {
-      const plex = this.getPlexIntegration();
       const { updated, skipped } = await plex.syncIsolationFilters(enabledUsers);
-      this.logger.info("Isolation filters applied", { updated, skipped });
-      this.db.addSyncRunItem(runId, "isolation.filters", "success", { updated, skipped });
+      const state = this.db.saveIsolationFilterState(inputHash);
+      this.logger.info("Isolation filters applied", { updated, skipped, force, inputHash });
+      this.db.addSyncRunItem(runId, "isolation.filters", "success", {
+        updated,
+        skipped,
+        forced: force,
+        userCount: enabledUsers.length,
+        inputHash,
+        lastSyncedAt: state.lastSyncedAt
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn("Isolation filter sync failed — collections are still published, but visibility isolation may be incomplete", { message });
-      this.db.addSyncRunItem(runId, "isolation.filters", "error", { message });
+      // Clear stored state so the next scheduled run retries rather than skipping
+      // because the previous successful hash still matches the current inputs.
+      this.db.clearIsolationFilterState();
+      this.db.addSyncRunItem(runId, "isolation.filters", "error", { message, inputHash });
     }
   }
 
@@ -3324,6 +3398,7 @@ export class HubarrServices {
 
     const isolation = await plex.clearHubarrIsolationFilters();
     this.db.clearCollections();
+    this.db.clearIsolationFilterState();
 
     this.logger.info("Hubarr collections reset", {
       deleted,
