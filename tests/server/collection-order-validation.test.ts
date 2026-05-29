@@ -160,12 +160,26 @@ test("title collection sort still skips on hash match after existence validation
       createMovie("movie-old", "Old Movie", "2024-01-01", "rk-old")
     ];
     const plex = createPlexMock({ collectionOrder: ["rk-old", "rk-new"] });
+    const runId = db.createSyncRun("publish", "Collection sync started.");
 
     await service.publishUserCollections(user, items, null, false, plex);
-    await service.publishUserCollections(user, items, null, false, plex);
+    await service.publishUserCollections(user, items, runId, false, plex);
 
     assert.equal(plex.calls.collectionExists, 1);
     assert.equal(plex.calls.ensureCollection, 1);
+    const run = db.getSyncRunWithItems(runId);
+    assert.ok(run);
+    const skippedItem = run.items.find((item) => item.action === "collection.publish.skipped");
+    assert.ok(skippedItem);
+    assert.deepEqual(skippedItem.details, {
+      userId: user.id,
+      displayName: "alex",
+      mediaType: "movie",
+      collectionName: "alexs Watchlist",
+      collectionRatingKey: "collection-1",
+      matchedItems: 2,
+      reason: "state-unchanged"
+    });
   } finally {
     cleanup();
   }

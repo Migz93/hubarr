@@ -10,7 +10,12 @@ import type {
   SessionUser
 } from "../../shared/types.js";
 
-export type SettingKey = "admin" | "plex" | "app" | "session_secret" | "seerr";
+export type IsolationFilterState = {
+  inputHash: string;
+  lastSyncedAt: string;
+};
+
+export type SettingKey = "admin" | "plex" | "app" | "session_secret" | "seerr" | "isolation_filters";
 
 export const defaultAppSettings: AppSettings = {
   reconciliationIntervalMinutes: 60,
@@ -57,6 +62,10 @@ export function setSetting(db: Database.Database, key: SettingKey, value: unknow
   `).run(key, JSON.stringify(value), updatedAt);
 }
 
+export function deleteSetting(db: Database.Database, key: SettingKey): void {
+  db.prepare("DELETE FROM settings WHERE key = ?").run(key);
+}
+
 export function seedDefaultSettings(db: Database.Database): void {
   if (!getSetting<AppSettings>(db, "app")) {
     setSetting(db, "app", defaultAppSettings);
@@ -69,6 +78,23 @@ export function resolveSessionSecret(db: Database.Database): string {
   const secret = crypto.randomBytes(48).toString("hex");
   setSetting(db, "session_secret", secret);
   return secret;
+}
+
+export function getIsolationFilterState(db: Database.Database): IsolationFilterState | null {
+  return getSetting<IsolationFilterState>(db, "isolation_filters");
+}
+
+export function saveIsolationFilterState(db: Database.Database, inputHash: string): IsolationFilterState {
+  const state: IsolationFilterState = {
+    inputHash,
+    lastSyncedAt: new Date().toISOString()
+  };
+  setSetting(db, "isolation_filters", state);
+  return state;
+}
+
+export function clearIsolationFilterState(db: Database.Database): void {
+  deleteSetting(db, "isolation_filters");
 }
 
 // -------------------------------------------------------------------------

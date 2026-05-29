@@ -255,6 +255,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       movieLibraryId: appSettings.defaultMovieLibraryId || "",
       showLibraryId: appSettings.defaultShowLibraryId || ""
     });
+    db.clearIsolationFilterState();
 
     services.upsertSelfUser().catch((err) => {
       logger.warn("Self user upsert failed after Plex settings save", {

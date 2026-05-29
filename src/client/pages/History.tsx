@@ -36,8 +36,10 @@ const ACTION_LABELS: Record<string, string> = {
   "watchlist.match.failed": "Match failed",
   "watchlist.date_unresolved": "Date unresolved",
   "collection.publish": "Collection publish",
+  "collection.publish.skipped": "Collection publish skipped",
   "collection.publish.followup": "Collection publish triggered",
   "isolation.filters": "Isolation filters",
+  "isolation.filters.skipped": "Isolation filters skipped",
   "sync.user": "User sync",
   "rss.feed.check.self": "Self RSS feed check",
   "rss.feed.check.friends": "Friends RSS feed check",
@@ -243,6 +245,7 @@ interface CollectionPublishDetails {
   collectionName?: string;
   collectionRatingKey?: string;
   matchedItems?: number;
+  reason?: string;
   message?: string;
 }
 
@@ -316,6 +319,17 @@ function formatStepLabel(item: SyncRunItem): string {
     return details?.message ?? "Triggered collection publish";
   }
 
+  if (item.action === "collection.publish.skipped") {
+    const details = item.details as CollectionPublishDetails | null;
+    const name = details?.displayName ?? "Unknown user";
+    const mediaType = formatMediaTypeLabel(details?.mediaType);
+    return `Skipped ${mediaType.toLowerCase()} collection publish for ${name}`;
+  }
+
+  if (item.action === "isolation.filters.skipped") {
+    return "Skipped isolation filters";
+  }
+
   return ACTION_LABELS[item.action] ?? item.action;
 }
 
@@ -328,6 +342,20 @@ function formatStepMeta(item: SyncRunItem): string | undefined {
   if (item.action === "collection.publish") {
     const details = item.details as CollectionPublishDetails | null;
     return details?.message;
+  }
+
+  if (item.action === "collection.publish.skipped") {
+    const details = item.details as CollectionPublishDetails | null;
+    return details?.reason === "state-unchanged"
+      ? "Collection state was unchanged."
+      : details?.reason;
+  }
+
+  if (item.action === "isolation.filters.skipped") {
+    const details = item.details as { reason?: string } | null;
+    return details?.reason === "inputs-unchanged"
+      ? "Isolation inputs were unchanged."
+      : details?.reason;
   }
 
   if (item.action === "rss.feed.check.self" || item.action === "rss.feed.check.friends") {
@@ -390,11 +418,13 @@ function groupSuccessfulSteps(run: SyncRun, items: SyncRunItem[]): HistoryStep[]
       (item) => item.status === "success" && item.action !== "collection.publish"
     );
     for (const item of genericSuccesses) {
+      const isSkipped = item.action.endsWith(".skipped");
       steps.push({
         id: `${item.id}-generic-success`,
         status: "success",
         label: formatStepLabel(item),
-        meta: formatStepMeta(item)
+        meta: formatStepMeta(item),
+        variant: isSkipped ? "skipped" : undefined
       });
     }
   } else if (run.kind === "rss") {
