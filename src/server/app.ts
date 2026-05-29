@@ -798,8 +798,11 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     const pageSize = Math.min(100, Math.max(1, Number(req.query["pageSize"] ?? 10)));
     const kind = (req.query["kind"] as string) || "all";
     const status = (req.query["status"] as string) || "all";
+    const VALID_ACTIVITIES = ["all", "changes", "no_changes", "unknown"];
+    const rawActivity = (req.query["activity"] as string) || "all";
+    const activity = VALID_ACTIVITIES.includes(rawActivity) ? rawActivity : "all";
 
-    const { results, total } = db.listSyncRunsPaginated({ page, pageSize, kind, status });
+    const { results, total } = db.listSyncRunsPaginated({ page, pageSize, kind, status, activity });
     const pages = Math.max(1, Math.ceil(total / pageSize));
     res.json({ results, pageInfo: { page, pageSize, pages, total } });
   });

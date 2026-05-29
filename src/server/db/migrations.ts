@@ -212,6 +212,16 @@ const migrations: Migration[] = [
           ON seerr_request_state(plex_item_id);
       `);
     }
+  },
+  {
+    version: 2,
+    up(db) {
+      db.exec(`
+        ALTER TABLE sync_runs
+          ADD COLUMN activity TEXT NOT NULL DEFAULT 'unknown'
+            CHECK(activity IN ('changes', 'no_changes', 'unknown'));
+      `);
+    }
   }
 ];
 

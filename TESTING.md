@@ -146,6 +146,24 @@ Tests that cached images are served correctly from `/images/`, that the route is
 
 ---
 
+### `tests/playwright/history.spec.ts` — History filters
+
+Read-only. Safe to run against a live instance.
+
+| Test | What it checks |
+|---|---|
+| Type filter buttons are all visible | Verifies the history type filter includes All, GraphQL, RSS, Manual, and Collection |
+| Status filter buttons are all visible | Verifies the status filter includes All, Success, Error, and Running |
+| Activity filter buttons are all visible | Verifies the activity filter includes All, Changes, and No Changes |
+| Activity filter starts with All | Verifies the activity filter order is All, Changes, then No Changes |
+| Page size select is visible | Verifies the history page-size selector is rendered |
+| RSS type filter updates URL | Clicks the RSS type filter and verifies `?type=rss` appears in the URL |
+| Success status filter updates URL | Clicks the Success status filter and verifies `?status=success` appears in the URL |
+| No Changes activity filter updates URL | Clicks the No Changes activity filter and verifies `?activity=no_changes` appears in the URL |
+| All activity filter updates URL | Clicks the All activity filter and verifies `?activity=all` appears in the URL |
+
+---
+
 ### `tests/playwright/live-refresh.spec.ts` — Live refresh behavior
 
 These tests trigger real background work and verify that the open page updates

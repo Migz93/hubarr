@@ -12,6 +12,7 @@ import type {
   PlexSettingsView,
   SessionUser,
   SyncRun,
+  SyncRunActivity,
   SeerrRequestState,
   SeerrUserLink,
   UserRecord,
@@ -385,8 +386,8 @@ export class HubarrDatabase {
     return syncRepo.createSyncRun(this.db, kind, summary);
   }
 
-  completeSyncRun(id: number, status: SyncRun["status"], summary: string, error: string | null): void {
-    syncRepo.completeSyncRun(this.db, id, status, summary, error);
+  completeSyncRun(id: number, status: SyncRun["status"], summary: string, error: string | null, activity?: SyncRunActivity): void {
+    syncRepo.completeSyncRun(this.db, id, status, summary, error, activity);
   }
 
   updateSyncRunSummary(id: number, summary: string): void {
@@ -406,6 +407,7 @@ export class HubarrDatabase {
     pageSize: number;
     kind?: string;
     status?: string;
+    activity?: string;
   }): { results: SyncRun[]; total: number } {
     return syncRepo.listSyncRunsPaginated(this.db, options);
   }

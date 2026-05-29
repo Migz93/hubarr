@@ -95,7 +95,7 @@ test.describe("Live refresh", () => {
 });
 
 async function getLatestRun(request: APIRequestContext, kind: SyncRun["kind"]): Promise<SyncRun | null> {
-  const response = await request.get(`/api/history?page=1&pageSize=10&kind=${kind}&status=all`);
+  const response = await request.get(`/api/history?page=1&pageSize=10&kind=${kind}&status=all&activity=all`);
   expect(response.ok()).toBe(true);
   const body = await response.json() as { results: SyncRun[] };
   return body.results[0] ?? null;
