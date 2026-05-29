@@ -2979,7 +2979,7 @@ export class HubarrServices {
 
   private isSeerrRequestWorkEnabled(userId: number): boolean {
     const link = this.db.getSeerrUserLink(userId);
-    return Boolean(link?.autoRequestEnabled);
+    return Boolean(link?.autoRequestEnabled && link.effectiveSeerrUserId);
   }
 
   private buildSeerrRequestWork(scope: SeerrRequestSyncScope): SeerrRequestWorkItem[] {

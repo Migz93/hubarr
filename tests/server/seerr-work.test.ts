@@ -47,7 +47,10 @@ test("Seerr request work only counts linked users with automatic requests enable
       { plexUserId: "plex-3", username: "cara", displayName: "Cara", avatarUrl: null }
     ]);
 
-    const [alice, bob, cara] = db.listUsers();
+    const users = db.listUsers();
+    const alice = users.find((user) => user.username === "alice");
+    const bob = users.find((user) => user.username === "bob");
+    const cara = users.find((user) => user.username === "cara");
     assert.ok(alice);
     assert.ok(bob);
     assert.ok(cara);
