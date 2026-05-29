@@ -418,11 +418,13 @@ function groupSuccessfulSteps(run: SyncRun, items: SyncRunItem[]): HistoryStep[]
       (item) => item.status === "success" && item.action !== "collection.publish"
     );
     for (const item of genericSuccesses) {
+      const isSkipped = item.action.endsWith(".skipped");
       steps.push({
         id: `${item.id}-generic-success`,
         status: "success",
         label: formatStepLabel(item),
-        meta: formatStepMeta(item)
+        meta: formatStepMeta(item),
+        variant: isSkipped ? "skipped" : undefined
       });
     }
   } else if (run.kind === "rss") {

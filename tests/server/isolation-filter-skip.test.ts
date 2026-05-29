@@ -34,7 +34,7 @@ function createService() {
   const { logger } = createCapturingLogger();
   const { db, cleanup } = createTestDatabase();
   const service = new HubarrServices(db, logger, {} as ImageCacheService) as unknown as {
-    applyIsolationFilters: (enabledUsers: UserRecord[], runId: number, force?: boolean, plex?: unknown) => Promise<void>;
+    applyIsolationFilters: (enabledUsers: UserRecord[], runId: number, force?: boolean, plex?: unknown) => Promise<string | null>;
   };
 
   return { db, service, cleanup };
@@ -144,12 +144,49 @@ test("isolation filters rerun after a failed sync clears stored state", async ()
     };
     const runId = db.createSyncRun("publish", "Collection sync started.");
 
-    await service.applyIsolationFilters([user], runId, false, plex);
+    const failure = await service.applyIsolationFilters([user], runId, false, plex);
+    assert.equal(failure, "Plex API error");
     assert.equal(calls.syncIsolationFilters, 1);
 
     // State should be cleared on error so the next run retries
     await service.applyIsolationFilters([user], runId, false, plex);
     assert.equal(calls.syncIsolationFilters, 2);
+  } finally {
+    cleanup();
+  }
+});
+
+test("collection sync run is marked error when isolation filters fail", async () => {
+  const { logger } = createCapturingLogger();
+  const { db, cleanup } = createTestDatabase();
+  const service = new HubarrServices(db, logger, {} as ImageCacheService) as unknown as {
+    runPublishPass: (force?: boolean) => Promise<{ id: number; status: string; error: string | null }>;
+    publishUserCollections: () => Promise<string[]>;
+    getPlexIntegration: () => unknown;
+  };
+
+  try {
+    const user = createUser(db);
+    db.updateAppSettings({
+      defaultMovieLibraryId: "movies",
+      defaultShowLibraryId: "shows"
+    });
+    service.publishUserCollections = async () => [];
+    service.getPlexIntegration = () => ({
+      createCollectionLabel(username: string) { return `hubarr:${username}`; },
+      async syncIsolationFilters() {
+        throw new Error("Plex API error");
+      }
+    });
+
+    const run = await service.runPublishPass(false);
+
+    assert.equal(run.status, "error");
+    assert.equal(run.error, "Isolation filters: Plex API error");
+    const detail = db.getSyncRunWithItems(run.id);
+    assert.ok(detail);
+    assert.ok(detail.items.some((item) => item.action === "isolation.filters" && item.status === "error"));
+    assert.equal(db.getUser(user.id)?.lastSyncError, null);
   } finally {
     cleanup();
   }

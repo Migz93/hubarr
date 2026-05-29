@@ -1807,7 +1807,10 @@ export class HubarrServices {
       })
     ));
 
-    await this.applyIsolationFilters(friends, runId, force, plex);
+    const isolationFailure = await this.applyIsolationFilters(friends, runId, force, plex);
+    if (isolationFailure) {
+      failures.push(`Isolation filters: ${isolationFailure}`);
+    }
 
     if (failures.length > 0) {
       const failedUsers = failedUserIds.size;
@@ -2802,15 +2805,15 @@ export class HubarrServices {
 
   /**
    * Apply per-user Plex content filter exclusions so each managed Plex user
-   * only sees their own watchlist hub row. Non-throwing — a failure here is
-   * logged as a warning so it doesn't abort a sync run.
+   * only sees their own watchlist hub row. Non-throwing so collection publishing
+   * can finish, but returns a failure message so the run can be marked errored.
    */
   async applyIsolationFilters(
     enabledUsers: UserRecord[],
     runId: number,
     force = false,
     plex = this.getPlexIntegration()
-  ): Promise<void> {
+  ): Promise<string | null> {
     const appSettings = this.db.getAppSettings();
     const inputHash = computeIsolationFilterInputHash(
       enabledUsers,
@@ -2833,7 +2836,7 @@ export class HubarrServices {
         inputHash,
         lastSyncedAt: previousState.lastSyncedAt
       });
-      return;
+      return null;
     }
 
     try {
@@ -2848,6 +2851,7 @@ export class HubarrServices {
         inputHash,
         lastSyncedAt: state.lastSyncedAt
       });
+      return null;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn("Isolation filter sync failed — collections are still published, but visibility isolation may be incomplete", { message });
@@ -2855,6 +2859,7 @@ export class HubarrServices {
       // because the previous successful hash still matches the current inputs.
       this.db.clearIsolationFilterState();
       this.db.addSyncRunItem(runId, "isolation.filters", "error", { message, inputHash });
+      return message;
     }
   }
 
