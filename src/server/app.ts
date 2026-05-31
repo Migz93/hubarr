@@ -588,7 +588,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       res.status(400).json({ error: "ids (array) and enabled (boolean) are required." });
       return;
     }
-    const ids = (body.ids as unknown[]).filter((id): id is number => typeof id === "number");
+    const ids = [...new Set((body.ids as unknown[]).filter((id): id is number => typeof id === "number"))];
     const usersToBackfill = body.enabled
       ? ids
           .map((id) => db.getUser(id))
@@ -600,9 +600,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       enabled: body.enabled,
       updated
     });
-    const updatedIds = new Set(updated);
     for (const previousUser of usersToBackfill) {
-      if (!updatedIds.has(previousUser.id)) continue;
       const user = db.getUser(previousUser.id);
       if (user?.enabled) {
         startUserActivityDateBackfill(user);

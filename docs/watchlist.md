@@ -307,9 +307,11 @@ The backfill first runs the user's normal GraphQL watchlist sync so the current
 watchlist rows and identifier aliases are available. After each activity-feed
 page is upserted, Hubarr checks the user's sentinel-date watchlist rows through
 the same identifier matching tables used by normal sync. The scan stops once no
-unresolved sentinel rows remain, or when the feed is exhausted. A second user
-sync then reapplies date resolution so `watchlist_cache.added_at` is updated
-from the newly cached activity rows.
+unresolved sentinel rows remain, or when the feed is exhausted. The latest
+processed activity-feed cursor is stored in `job_run_state` under a per-user
+backfill key so a later retry can resume a long scan instead of starting again
+from the newest page. A second user sync then reapplies date resolution so
+`watchlist_cache.added_at` is updated from the newly cached activity rows.
 
 ### How it is used
 

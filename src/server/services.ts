@@ -2358,6 +2358,9 @@ export class HubarrServices {
     const label = friend.isSelf ? "self" : friend.displayName;
     const runId = this.db.createSyncRun("user", `Activity-date backfill for ${label}.`);
     const plex = new PlexIntegration(plexSettings, this.logger);
+    const stateId = `activity-date-backfill:${friend.id}`;
+    const savedState = this.db.getJobRunState(stateId);
+    let after = savedState?.lastRunAt ?? null;
     let scannedPages = 0;
     let fetched = 0;
     let upserted = 0;
@@ -2365,11 +2368,16 @@ export class HubarrServices {
     this.logger.info("User activity-date backfill started", {
       userId: friend.id,
       displayName: friend.displayName,
-      plexUserId: friend.plexUserId
+      plexUserId: friend.plexUserId,
+      resumeCursorPresent: Boolean(after)
     });
 
     try {
       await this.syncUser(friend, runId);
+      const activityFeedPlexUserId = friend.isSelf ? await plex.fetchSelfPlexUuid() : friend.plexUserId;
+      if (friend.isSelf) {
+        this.db.upsertUserIdentifierAlias(friend.id, activityFeedPlexUserId);
+      }
       let remaining = this.db.countUnresolvedWatchlistDatesAfterActivityCache(friend.id);
       const initialRemaining = remaining;
 
@@ -2384,6 +2392,10 @@ export class HubarrServices {
           remaining
         }, friend.id);
         this.db.completeSyncRun(runId, "success", `Activity-date backfill found no unresolved dates for ${label}.`, null, "no_changes");
+        this.db.saveJobRunState(stateId, {
+          lastRunAt: null,
+          lastRunStatus: "success"
+        });
         this.logger.info("User activity-date backfill skipped scan — no unresolved dates", {
           userId: friend.id,
           displayName: friend.displayName
@@ -2392,7 +2404,8 @@ export class HubarrServices {
       }
 
       await plex.fetchWatchlistActivityFeed(null, {
-        plexUserId: friend.plexUserId,
+        plexUserId: activityFeedPlexUserId,
+        after,
         onPage: (entries, page) => {
           scannedPages = page.pageNumber;
           fetched += entries.length;
@@ -2407,6 +2420,11 @@ export class HubarrServices {
             page: page.pageNumber,
             entries: entries.length,
             remaining
+          });
+          after = page.endCursor;
+          this.db.saveJobRunState(stateId, {
+            lastRunAt: after,
+            lastRunStatus: "error"
           });
           return remaining > 0;
         }
@@ -2433,6 +2451,10 @@ export class HubarrServices {
         null,
         this.classifySyncRunActivity(runId)
       );
+      this.db.saveJobRunState(stateId, {
+        lastRunAt: null,
+        lastRunStatus: "success"
+      });
 
       this.logger.info("User activity-date backfill complete", {
         userId: friend.id,
@@ -2459,6 +2481,10 @@ export class HubarrServices {
         message
       }, friend.id);
       this.db.completeSyncRun(runId, "error", `Activity-date backfill failed for ${label}.`, message);
+      this.db.saveJobRunState(stateId, {
+        lastRunAt: after,
+        lastRunStatus: "error"
+      });
       throw err;
     }
   }

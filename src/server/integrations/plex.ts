@@ -1074,6 +1074,7 @@ export class PlexIntegration {
     since: string | null,
     options: {
       plexUserId?: string;
+      after?: string | null;
       onPage?: (
         entries: Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }>,
         page: { endCursor: string | null; hasNextPage: boolean; pageNumber: number }
@@ -1081,7 +1082,7 @@ export class PlexIntegration {
     } = {}
   ): Promise<Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }>> {
     const results: Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }> = [];
-    let after: string | null = null;
+    let after: string | null = options.after ?? null;
     let hasNextPage = true;
     let pageNumber = 0;
     const targetPlexUserId = options.plexUserId?.trim().toLowerCase();
@@ -1121,7 +1122,9 @@ export class PlexIntegration {
         });
       }
 
-      results.push(...pageEntries);
+      if (!options.onPage) {
+        results.push(...pageEntries);
+      }
 
       const shouldContinue = options.onPage
         ? await options.onPage(pageEntries, {
