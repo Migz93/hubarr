@@ -588,7 +588,9 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       res.status(400).json({ error: "ids (array) and enabled (boolean) are required." });
       return;
     }
-    const ids = [...new Set((body.ids as unknown[]).filter((id): id is number => typeof id === "number"))];
+    const ids = [...new Set(
+      (body.ids as unknown[]).filter((id): id is number => typeof id === "number" && Number.isSafeInteger(id) && id > 0)
+    )];
     const usersToBackfill = body.enabled
       ? ids
           .map((id) => db.getUser(id))

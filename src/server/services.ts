@@ -1165,7 +1165,7 @@ export class HubarrServices {
       durationMs: Date.now() - syncStart
     });
 
-    return mergedWithDates;
+    return { items: mergedWithDates, selfPlexUuid };
   }
 
   private diffWatchlistItems(
@@ -1810,7 +1810,7 @@ export class HubarrServices {
         });
       }
 
-      const items = await this.syncUser(friend, runId, rssDateMap);
+      const { items } = await this.syncUser(friend, runId, rssDateMap);
       this.db.completeSyncRun(runId, "success", `Manual sync finished for ${label}.`, null, this.classifySyncRunActivity(runId));
 
       // Publish pass runs first so stale matchedRatingKey values are cleared before
@@ -2373,9 +2373,13 @@ export class HubarrServices {
     });
 
     try {
-      await this.syncUser(friend, runId);
-      const activityFeedPlexUserId = friend.isSelf ? await plex.fetchSelfPlexUuid() : friend.plexUserId;
+      const initialSync = await this.syncUser(friend, runId);
+      let activityFeedPlexUserId = friend.plexUserId;
       if (friend.isSelf) {
+        if (!initialSync.selfPlexUuid) {
+          throw new Error("Self user activity-date backfill could not resolve the Plex UUID.");
+        }
+        activityFeedPlexUserId = initialSync.selfPlexUuid;
         this.db.upsertUserIdentifierAlias(friend.id, activityFeedPlexUserId);
       }
       let remaining = this.db.countUnresolvedWatchlistDatesAfterActivityCache(friend.id);
