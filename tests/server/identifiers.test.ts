@@ -56,3 +56,60 @@ test("batchUpsertMediaItemIdentifiers seeds canonical, discover, and guid lookup
     cleanup();
   }
 });
+
+test("countUnresolvedWatchlistDatesAfterActivityCache uses identifier aliases", () => {
+  const { db, cleanup } = createTestDatabase();
+
+  try {
+    db.upsertUsers([
+      { plexUserId: "plex-user-1", username: "alice", displayName: "Alice", avatarUrl: null }
+    ]);
+
+    const [alice] = db.listUsers();
+    db.upsertUserIdentifierAlias(alice.id, "plex-user-1");
+
+    db.replaceWatchlistItems(alice.id, [
+      {
+        plexItemId: "movie-a",
+        title: "Movie A",
+        type: "movie",
+        year: 2026,
+        releaseDate: "2026-01-01",
+        thumb: null,
+        guids: ["imdb://tt1234567"],
+        discoverKey: "/library/metadata/101",
+        source: "graphql",
+        addedAt: "2001-01-01T00:00:00.000Z",
+        matchedRatingKey: null
+      },
+      {
+        plexItemId: "movie-b",
+        title: "Movie B",
+        type: "movie",
+        year: 2026,
+        releaseDate: "2026-02-01",
+        thumb: null,
+        guids: ["imdb://tt7654321"],
+        discoverKey: "/library/metadata/102",
+        source: "graphql",
+        addedAt: "2001-01-01T00:00:00.000Z",
+        matchedRatingKey: null
+      }
+    ]);
+    db.batchUpsertMediaItemIdentifiers(db.getWatchlistItems(alice.id));
+
+    assert.equal(db.countUnresolvedWatchlistDatesAfterActivityCache(alice.id), 2);
+
+    db.upsertActivityCacheEntries([
+      {
+        plexItemId: "imdb://tt1234567",
+        plexUserId: "plex-user-1",
+        watchlistedAt: "2026-04-10T12:00:00.000Z"
+      }
+    ]);
+
+    assert.equal(db.countUnresolvedWatchlistDatesAfterActivityCache(alice.id), 1);
+  } finally {
+    cleanup();
+  }
+});

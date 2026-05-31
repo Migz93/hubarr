@@ -294,6 +294,23 @@ Since Plex returns events newest-first, the fetch stops as soon as an entry
 older than the last run timestamp is encountered — keeping the incremental cost
 low regardless of total feed size.
 
+### Per-user backfill on enable
+
+When an existing friend is enabled after the global activity cache has already
+entered incremental mode, Hubarr starts a non-blocking activity-date backfill for
+that user. This flow is intentionally independent of
+`activity-cache-fetch.last_run_at`: it scans the historical activity feed with no
+global cursor, filters events to the enabled user's Plex ID, and upserts matching
+rows into `watchlist_activity_cache`.
+
+The backfill first runs the user's normal GraphQL watchlist sync so the current
+watchlist rows and identifier aliases are available. After each activity-feed
+page is upserted, Hubarr checks the user's sentinel-date watchlist rows through
+the same identifier matching tables used by normal sync. The scan stops once no
+unresolved sentinel rows remain, or when the feed is exhausted. A second user
+sync then reapplies date resolution so `watchlist_cache.added_at` is updated
+from the newly cached activity rows.
+
 ### How it is used
 
 During `syncUser()`, after the GraphQL fetch and merge, any item whose `addedAt`
