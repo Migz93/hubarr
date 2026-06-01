@@ -70,6 +70,11 @@ export function listCollections(db: Database.Database): PlexCollectionRecord[] {
     .all() as PlexCollectionRecord[];
 }
 
+export function deleteCollectionsForUser(db: Database.Database, userId: number): number {
+  const result = db.prepare("DELETE FROM plex_collections WHERE user_id = ?").run(userId);
+  return Number(result.changes);
+}
+
 export function clearCollections(db: Database.Database): void {
   db.prepare("DELETE FROM plex_collections").run();
 }
