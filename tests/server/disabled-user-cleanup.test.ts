@@ -166,6 +166,53 @@ test("disabled-user cleanup falls back to DB-only when getLibraries throws", asy
   }
 });
 
+test("disabled-user cleanup scans Plex collections once for a bulk user cleanup", async () => {
+  const calls = {
+    getCollections: 0,
+    getCollectionLabels: 0
+  };
+  const deleted: string[] = [];
+  const plex = {
+    createCollectionLabel(username: string) {
+      return `hubarr:${username}-watchlist`;
+    },
+    async getLibraries() {
+      return [{ key: "movies", title: "Movies", type: "movie" as const }];
+    },
+    async getCollections() {
+      calls.getCollections += 1;
+      return [
+        { ratingKey: "orphan-alex", title: "Alex Watchlist" },
+        { ratingKey: "orphan-bob", title: "Bob Watchlist" }
+      ];
+    },
+    async getCollectionLabels(ratingKey: string) {
+      calls.getCollectionLabels += 1;
+      return {
+        "orphan-alex": ["hubarr:alex-watchlist"],
+        "orphan-bob": ["hubarr:bob-watchlist"]
+      }[ratingKey] ?? [];
+    },
+    async deleteCollection(ratingKey: string) {
+      deleted.push(ratingKey);
+    }
+  };
+  const { db, service, cleanup } = createService(plex);
+
+  try {
+    const alex = createUser(db, "plex-alex", "alex", "Alex");
+    const bob = createUser(db, "plex-bob", "bob", "Bob");
+
+    await service.cleanupDisabledUserCollections([alex, bob]);
+
+    assert.equal(calls.getCollections, 1);
+    assert.equal(calls.getCollectionLabels, 2);
+    assert.deepEqual(deleted.sort(), ["orphan-alex", "orphan-bob"]);
+  } finally {
+    cleanup();
+  }
+});
+
 test("disabled-user cleanup logs deletion failures and continues with other users", async () => {
   const deleted: string[] = [];
   const plex = {

@@ -1977,6 +1977,49 @@ export class HubarrServices {
     });
 
     const allCollections = this.db.listCollections();
+    const collectionsByLabel = new Map<string, Array<{ ratingKey: string; source: "label-scan"; title?: string; libraryId?: string }>>();
+
+    for (const library of libraries) {
+      let plexCollections: Array<{ ratingKey: string; title: string }>;
+      try {
+        plexCollections = await plex.getCollections(library.key);
+      } catch (error) {
+        this.logger.warn("Could not scan Plex library during disabled-user collection cleanup", {
+          libraryId: library.key,
+          libraryTitle: library.title,
+          message: error instanceof Error ? error.message : String(error)
+        });
+        continue;
+      }
+
+      for (const collection of plexCollections) {
+        try {
+          const labels = await plex.getCollectionLabels(collection.ratingKey);
+          for (const label of labels) {
+            const normalizedLabel = label.toLowerCase();
+            if (!normalizedLabel.startsWith("hubarr:")) {
+              continue;
+            }
+
+            const entries = collectionsByLabel.get(normalizedLabel) ?? [];
+            entries.push({
+              ratingKey: collection.ratingKey,
+              source: "label-scan",
+              title: collection.title,
+              libraryId: library.key
+            });
+            collectionsByLabel.set(normalizedLabel, entries);
+          }
+        } catch (error) {
+          this.logger.warn("Could not read Plex collection labels during disabled-user collection cleanup", {
+            collectionRatingKey: collection.ratingKey,
+            title: collection.title,
+            libraryId: library.key,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    }
 
     for (const user of users) {
       const expectedLabel = plex.createCollectionLabel(user.username).toLowerCase();
@@ -1991,43 +2034,8 @@ export class HubarrServices {
         }
       }
 
-      for (const library of libraries) {
-        let plexCollections: Array<{ ratingKey: string; title: string }>;
-        try {
-          plexCollections = await plex.getCollections(library.key);
-        } catch (error) {
-          this.logger.warn("Could not scan Plex library during disabled-user collection cleanup", {
-            userId: user.id,
-            displayName: user.displayName,
-            libraryId: library.key,
-            libraryTitle: library.title,
-            message: error instanceof Error ? error.message : String(error)
-          });
-          continue;
-        }
-
-        for (const collection of plexCollections) {
-          try {
-            const labels = await plex.getCollectionLabels(collection.ratingKey);
-            if (labels.some((label) => label.toLowerCase() === expectedLabel)) {
-              candidates.set(collection.ratingKey, {
-                ratingKey: collection.ratingKey,
-                source: "label-scan",
-                title: collection.title,
-                libraryId: library.key
-              });
-            }
-          } catch (error) {
-            this.logger.warn("Could not read Plex collection labels during disabled-user collection cleanup", {
-              userId: user.id,
-              displayName: user.displayName,
-              collectionRatingKey: collection.ratingKey,
-              title: collection.title,
-              libraryId: library.key,
-              message: error instanceof Error ? error.message : String(error)
-            });
-          }
-        }
+      for (const collection of collectionsByLabel.get(expectedLabel) ?? []) {
+        candidates.set(collection.ratingKey, collection);
       }
 
       for (const candidate of candidates.values()) {
