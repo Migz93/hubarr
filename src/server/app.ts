@@ -15,6 +15,7 @@ import type {
   SettingsResponse,
   SessionUser,
   SetupStatusResponse,
+  UserRecord,
   VisibilityConfig
 } from "../shared/types.js";
 import { createSessionId } from "./auth.js";
@@ -173,6 +174,20 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       return;
     }
     next();
+  }
+
+  function startUserActivityDateBackfill(user: UserRecord) {
+    logger.info("User enabled — starting activity-date backfill", {
+      userId: user.id,
+      displayName: user.displayName
+    });
+    services.backfillUserActivityDates(user.id).catch((err) => {
+      logger.warn("User activity-date backfill failed after enable", {
+        userId: user.id,
+        displayName: user.displayName,
+        message: err instanceof Error ? err.message : String(err)
+      });
+    });
   }
 
   function setSessionCookie(res: Response, sessionId: string) {
@@ -573,13 +588,26 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       res.status(400).json({ error: "ids (array) and enabled (boolean) are required." });
       return;
     }
-    const ids = (body.ids as unknown[]).filter((id): id is number => typeof id === "number");
+    const ids = [...new Set(
+      (body.ids as unknown[]).filter((id): id is number => typeof id === "number" && Number.isSafeInteger(id) && id > 0)
+    )];
+    const usersToBackfill = body.enabled
+      ? ids
+          .map((id) => db.getUser(id))
+          .filter((user): user is UserRecord => user !== null && !user.enabled)
+      : [];
     const updated = db.bulkUpdateUsers(ids, body.enabled);
     logger.info("Bulk user update applied", {
       requestedIds: ids.length,
       enabled: body.enabled,
       updated
     });
+    for (const previousUser of usersToBackfill) {
+      const user = db.getUser(previousUser.id);
+      if (user?.enabled) {
+        startUserActivityDateBackfill(user);
+      }
+    }
     res.json({ updated });
   });
 
@@ -673,6 +701,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       }
 
       const updatedFields = Object.keys(body).filter((key) => allowedUserPatchFields.has(key));
+      const previousUser = db.getUser(Number(req.params.id));
       const user = db.updateUser(Number(req.params.id), updatePayload);
       logger.info("User settings updated", {
         userId: user.id,
@@ -680,6 +709,9 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         updatedFields,
         fieldCount: updatedFields.length
       });
+      if (updatePayload.enabled === true && previousUser && !previousUser.enabled) {
+        startUserActivityDateBackfill(user);
+      }
       res.json(user);
     } catch (error) {
       res.status(404).json({ error: error instanceof Error ? error.message : String(error) });

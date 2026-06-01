@@ -1165,7 +1165,7 @@ export class HubarrServices {
       durationMs: Date.now() - syncStart
     });
 
-    return mergedWithDates;
+    return { items: mergedWithDates, selfPlexUuid };
   }
 
   private diffWatchlistItems(
@@ -1810,7 +1810,7 @@ export class HubarrServices {
         });
       }
 
-      const items = await this.syncUser(friend, runId, rssDateMap);
+      const { items } = await this.syncUser(friend, runId, rssDateMap);
       this.db.completeSyncRun(runId, "success", `Manual sync finished for ${label}.`, null, this.classifySyncRunActivity(runId));
 
       // Publish pass runs first so stale matchedRatingKey values are cleared before
@@ -2328,6 +2328,167 @@ export class HubarrServices {
         lastRunStatus: "error"
       });
       this.logger.error("Activity cache sync failed", { message });
+      throw err;
+    }
+  }
+
+  async backfillUserActivityDates(userId: number): Promise<void> {
+    const friend = this.db.getUser(userId);
+    if (!friend) {
+      this.logger.warn("User activity-date backfill skipped — user not found", { userId });
+      return;
+    }
+    if (!friend.enabled) {
+      this.logger.warn("User activity-date backfill skipped — user is disabled", {
+        userId: friend.id,
+        displayName: friend.displayName
+      });
+      return;
+    }
+
+    const plexSettings = this.db.getPlexSettings();
+    if (!plexSettings) {
+      this.logger.warn("User activity-date backfill skipped — Plex is not configured yet", {
+        userId: friend.id,
+        displayName: friend.displayName
+      });
+      return;
+    }
+
+    const label = friend.isSelf ? "self" : friend.displayName;
+    const runId = this.db.createSyncRun("user", `Activity-date backfill for ${label}.`);
+    const plex = new PlexIntegration(plexSettings, this.logger);
+    const stateId = `activity-date-backfill:${friend.id}`;
+    const savedState = this.db.getJobRunState(stateId);
+    let after = savedState?.lastRunAt ?? null;
+    let scannedPages = 0;
+    let fetched = 0;
+    let upserted = 0;
+
+    this.logger.info("User activity-date backfill started", {
+      userId: friend.id,
+      displayName: friend.displayName,
+      plexUserId: friend.plexUserId,
+      resumeCursorPresent: Boolean(after)
+    });
+
+    try {
+      const initialSync = await this.syncUser(friend, runId);
+      let activityFeedPlexUserId = friend.plexUserId;
+      if (friend.isSelf) {
+        if (!initialSync.selfPlexUuid) {
+          throw new Error("Self user activity-date backfill could not resolve the Plex UUID.");
+        }
+        activityFeedPlexUserId = initialSync.selfPlexUuid;
+        this.db.upsertUserIdentifierAlias(friend.id, activityFeedPlexUserId);
+      }
+      let remaining = this.db.countUnresolvedWatchlistDatesAfterActivityCache(friend.id);
+      const initialRemaining = remaining;
+
+      if (remaining === 0) {
+        this.db.addSyncRunItem(runId, "watchlist.date_backfill", "success", {
+          userId: friend.id,
+          displayName: friend.displayName,
+          scannedPages,
+          fetched,
+          upserted,
+          initialRemaining,
+          remaining
+        }, friend.id);
+        this.db.completeSyncRun(runId, "success", `Activity-date backfill found no unresolved dates for ${label}.`, null, "no_changes");
+        this.db.saveJobRunState(stateId, {
+          lastRunAt: null,
+          lastRunStatus: "success"
+        });
+        this.logger.info("User activity-date backfill skipped scan — no unresolved dates", {
+          userId: friend.id,
+          displayName: friend.displayName
+        });
+        return;
+      }
+
+      await plex.fetchWatchlistActivityFeed(null, {
+        plexUserId: activityFeedPlexUserId,
+        after,
+        onPage: (entries, page) => {
+          scannedPages = page.pageNumber;
+          fetched += entries.length;
+          if (entries.length > 0) {
+            this.db.upsertActivityCacheEntries(entries);
+            upserted += entries.length;
+          }
+          remaining = this.db.countUnresolvedWatchlistDatesAfterActivityCache(friend.id);
+          this.logger.debug("User activity-date backfill page processed", {
+            userId: friend.id,
+            displayName: friend.displayName,
+            page: page.pageNumber,
+            entries: entries.length,
+            remaining
+          });
+          after = page.endCursor;
+          this.db.saveJobRunState(stateId, {
+            lastRunAt: after,
+            lastRunStatus: "error"
+          });
+          return remaining > 0;
+        }
+      });
+
+      await this.syncUser(friend, runId);
+      const finalRemaining = this.db.countUnresolvedWatchlistDatesAfterActivityCache(friend.id);
+      const resolved = Math.max(0, initialRemaining - finalRemaining);
+
+      this.db.addSyncRunItem(runId, "watchlist.date_backfill", "success", {
+        userId: friend.id,
+        displayName: friend.displayName,
+        scannedPages,
+        fetched,
+        upserted,
+        resolved,
+        initialRemaining,
+        remaining: finalRemaining
+      }, friend.id);
+      this.db.completeSyncRun(
+        runId,
+        "success",
+        `Activity-date backfill finished for ${label}: resolved ${resolved}, ${finalRemaining} unresolved.`,
+        null,
+        this.classifySyncRunActivity(runId)
+      );
+      this.db.saveJobRunState(stateId, {
+        lastRunAt: null,
+        lastRunStatus: "success"
+      });
+
+      this.logger.info("User activity-date backfill complete", {
+        userId: friend.id,
+        displayName: friend.displayName,
+        scannedPages,
+        fetched,
+        upserted,
+        resolved,
+        remaining: finalRemaining
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error("User activity-date backfill failed", {
+        userId: friend.id,
+        displayName: friend.displayName,
+        message
+      });
+      this.db.addSyncRunItem(runId, "watchlist.date_backfill", "error", {
+        userId: friend.id,
+        displayName: friend.displayName,
+        scannedPages,
+        fetched,
+        upserted,
+        message
+      }, friend.id);
+      this.db.completeSyncRun(runId, "error", `Activity-date backfill failed for ${label}.`, message);
+      this.db.saveJobRunState(stateId, {
+        lastRunAt: after,
+        lastRunStatus: "error"
+      });
       throw err;
     }
   }

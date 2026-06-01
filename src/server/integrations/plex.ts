@@ -1071,13 +1071,24 @@ export class PlexIntegration {
    * watchlist_activity_cache, keeping only the most recent date per user+item.
    */
   async fetchWatchlistActivityFeed(
-    since: string | null
+    since: string | null,
+    options: {
+      plexUserId?: string;
+      after?: string | null;
+      onPage?: (
+        entries: Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }>,
+        page: { endCursor: string | null; hasNextPage: boolean; pageNumber: number }
+      ) => boolean | Promise<boolean>;
+    } = {}
   ): Promise<Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }>> {
     const results: Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }> = [];
-    let after: string | null = null;
+    let after: string | null = options.after ?? null;
     let hasNextPage = true;
+    let pageNumber = 0;
+    const targetPlexUserId = options.plexUserId?.trim().toLowerCase();
 
     while (hasNextPage) {
+      pageNumber++;
       const data: PlexActivityFeedResponse = await this.requestCommunity<PlexActivityFeedResponse>(
         `query GetWatchlistActivity($first: PaginationInt!, $after: String) {
            activityFeed(first: $first, after: $after, types: [WATCHLIST]) {
@@ -1093,6 +1104,7 @@ export class PlexIntegration {
       );
 
       let reachedSince = false;
+      const pageEntries: Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }> = [];
       for (const node of data.activityFeed.nodes) {
         // Incremental mode: stop once we pass entries older than last fetch
         if (since && node.date <= since) {
@@ -1100,16 +1112,29 @@ export class PlexIntegration {
           break;
         }
         if (!node.metadataItem) continue;
+        if (targetPlexUserId && node.userV2.id.toLowerCase() !== targetPlexUserId) continue;
         const guids = node.metadataItem.guid ? [node.metadataItem.guid] : undefined;
         const plexItemId = this.buildPlexItemId(node.metadataItem.key ?? node.metadataItem.id, guids);
-        results.push({
+        pageEntries.push({
           plexItemId,
           plexUserId: node.userV2.id,
           watchlistedAt: node.date
         });
       }
 
-      hasNextPage = !reachedSince && data.activityFeed.pageInfo.hasNextPage;
+      if (!options.onPage) {
+        results.push(...pageEntries);
+      }
+
+      const shouldContinue = options.onPage
+        ? await options.onPage(pageEntries, {
+            endCursor: data.activityFeed.pageInfo.endCursor,
+            hasNextPage: data.activityFeed.pageInfo.hasNextPage,
+            pageNumber
+          })
+        : true;
+
+      hasNextPage = shouldContinue && !reachedSince && data.activityFeed.pageInfo.hasNextPage;
       after = data.activityFeed.pageInfo.endCursor;
     }
 

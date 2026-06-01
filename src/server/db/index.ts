@@ -278,6 +278,10 @@ export class HubarrDatabase {
     return watchlistRepo.getActivityCacheDate(this.db, plexItemId, plexUserId);
   }
 
+  countUnresolvedWatchlistDatesAfterActivityCache(userId: number): number {
+    return watchlistRepo.countUnresolvedWatchlistDatesAfterActivityCache(this.db, userId);
+  }
+
   getActivityCacheDateForUserItem(userId: number, plexItemId: string): string | null {
     return identifiersRepo.getActivityCacheDateForUserItem(this.db, userId, plexItemId);
   }
