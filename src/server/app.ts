@@ -596,6 +596,11 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
           .map((id) => db.getUser(id))
           .filter((user): user is UserRecord => user !== null && !user.enabled)
       : [];
+    const usersToCleanup = !body.enabled
+      ? ids
+          .map((id) => db.getUser(id))
+          .filter((user): user is UserRecord => user !== null && user.enabled)
+      : [];
     const updated = db.bulkUpdateUsers(ids, body.enabled);
     logger.info("Bulk user update applied", {
       requestedIds: ids.length,
@@ -607,6 +612,18 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       if (user?.enabled) {
         startUserActivityDateBackfill(user);
       }
+    }
+    const disabledUsers = usersToCleanup.filter((previousUser) => {
+      const user = db.getUser(previousUser.id);
+      return user && !user.enabled;
+    });
+    if (disabledUsers.length > 0) {
+      void services.cleanupDisabledUserCollections(disabledUsers).catch((error) => {
+        logger.error("Disabled-user collection cleanup failed after bulk user update", {
+          userCount: disabledUsers.length,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
     }
     res.json({ updated });
   });
@@ -711,6 +728,15 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       });
       if (updatePayload.enabled === true && previousUser && !previousUser.enabled) {
         startUserActivityDateBackfill(user);
+      }
+      if (updatePayload.enabled === false && previousUser?.enabled && !user.enabled) {
+        void services.cleanupDisabledUserCollections([previousUser]).catch((error) => {
+          logger.error("Disabled-user collection cleanup failed after user update", {
+            userId: previousUser.id,
+            displayName: previousUser.displayName,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        });
       }
       res.json(user);
     } catch (error) {

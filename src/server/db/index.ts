@@ -358,6 +358,10 @@ export class HubarrDatabase {
     return collectionsRepo.listCollections(this.db);
   }
 
+  deleteCollectionsForUser(userId: number): number {
+    return collectionsRepo.deleteCollectionsForUser(this.db, userId);
+  }
+
   clearCollections(): void {
     collectionsRepo.clearCollections(this.db);
   }

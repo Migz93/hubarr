@@ -1584,7 +1584,13 @@ export class PlexIntegration {
 
   async deleteCollection(collectionRatingKey: string): Promise<void> {
     this.logger.info("Deleting Plex collection", { collectionRatingKey });
-    await this.requestServer(`/library/metadata/${collectionRatingKey}`, { method: "DELETE" });
+    try {
+      await this.requestServer(`/library/metadata/${collectionRatingKey}`, { method: "DELETE" });
+    } catch (err) {
+      // 400/404 means the collection is already gone — treat as success.
+      if (this.isItemMissingError(err)) return;
+      throw err;
+    }
   }
 
   async updateCollectionVisibility(
