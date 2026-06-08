@@ -12,6 +12,7 @@ import type {
   PlexSettingsView,
   SessionUser,
   SyncRun,
+  SyncRunActivity,
   SeerrRequestState,
   SeerrUserLink,
   UserRecord,
@@ -232,6 +233,10 @@ export class HubarrDatabase {
     watchlistRepo.clearMatchedRatingKeyByValue(this.db, ratingKey);
   }
 
+  deleteWatchlistItem(userId: number, plexItemId: string): number {
+    return watchlistRepo.deleteWatchlistItem(this.db, userId, plexItemId);
+  }
+
   upsertMediaItemIdentifiers(item: Pick<WatchlistItem, "plexItemId" | "type" | "guids" | "discoverKey">): void {
     identifiersRepo.upsertMediaItemIdentifiers(this.db, item);
   }
@@ -271,6 +276,10 @@ export class HubarrDatabase {
 
   getActivityCacheDate(plexItemId: string, plexUserId: string): string | null {
     return watchlistRepo.getActivityCacheDate(this.db, plexItemId, plexUserId);
+  }
+
+  countUnresolvedWatchlistDatesAfterActivityCache(userId: number): number {
+    return watchlistRepo.countUnresolvedWatchlistDatesAfterActivityCache(this.db, userId);
   }
 
   getActivityCacheDateForUserItem(userId: number, plexItemId: string): string | null {
@@ -349,8 +358,24 @@ export class HubarrDatabase {
     return collectionsRepo.listCollections(this.db);
   }
 
+  deleteCollectionsForUser(userId: number): number {
+    return collectionsRepo.deleteCollectionsForUser(this.db, userId);
+  }
+
   clearCollections(): void {
     collectionsRepo.clearCollections(this.db);
+  }
+
+  getIsolationFilterState(): settingsRepo.IsolationFilterState | null {
+    return settingsRepo.getIsolationFilterState(this.db);
+  }
+
+  saveIsolationFilterState(inputHash: string): settingsRepo.IsolationFilterState {
+    return settingsRepo.saveIsolationFilterState(this.db, inputHash);
+  }
+
+  clearIsolationFilterState(): void {
+    settingsRepo.clearIsolationFilterState(this.db);
   }
 
   // -------------------------------------------------------------------------
@@ -369,8 +394,8 @@ export class HubarrDatabase {
     return syncRepo.createSyncRun(this.db, kind, summary);
   }
 
-  completeSyncRun(id: number, status: SyncRun["status"], summary: string, error: string | null): void {
-    syncRepo.completeSyncRun(this.db, id, status, summary, error);
+  completeSyncRun(id: number, status: SyncRun["status"], summary: string, error: string | null, activity?: SyncRunActivity): void {
+    syncRepo.completeSyncRun(this.db, id, status, summary, error, activity);
   }
 
   updateSyncRunSummary(id: number, summary: string): void {
@@ -390,6 +415,7 @@ export class HubarrDatabase {
     pageSize: number;
     kind?: string;
     status?: string;
+    activity?: string;
   }): { results: SyncRun[]; total: number } {
     return syncRepo.listSyncRunsPaginated(this.db, options);
   }

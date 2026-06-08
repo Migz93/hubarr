@@ -95,6 +95,7 @@ test.describe("User avatar loading", () => {
       })
     );
 
+    /* eslint-disable playwright/no-conditional-in-test -- Live instances may not have cached avatars until after a sync. */
     if (avatarResults.length === 0) {
       console.log("  No cached avatar images found on Users page — skipping (run a sync first?)");
       return;
@@ -105,6 +106,7 @@ test.describe("User avatar loading", () => {
       const details = failed.map((r) => `  - "${r.alt}" (${r.src})`).join("\n");
       throw new Error(`${failed.length} avatar(s) failed to load on Users:\n${details}`);
     }
+    /* eslint-enable playwright/no-conditional-in-test */
 
     console.log(`  ${avatarResults.length} avatar(s) loaded successfully on Users`);
   });

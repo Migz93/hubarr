@@ -21,7 +21,29 @@ It keeps your own Plex watchlist and selected friends' watchlists in sync with P
 
 ## Preview
 
-![Hubarr preview](./public/preview.png)
+### Hubarr GUI
+
+Hubarr's GUI for managing Plex watchlist collections, sync status, users, and settings.
+
+![Hubarr preview](./public/hubarr-preview.png)
+
+### Plex Home Hub
+
+In this example, both the admin's watchlist and one specific friend's watchlist are visible on the home hub. Admins can choose exactly which users appear on their home screen, while friends only see their own watchlist collection.
+
+![Home preview](./public/home-preview.png)
+
+### Plex Movie Library
+
+Admins see all managed collections in the relevant library, while regular users only see their own.
+
+![Movie library preview](./public/movie-library-preview.png)
+
+### Plex TV Library
+
+As with movies, admins see every managed collection for the library and users only see their own.
+
+![TV library preview](./public/tv-library-preview.png)
 
 ## Key Features
 
@@ -39,6 +61,7 @@ Hubarr uses a few background jobs:
 
 - **Watchlist RSS Sync** watches Plex RSS feeds for quick watchlist changes and stores new items fast
 - **Watchlist GraphQL Sync** regularly performs a fuller watchlist reconciliation to catch anything RSS missed
+- **Watchlist Cleanup** runs the optional watched-item cleanup checks on schedule
 - **Plex Library Scans** help Hubarr notice when something from a watchlist has now actually appeared in your Plex libraries
 - **Collection Sync** is the job that updates the Plex collections and hub rows
 

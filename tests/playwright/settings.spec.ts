@@ -11,7 +11,7 @@ const TABS = ["General", "Plex", "Collections", "Seerr", "Logs", "Jobs", "About"
 test.describe("Settings tabs", () => {
   test("All seven tabs are visible", async ({ page }) => {
     await page.goto("/settings");
-    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
 
     for (const tab of TABS) {
       await expect(page.getByRole("button", { name: tab, exact: true })).toBeVisible();

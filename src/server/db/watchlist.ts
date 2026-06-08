@@ -301,6 +301,11 @@ export function clearMatchedRatingKeyByValue(db: Database.Database, ratingKey: s
   ).run(ratingKey);
 }
 
+export function deleteWatchlistItem(db: Database.Database, userId: number, plexItemId: string): number {
+  const result = db.prepare("DELETE FROM watchlist_cache WHERE user_id = ? AND plex_item_id = ?").run(userId, plexItemId);
+  return result.changes;
+}
+
 export function upsertWatchlistItem(db: Database.Database, userId: number, item: WatchlistItem): void {
   const discoverKey = item.discoverKey ?? null;
   db.prepare(`
@@ -635,6 +640,63 @@ export function getActivityCacheDate(
     .prepare("SELECT watchlisted_at FROM watchlist_activity_cache WHERE plex_item_id = ? AND plex_user_id = ?")
     .get(plexItemId, plexUserId) as { watchlisted_at: string } | undefined;
   return row?.watchlisted_at ?? null;
+}
+
+export function countUnresolvedWatchlistDatesAfterActivityCache(db: Database.Database, userId: number): number {
+  const row = db.prepare(`
+    WITH unresolved AS (
+      SELECT w.plex_item_id
+      FROM watchlist_cache w
+      WHERE w.user_id = ?
+        AND w.added_at = '2001-01-01T00:00:00.000Z'
+    ),
+    user_aliases AS (
+      SELECT lower(identifier_value) AS plex_user_id
+      FROM user_identifier_aliases
+      WHERE user_id = ?
+    ),
+    user_cache AS (
+      SELECT lower(plex_item_id) AS plex_item_id
+      FROM watchlist_activity_cache
+      WHERE lower(plex_user_id) IN (SELECT plex_user_id FROM user_aliases)
+    ),
+    unresolved_media AS (
+      SELECT u.plex_item_id, mi.id AS media_item_id
+      FROM unresolved u
+      LEFT JOIN media_items mi ON mi.canonical_plex_item_id = lower(u.plex_item_id)
+    ),
+    direct_matches AS (
+      SELECT u.plex_item_id
+      FROM unresolved u
+      JOIN user_cache uc ON uc.plex_item_id = lower(u.plex_item_id)
+    ),
+    identifier_matches AS (
+      SELECT um.plex_item_id
+      FROM unresolved_media um
+      JOIN media_item_identifiers mii ON mii.media_item_id = um.media_item_id
+      JOIN user_cache uc ON uc.plex_item_id = mii.identifier_value
+    ),
+    canonical_matches AS (
+      SELECT um.plex_item_id
+      FROM unresolved_media um
+      JOIN media_items mi ON mi.id = um.media_item_id
+      JOIN user_cache uc ON uc.plex_item_id = mi.canonical_plex_item_id
+    ),
+    resolved AS (
+      SELECT plex_item_id FROM direct_matches
+      UNION
+      SELECT plex_item_id FROM identifier_matches
+      UNION
+      SELECT plex_item_id FROM canonical_matches
+    )
+    SELECT COUNT(*) AS count
+    FROM unresolved u
+    WHERE NOT EXISTS (
+      SELECT 1 FROM resolved r WHERE r.plex_item_id = u.plex_item_id
+    )
+  `).get(userId, userId) as { count: number } | undefined;
+
+  return row?.count ?? 0;
 }
 
 /**

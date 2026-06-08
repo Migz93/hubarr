@@ -55,7 +55,7 @@ export function useLiveRefresh(
         scheduleNextRefresh();
       }
     }
-  }, [clearScheduledRefresh]);
+  }, [clearScheduledRefresh, scheduleNextRefresh]);
 
   useEffect(() => {
     loadRef.current = load;
@@ -88,7 +88,7 @@ export function useLiveRefresh(
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       clearScheduledRefresh();
     };
-  }, [clearScheduledRefresh, scheduleNextRefresh]);
+  }, [clearScheduledRefresh]);
 
   return {
     refreshNow: runRefresh

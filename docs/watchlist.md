@@ -16,10 +16,12 @@ different frequencies and serve different purposes:
 | GraphQL full sync | Configurable (default 1h) | Authoritative list of what is currently on each watchlist |
 | RSS polling | Configurable (default 30s) | Fast detection of new additions |
 | Activity feed cache | Configurable (default 1h), independently scheduled | Historical `addedAt` dates for watchlist items |
+| Watchlist cleanup | Configurable (default 30m), disabled until enabled | Removes watched admin/self items from the Plex watchlist |
 
 The GraphQL sync is the source of truth for what is on a watchlist right now.
 The RSS feeds catch new items quickly between full syncs. The activity feed
 cache fills in when items were added, which GraphQL alone cannot answer.
+The cleanup job is optional and only acts on the admin/self watchlist.
 
 Hubarr distinguishes between:
 
@@ -169,6 +171,72 @@ without becoming visible in Plex or the main Hubarr watchlist views.
 
 ---
 
+## Watchlist Cleanup
+
+**Endpoint:** Local Plex history via `/status/sessions/history/all?metadataItemID=<ratingKey>`,
+Plex Discover metadata via `discover.provider.plex.tv`, and Discover watchlist
+removal via `/actions/removeFromWatchlist?ratingKey=<discoverKey>`
+**Schedule:** Every `watchlistCleanupIntervalMinutes` (default 30 minutes) when
+movie or show cleanup is enabled.
+**Code:** `src/server/services.ts` → `runWatchlistCleanup()`,
+`src/server/integrations/plex.ts` → history, Discover children, and removal helpers
+
+### What it does
+
+Watchlist cleanup removes items from the admin's Plex watchlist after Hubarr can
+prove they were watched after they were added to the watchlist. The settings live
+in the existing app settings JSON and are exposed in the admin/self-user's edit
+modal under the Watchlist tab:
+
+- `Remove Movie When Watched`
+- `Remove Show When Watched`
+
+The job is always visible on Settings > Jobs as `Watchlist Cleanup`, but remains
+disabled until at least one of those options is enabled. When disabled, the job
+has no next run and cannot be run manually.
+
+### Movie cleanup
+
+For movies, Hubarr checks admin watchlist rows that have a local
+`matchedRatingKey`. It queries Plex play history with `metadataItemID`, not
+`ratingKey`, because `metadataItemID` is the server-side filter that correctly
+scopes history to one local metadata item. A movie is removed only when at least
+one history entry has `viewedAt` later than the stored watchlist `addedAt`.
+
+Older history is explicitly ignored so a title watched before being watchlisted
+for a rewatch is not removed.
+
+### Show cleanup
+
+For shows, Hubarr uses Discover season and episode children as the expected
+episode list. Specials (`season 0`) are ignored. The top-level show `leafCount`
+is not used because Discover season/episode children are more precise and expose
+future episode dates.
+
+A show is removed only when:
+
+- Discover returns a complete non-special episode list
+- every expected non-special episode exists in the local Plex library
+- no expected episode has a future or uncertain air date
+- every expected non-special episode has local play history after the watchlist
+  `addedAt`
+
+If any of those checks is uncertain, the show stays on the watchlist and the
+cleanup run records a skipped decision in History.
+
+### Removal and publish
+
+Removal uses the admin Plex account token stored in the `admin` setting, not a
+friend token. After Plex accepts the removal, Hubarr deletes the corresponding
+admin row from `watchlist_cache` immediately so the UI reflects the change before
+the next GraphQL sync.
+
+When at least one item is removed, Hubarr triggers a collection publish pass so
+Plex collections update promptly. Runs with no removals complete as successful
+skipped/no-change runs and do not trigger a publish.
+
+---
+
 ## Activity Feed Cache
 
 **Endpoint:** `https://community.plex.tv/api` (POST)  
@@ -225,6 +293,25 @@ On subsequent runs, only events newer than `last_run_at` are fetched.
 Since Plex returns events newest-first, the fetch stops as soon as an entry
 older than the last run timestamp is encountered — keeping the incremental cost
 low regardless of total feed size.
+
+### Per-user backfill on enable
+
+When an existing friend is enabled after the global activity cache has already
+entered incremental mode, Hubarr starts a non-blocking activity-date backfill for
+that user. This flow is intentionally independent of
+`activity-cache-fetch.last_run_at`: it scans the historical activity feed with no
+global cursor, filters events to the enabled user's Plex ID, and upserts matching
+rows into `watchlist_activity_cache`.
+
+The backfill first runs the user's normal GraphQL watchlist sync so the current
+watchlist rows and identifier aliases are available. After each activity-feed
+page is upserted, Hubarr checks the user's sentinel-date watchlist rows through
+the same identifier matching tables used by normal sync. The scan stops once no
+unresolved sentinel rows remain, or when the feed is exhausted. The latest
+processed activity-feed cursor is stored in `job_run_state` under a per-user
+backfill key so a later retry can resume a long scan instead of starting again
+from the newest page. A second user sync then reapplies date resolution so
+`watchlist_cache.added_at` is updated from the newly cached activity rows.
 
 ### How it is used
 

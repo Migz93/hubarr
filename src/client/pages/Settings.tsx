@@ -7,7 +7,7 @@ import { formatRelativeTime } from "../lib/utils";
 import PlexConfigForm from "../components/PlexConfigForm";
 import CollectionsConfigForm from "../components/CollectionsConfigForm";
 import { Field, SaveBar, SectionCard, TextInput, ToggleField } from "../components/FormControls";
-import type { AboutInfo, JobInfo, LogEntry, LogsPageResponse, SeerrSettingsView, SeerrUser, SettingsResponse } from "../../shared/types";
+import type { AboutInfo, JobInfo, LogEntry, LogsPageResponse, SeerrSettingsView, SettingsResponse } from "../../shared/types";
 
 type Tab = "general" | "plex" | "collections" | "seerr" | "logs" | "jobs" | "about";
 
@@ -631,6 +631,7 @@ const JOB_PRESETS: Record<string, { unit: "minutes" | "hours"; values: number[] 
   "full-sync": { unit: "minutes", values: [5, 10, 15, 20, 30, 60, 120, 240, 360, 720, 1440] },
   "rss-sync":  { unit: "minutes", values: [1, 2, 5, 10, 15, 30] },
   "activity-cache-fetch": { unit: "minutes", values: [30, 60, 120, 240, 360, 720, 1440] },
+  "watchlist-cleanup": { unit: "minutes", values: [15, 30, 60, 120, 240, 360, 720, 1440] },
 };
 
 const JOBS_FAST_REFRESH_MS = 2_500;
@@ -672,7 +673,7 @@ function JobsTab() {
   const [saving, setSaving] = useState(false);
   const [fastRefreshUntil, setFastRefreshUntil] = useState<number | null>(null);
 
-  async function load(background = false) {
+  const load = useCallback(async (background = false) => {
     setLoading((current) => current || !background);
     try {
       const result = await apiGet<JobInfo[]>("/api/settings/jobs");
@@ -680,7 +681,7 @@ function JobsTab() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   const hasRunningJob = jobs.some((job) => job.isRunning);
   const shouldUseFastRefresh = hasRunningJob || (fastRefreshUntil !== null && fastRefreshUntil > Date.now());
@@ -688,14 +689,8 @@ function JobsTab() {
     () => (shouldUseFastRefresh ? JOBS_FAST_REFRESH_MS : JOBS_IDLE_REFRESH_MS),
     [shouldUseFastRefresh]
   );
-  const { refreshNow } = useLiveRefresh(
-    async () => {
-      await load(true);
-    },
-    {
-      getIntervalMs
-    }
-  );
+  const loadBackground = useCallback(() => load(true), [load]);
+  const { refreshNow } = useLiveRefresh(loadBackground, { getIntervalMs });
 
   async function runJob(id: string) {
     setRunningId(id);
@@ -730,7 +725,7 @@ function JobsTab() {
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
 
   return (
     <>
@@ -856,15 +851,16 @@ function JobsTab() {
                       <div className="flex items-center justify-end gap-2">
                         {JOB_PRESETS[job.id] && (
                           <button
+                            disabled={!job.isEnabled}
                             onClick={() => openEdit(job)}
-                            className="flex items-center gap-1.5 text-on-surface-variant hover:text-on-surface hover:bg-background-container-high text-xs font-medium rounded-lg px-3 py-1.5 transition-colors border border-outline-variant/20"
+                            className="flex items-center gap-1.5 text-on-surface-variant hover:text-on-surface hover:bg-background-container-high disabled:opacity-50 disabled:hover:bg-transparent text-xs font-medium rounded-lg px-3 py-1.5 transition-colors border border-outline-variant/20"
                           >
                             <Pencil size={13} />
                             Edit
                           </button>
                         )}
                         <button
-                          disabled={runningId === job.id || job.isRunning}
+                          disabled={!job.isEnabled || runningId === job.id || job.isRunning}
                           onClick={() => void runJob(job.id)}
                           className="flex items-center gap-1.5 bg-primary-dim hover:bg-primary disabled:opacity-50 text-on-surface text-xs font-medium rounded-lg px-3 py-1.5 transition-colors border border-primary-dim"
                         >

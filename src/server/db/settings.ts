@@ -10,11 +10,19 @@ import type {
   SessionUser
 } from "../../shared/types.js";
 
-export type SettingKey = "admin" | "plex" | "app" | "session_secret" | "seerr";
+export type IsolationFilterState = {
+  inputHash: string;
+  lastSyncedAt: string;
+};
+
+export type SettingKey = "admin" | "plex" | "app" | "session_secret" | "seerr" | "isolation_filters";
 
 export const defaultAppSettings: AppSettings = {
   reconciliationIntervalMinutes: 60,
   activityCacheFetchIntervalMinutes: 60,
+  watchlistCleanupIntervalMinutes: 30,
+  watchlistCleanupMovies: false,
+  watchlistCleanupShows: false,
   rssPollIntervalSeconds: 300,
   rssEnabled: true,
   trackAllUsers: false,
@@ -54,6 +62,10 @@ export function setSetting(db: Database.Database, key: SettingKey, value: unknow
   `).run(key, JSON.stringify(value), updatedAt);
 }
 
+export function deleteSetting(db: Database.Database, key: SettingKey): void {
+  db.prepare("DELETE FROM settings WHERE key = ?").run(key);
+}
+
 export function seedDefaultSettings(db: Database.Database): void {
   if (!getSetting<AppSettings>(db, "app")) {
     setSetting(db, "app", defaultAppSettings);
@@ -66,6 +78,23 @@ export function resolveSessionSecret(db: Database.Database): string {
   const secret = crypto.randomBytes(48).toString("hex");
   setSetting(db, "session_secret", secret);
   return secret;
+}
+
+export function getIsolationFilterState(db: Database.Database): IsolationFilterState | null {
+  return getSetting<IsolationFilterState>(db, "isolation_filters");
+}
+
+export function saveIsolationFilterState(db: Database.Database, inputHash: string): IsolationFilterState {
+  const state: IsolationFilterState = {
+    inputHash,
+    lastSyncedAt: new Date().toISOString()
+  };
+  setSetting(db, "isolation_filters", state);
+  return state;
+}
+
+export function clearIsolationFilterState(db: Database.Database): void {
+  deleteSetting(db, "isolation_filters");
 }
 
 // -------------------------------------------------------------------------
@@ -210,8 +239,14 @@ export function calculateHistoryRetentionEvents(settings: AppSettings): number {
   const fullSyncsPerDay = 1440 / settings.reconciliationIntervalMinutes;
   const rssSyncsPerDay = settings.rssEnabled ? 86400 / settings.rssPollIntervalSeconds : 0;
   const publishSyncsPerDay = 1440 / settings.collectionPublishIntervalMinutes;
-  const totalSyncsPerDay = fullSyncsPerDay + rssSyncsPerDay + publishSyncsPerDay;
-  return Math.max(1, Math.floor(settings.historyRetentionDays * totalSyncsPerDay));
+  const cleanupEnabled = settings.watchlistCleanupMovies || settings.watchlistCleanupShows;
+  const cleanupInterval = settings.watchlistCleanupIntervalMinutes;
+  const cleanupSyncsPerDay = cleanupEnabled && Number.isFinite(cleanupInterval) && cleanupInterval > 0
+    ? 1440 / cleanupInterval
+    : 0;
+  const totalSyncsPerDay = fullSyncsPerDay + rssSyncsPerDay + publishSyncsPerDay + cleanupSyncsPerDay;
+  const finiteTotalSyncsPerDay = Number.isFinite(totalSyncsPerDay) ? totalSyncsPerDay : 0;
+  return Math.max(1, Math.floor(settings.historyRetentionDays * finiteTotalSyncsPerDay));
 }
 
 // -------------------------------------------------------------------------

@@ -6,6 +6,7 @@ Hubarr uses separate background jobs so each job has one clear responsibility:
 
 - `Watchlist RSS Sync`
 - `Watchlist GraphQL Sync`
+- `Watchlist Cleanup`
 - `Activity Cache Fetch`
 - `Plex Recently Added Scan`
 - `Plex Full Library Scan`
@@ -14,8 +15,8 @@ Hubarr uses separate background jobs so each job has one clear responsibility:
 - `Plex Refresh Token`
 - `Maintenance Tasks`
 
-For a detailed explanation of how the three watchlist-specific jobs work together
-— including date resolution, RSS deduplication, and the activity feed cache —
+For a detailed explanation of how the watchlist-specific jobs work together
+— including date resolution, RSS deduplication, cleanup, and the activity feed cache —
 see [docs/watchlist.md](watchlist.md).
 
 ---
@@ -67,6 +68,7 @@ The most important data groups are:
 
 - `Watchlist RSS Sync` interval
 - `Watchlist GraphQL Sync` interval
+- `Watchlist Cleanup` interval and enablement
 - `Activity Cache Fetch` interval
 - `Collection Sync` interval
 - `Plex Recently Added Scan` interval
@@ -227,12 +229,28 @@ History stores higher-level sync runs such as:
 - `full`
 - `user`
 - `publish`
+- `seerr`
+- `watchlist-cleanup`
 
 It also stores per-run detail rows for actions such as watchlist fetches, match
 failures, unresolved `addedAt` dates, collection updates, and RSS feed checks.
 The History page groups those raw rows into more readable operational steps so
 the UI reflects what a job actually did rather than dumping every low-level
 event verbatim.
+
+Each sync run also records an activity outcome:
+
+- `changes` means the run made a meaningful Hubarr, Plex, Seerr, or watchlist
+  state change.
+- `no_changes` means the run completed successfully after checking work but did
+  not need to update state.
+- `unknown` is reserved for historical rows and unsuccessful runs where activity
+  is not meaningful.
+
+The History page defaults to the `All` activity filter. Users can switch to
+`Changes` to hide routine successful no-op polling, while running and failed runs
+remain included in the `Changes` view so active or broken work stays
+discoverable.
 
 ### Jobs
 

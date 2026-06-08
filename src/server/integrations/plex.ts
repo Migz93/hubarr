@@ -4,6 +4,7 @@ import type { RssFeedItem } from "../rss-cache.js";
 import type { Logger } from "../logger.js";
 import { PLEX_USER_AGENT } from "../version.js";
 import type { CollectionSortOrder, UserRecord, MediaType, PlexSettingsInput, RichItemMetadata, SearchCandidate, WatchlistItem } from "../../shared/types.js";
+import { buildOrderMismatchMeta, ratingKeyOrderMatches } from "../utils/collection-order.js";
 
 export interface ResolvedWatchlistItem extends WatchlistItem {
   searchCandidates?: SearchCandidate[];
@@ -87,7 +88,7 @@ class AdaptiveItemLimiter {
         if (this.is429(err)) {
           attempts++;
           if (attempts > maxRetries) {
-            throw new Error(`Rate limit exceeded after ${maxRetries} retries`);
+            throw new Error(`Rate limit exceeded after ${maxRetries} retries`, { cause: err });
           }
           this.onRateLimit(logger);
         } else {
@@ -241,6 +242,20 @@ export interface PlexLibraryItemMatch {
   guids: string[];
 }
 
+export interface PlexEpisodeRef {
+  ratingKey: string;
+  seasonIndex: number;
+  episodeIndex: number;
+  viewCount: number | null;
+  lastViewedAt: string | null;
+}
+
+export interface PlexDiscoverEpisodeRef {
+  seasonIndex: number;
+  episodeIndex: number;
+  originallyAvailableAt: string | null;
+}
+
 const COMMUNITY_API_URL = "https://community.plex.tv/api";
 const DISCOVER_ORIGIN = "https://discover.provider.plex.tv";
 const DISCOVER_RSS_PATH = "/rss";
@@ -251,10 +266,17 @@ const PLEX_TV_PING_URL = "https://plex.tv/api/v2/ping";
 const PLEX_TV_RESOURCES_URL = "https://plex.tv/api/v2/resources";
 
 const RSS_PLEX_UUID_PATH = /^\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+const COLLECTION_REORDER_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000];
+// How many times to retry a single item move before giving up on the whole collection.
+const COLLECTION_REORDER_MAX_ITEM_RETRIES = COLLECTION_REORDER_RETRY_DELAYS_MS.length;
 
 // Sentinel value used when no real watchlist date can be determined.
 // Stored in the DB so it can be overwritten later if a real date is found.
 export const WATCHLIST_DATE_UNKNOWN_SENTINEL = "2001-01-01T00:00:00.000Z";
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export class PlexIntegration {
   private resolvedMachineIdentifier: string | null = null;
@@ -297,15 +319,25 @@ export class PlexIntegration {
   }
 
   private buildDiscoverMetadataUrl(rawEndpoint: string) {
-    const match = rawEndpoint.trim().match(/^\/?library\/metadata\/(.+)$/);
+    const match = rawEndpoint.trim().match(/^\/?library\/metadata\/([a-f0-9]{24})(\/children)?$/i);
     if (!match) {
       throw new Error(`Unsupported discover metadata endpoint: ${rawEndpoint}`);
     }
 
     const url = new URL(DISCOVER_ORIGIN);
-    url.pathname = `/library/metadata/${this.normalizeMetadataId(match[1])}`;
+    url.pathname = `/library/metadata/${this.normalizeMetadataId(match[1])}${match[2] ?? ""}`;
     url.searchParams.set("format", "json");
     return url;
+  }
+
+  private getDiscoverMetadataEndpoint(item: Pick<WatchlistItem, "plexItemId" | "discoverKey">): string | null {
+    const plexItemId = item.plexItemId.trim();
+    const plexGuidMatch = plexItemId.match(/^plex:\/\/(?:movie|show)\/([a-f0-9]{24})$/i);
+    const plexGuidHex = plexGuidMatch
+      ? plexGuidMatch[1].toLowerCase()
+      : (/^[a-f0-9]{24}$/i.test(plexItemId) ? plexItemId.toLowerCase() : null);
+
+    return item.discoverKey?.replace(/^\//, "") ?? (plexGuidHex ? `library/metadata/${plexGuidHex}` : null);
   }
 
   private buildDiscoverRssRequestUrl(rawUrl: string) {
@@ -496,17 +528,9 @@ export class PlexIntegration {
     // (extract the hex part) or a bare 24-char hex. RSS items temporarily use a
     // stableKey as plexItemId before enrichment resolves the real GUID, and that
     // format is not a valid discover endpoint path.
-    const plexGuidHex = (() => {
-      const plexItemId = item.plexItemId.trim();
-      const m = plexItemId.match(/^plex:\/\/(?:movie|show)\/([a-f0-9]{24})$/i);
-      if (m) return m[1].toLowerCase();
-      if (/^[a-f0-9]{24}$/i.test(plexItemId)) return plexItemId.toLowerCase();
-      return null;
-    })();
-
     const endpoints = Array.from(new Set([
       item.discoverKey ? item.discoverKey.replace(/^\//, "") : null,
-      plexGuidHex ? `library/metadata/${plexGuidHex}` : null,
+      this.getDiscoverMetadataEndpoint(item),
     ].filter((endpoint): endpoint is string => Boolean(endpoint))));
 
     let lastErr: Error | null = null;
@@ -632,6 +656,170 @@ export class PlexIntegration {
       }
     }
     return null;
+  }
+
+  async fetchPlayHistoryViewedAt(ratingKey: string, accountId?: string): Promise<string[]> {
+    const params = new URLSearchParams({ metadataItemID: ratingKey });
+    const response = await this.requestServer<{
+      MediaContainer?: {
+        Metadata?: Array<{ viewedAt?: string | number; accountID?: string | number }>;
+      };
+    }>(`/status/sessions/history/all?${params.toString()}`);
+
+    return (response.MediaContainer?.Metadata ?? [])
+      .filter((entry) => accountId === undefined || String(entry.accountID ?? "") === accountId)
+      .map((entry) => {
+        if (entry.viewedAt === undefined || entry.viewedAt === null) return null;
+        const seconds = Number(entry.viewedAt);
+        if (!Number.isFinite(seconds)) return null;
+        return new Date(seconds * 1000).toISOString();
+      })
+      .filter((value): value is string => Boolean(value));
+  }
+
+  async fetchServerAccounts(): Promise<Array<{ id: string; name: string }>> {
+    const response = await this.requestServer<{
+      MediaContainer?: {
+        Account?: Array<{ id?: string | number; name?: string }>;
+      };
+    }>("/accounts");
+
+    return (response.MediaContainer?.Account ?? [])
+      .map((account) => ({
+        id: String(account.id ?? ""),
+        name: account.name ?? ""
+      }))
+      .filter((account) => account.id && account.name);
+  }
+
+  async fetchLocalShowEpisodes(showRatingKey: string): Promise<PlexEpisodeRef[]> {
+    const response = await this.requestServer<{
+      MediaContainer?: {
+        Metadata?: Array<{
+          ratingKey?: string;
+          parentIndex?: string | number;
+          index?: string | number;
+          viewCount?: string | number;
+          lastViewedAt?: string | number;
+        }>;
+      };
+    }>(`/library/metadata/${encodeURIComponent(showRatingKey)}/allLeaves`);
+
+    return (response.MediaContainer?.Metadata ?? [])
+      .map((episode) => {
+        const ratingKey = episode.ratingKey;
+        const seasonIndex = Number(episode.parentIndex);
+        const episodeIndex = Number(episode.index);
+        if (!ratingKey || !Number.isFinite(seasonIndex) || !Number.isFinite(episodeIndex)) return null;
+        const lastViewedAtSeconds = Number(episode.lastViewedAt);
+        return {
+          ratingKey,
+          seasonIndex,
+          episodeIndex,
+          viewCount: episode.viewCount === undefined ? null : Number(episode.viewCount),
+          lastViewedAt: Number.isFinite(lastViewedAtSeconds) ? new Date(lastViewedAtSeconds * 1000).toISOString() : null
+        };
+      })
+      .filter((episode): episode is PlexEpisodeRef => Boolean(episode));
+  }
+
+  async fetchDiscoverShowEpisodes(item: Pick<WatchlistItem, "plexItemId" | "discoverKey">): Promise<PlexDiscoverEpisodeRef[] | null> {
+    const endpoint = this.getDiscoverMetadataEndpoint(item);
+    if (!endpoint) return null;
+
+    const fetchChildren = async (parentEndpoint: string) => {
+      const normalizedEndpoint = parentEndpoint.replace(/\/$/, "");
+      const childrenEndpoint = normalizedEndpoint.endsWith("/children")
+        ? normalizedEndpoint
+        : `${normalizedEndpoint}/children`;
+      const response = await fetch(this.buildDiscoverMetadataUrl(childrenEndpoint), {
+        headers: {
+          "User-Agent": PLEX_USER_AGENT,
+          "X-Plex-Token": this.settings.token,
+          Accept: "application/json"
+        }
+      });
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        throw new Error(`Discover children request failed with HTTP ${response.status}: ${body}`);
+      }
+      return (await response.json()) as {
+        MediaContainer?: {
+          Metadata?: Array<{
+            key?: string;
+            type?: string;
+            index?: number;
+            leafCount?: number;
+            originallyAvailableAt?: string;
+          }>;
+        };
+      };
+    };
+
+    const seasonsJson = await fetchChildren(endpoint);
+    const seasons = (seasonsJson.MediaContainer?.Metadata ?? [])
+      .filter((season) => season.type === "season" && Number(season.index) > 0 && season.key);
+
+    if (seasons.length === 0) return null;
+
+    const seasonResults: Array<PlexDiscoverEpisodeRef[] | null> = [];
+    for (const season of seasons) {
+      const seasonIndex = Number(season.index);
+      const seasonJson = await fetchChildren(season.key!);
+      const seasonEpisodes = (seasonJson.MediaContainer?.Metadata ?? [])
+        .filter((episode) => episode.type === "episode");
+
+      if (typeof season.leafCount === "number" && season.leafCount !== seasonEpisodes.length) {
+        this.logger.warn("Discover episode data did not match season leaf count", {
+          seasonIndex,
+          leafCount: season.leafCount,
+          episodeChildren: seasonEpisodes.length
+        });
+        seasonResults.push(null);
+        continue;
+      }
+
+      const episodes: PlexDiscoverEpisodeRef[] = [];
+      let invalid = false;
+      for (const episode of seasonEpisodes) {
+        const episodeIndex = Number(episode.index);
+        if (!Number.isFinite(seasonIndex) || !Number.isFinite(episodeIndex)) { invalid = true; break; }
+        episodes.push({
+          seasonIndex,
+          episodeIndex,
+          originallyAvailableAt: episode.originallyAvailableAt ?? null
+        });
+      }
+      seasonResults.push(invalid ? null : episodes);
+    }
+
+    if (seasonResults.some((result) => result === null)) return null;
+    return seasonResults.flatMap((result) => result ?? []);
+  }
+
+  async removeFromWatchlist(item: Pick<WatchlistItem, "plexItemId" | "discoverKey" | "title">, ownerToken: string): Promise<void> {
+    const endpoint = this.getDiscoverMetadataEndpoint(item);
+    const match = endpoint?.match(/^library\/metadata\/([a-f0-9]{24})$/i);
+    const ratingKey = match?.[1];
+    if (!ratingKey) {
+      throw new Error(`Cannot remove "${item.title}" from watchlist because it has no Discover rating key.`);
+    }
+
+    const url = new URL(`${DISCOVER_ORIGIN}/actions/removeFromWatchlist`);
+    url.searchParams.set("ratingKey", ratingKey);
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "User-Agent": PLEX_USER_AGENT,
+        "X-Plex-Token": ownerToken,
+        Accept: "application/json"
+      }
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`Plex watchlist removal failed: ${response.status} ${response.statusText}. Response: ${body}`);
+    }
   }
 
   /**
@@ -883,13 +1071,24 @@ export class PlexIntegration {
    * watchlist_activity_cache, keeping only the most recent date per user+item.
    */
   async fetchWatchlistActivityFeed(
-    since: string | null
+    since: string | null,
+    options: {
+      plexUserId?: string;
+      after?: string | null;
+      onPage?: (
+        entries: Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }>,
+        page: { endCursor: string | null; hasNextPage: boolean; pageNumber: number }
+      ) => boolean | Promise<boolean>;
+    } = {}
   ): Promise<Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }>> {
     const results: Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }> = [];
-    let after: string | null = null;
+    let after: string | null = options.after ?? null;
     let hasNextPage = true;
+    let pageNumber = 0;
+    const targetPlexUserId = options.plexUserId?.trim().toLowerCase();
 
     while (hasNextPage) {
+      pageNumber++;
       const data: PlexActivityFeedResponse = await this.requestCommunity<PlexActivityFeedResponse>(
         `query GetWatchlistActivity($first: PaginationInt!, $after: String) {
            activityFeed(first: $first, after: $after, types: [WATCHLIST]) {
@@ -905,6 +1104,7 @@ export class PlexIntegration {
       );
 
       let reachedSince = false;
+      const pageEntries: Array<{ plexItemId: string; plexUserId: string; watchlistedAt: string }> = [];
       for (const node of data.activityFeed.nodes) {
         // Incremental mode: stop once we pass entries older than last fetch
         if (since && node.date <= since) {
@@ -912,16 +1112,29 @@ export class PlexIntegration {
           break;
         }
         if (!node.metadataItem) continue;
+        if (targetPlexUserId && node.userV2.id.toLowerCase() !== targetPlexUserId) continue;
         const guids = node.metadataItem.guid ? [node.metadataItem.guid] : undefined;
         const plexItemId = this.buildPlexItemId(node.metadataItem.key ?? node.metadataItem.id, guids);
-        results.push({
+        pageEntries.push({
           plexItemId,
           plexUserId: node.userV2.id,
           watchlistedAt: node.date
         });
       }
 
-      hasNextPage = !reachedSince && data.activityFeed.pageInfo.hasNextPage;
+      if (!options.onPage) {
+        results.push(...pageEntries);
+      }
+
+      const shouldContinue = options.onPage
+        ? await options.onPage(pageEntries, {
+            endCursor: data.activityFeed.pageInfo.endCursor,
+            hasNextPage: data.activityFeed.pageInfo.hasNextPage,
+            pageNumber
+          })
+        : true;
+
+      hasNextPage = shouldContinue && !reachedSince && data.activityFeed.pageInfo.hasNextPage;
       after = data.activityFeed.pageInfo.endCursor;
     }
 
@@ -1371,7 +1584,13 @@ export class PlexIntegration {
 
   async deleteCollection(collectionRatingKey: string): Promise<void> {
     this.logger.info("Deleting Plex collection", { collectionRatingKey });
-    await this.requestServer(`/library/metadata/${collectionRatingKey}`, { method: "DELETE" });
+    try {
+      await this.requestServer(`/library/metadata/${collectionRatingKey}`, { method: "DELETE" });
+    } catch (err) {
+      // 400/404 means the collection is already gone — treat as success.
+      if (this.isItemMissingError(err)) return;
+      throw err;
+    }
   }
 
   async updateCollectionVisibility(
@@ -1440,41 +1659,78 @@ export class PlexIntegration {
 
   /**
    * Enforce a specific item order in a custom-sorted collection.
-   * Moves every item into position sequentially — simple and guaranteed correct.
+   * Moves the first misplaced item into position, re-fetches live order, and
+   * repeats with progressive backoff so Plex has time to settle each move.
    * Skips the whole operation if the collection is already in the desired order.
+   * Retries are tracked per-item: if the same item fails to settle after
+   * COLLECTION_REORDER_MAX_ITEM_RETRIES attempts, the whole reorder is abandoned.
    */
-  async reorderCollectionItems(collectionRatingKey: string, orderedRatingKeys: string[]): Promise<{ staleKeys: Set<string> }> {
+  async reorderCollectionItems(collectionRatingKey: string, orderedRatingKeys: string[]): Promise<{
+    staleKeys: Set<string>;
+    converged: boolean;
+    finalOrder: string[];
+  }> {
     const staleKeys = new Set<string>();
 
-    if (orderedRatingKeys.length <= 1) return { staleKeys };
-
-    const currentOrder = await this.getCollectionItems(collectionRatingKey);
-
-    if (
-      currentOrder.length === orderedRatingKeys.length &&
-      currentOrder.every((key, i) => key === orderedRatingKeys[i])
-    ) {
-      return { staleKeys }; // already in correct order
+    if (orderedRatingKeys.length <= 1) {
+      return { staleKeys, converged: true, finalOrder: [...orderedRatingKeys] };
     }
 
-    // Track the last successfully placed key so the anchor for subsequent moves
-    // stays valid even when stale keys are skipped mid-sequence.
-    let lastPlacedKey: string | null = null;
+    let currentOrder = await this.getCollectionItems(collectionRatingKey);
 
-    for (const itemKey of orderedRatingKeys) {
+    if (ratingKeyOrderMatches(currentOrder, orderedRatingKeys)) {
+      return { staleKeys, converged: true, finalOrder: currentOrder }; // already in correct order
+    }
+
+    let remainingKeys = [...orderedRatingKeys];
+    let lastAttemptedKey: string | null = null;
+    let consecutiveRetries = 0;
+
+    while (true) {
+      const mismatchIndex = remainingKeys.findIndex((key, i) => currentOrder[i] !== key);
+      if (mismatchIndex === -1) {
+        return { staleKeys, converged: true, finalOrder: currentOrder };
+      }
+
+      const itemKey = remainingKeys[mismatchIndex];
+      const afterKey = mismatchIndex > 0 ? remainingKeys[mismatchIndex - 1] : null;
+
+      if (itemKey === lastAttemptedKey) {
+        consecutiveRetries++;
+        if (consecutiveRetries >= COLLECTION_REORDER_MAX_ITEM_RETRIES) {
+          this.logger.warn("Collection reorder did not converge within bounded attempts", {
+            collectionRatingKey,
+            stuckKey: itemKey,
+            itemRetries: consecutiveRetries,
+            ...buildOrderMismatchMeta(currentOrder, remainingKeys)
+          });
+          return { staleKeys, converged: false, finalOrder: currentOrder };
+        }
+      } else {
+        consecutiveRetries = 0;
+        lastAttemptedKey = itemKey;
+      }
+
+      this.logger.debug("Moving collection item into desired position", {
+        collectionRatingKey,
+        itemKey,
+        afterKey,
+        targetIndex: mismatchIndex,
+        consecutiveRetries
+      });
+
       try {
-        if (lastPlacedKey === null) {
+        if (afterKey === null) {
           await this.requestServer(
             `/library/collections/${collectionRatingKey}/items/${itemKey}/move`,
             { method: "PUT" }
           );
         } else {
           await this.requestServer(
-            `/library/collections/${collectionRatingKey}/items/${itemKey}/move?after=${lastPlacedKey}`,
+            `/library/collections/${collectionRatingKey}/items/${itemKey}/move?after=${afterKey}`,
             { method: "PUT" }
           );
         }
-        lastPlacedKey = itemKey;
       } catch (err) {
         if (!this.isItemMissingError(err)) throw err;
         this.logger.warn("Skipping stale rating key during collection reorder", {
@@ -1483,10 +1739,30 @@ export class PlexIntegration {
           error: err instanceof Error ? err.message : String(err)
         });
         staleKeys.add(itemKey);
+        remainingKeys = remainingKeys.filter((key) => key !== itemKey);
+        currentOrder = currentOrder.filter((key) => key !== itemKey);
+        consecutiveRetries = 0;
+        lastAttemptedKey = null;
+        continue;
       }
-    }
 
-    return { staleKeys };
+      const delayMs = COLLECTION_REORDER_RETRY_DELAYS_MS[
+        Math.min(consecutiveRetries, COLLECTION_REORDER_RETRY_DELAYS_MS.length - 1)
+      ];
+      await sleep(delayMs);
+      currentOrder = await this.getCollectionItems(collectionRatingKey);
+      if (ratingKeyOrderMatches(currentOrder, remainingKeys)) {
+        return { staleKeys, converged: true, finalOrder: currentOrder };
+      }
+
+      this.logger.warn("Collection order still mismatched after item move", {
+        collectionRatingKey,
+        movedKey: itemKey,
+        targetIndex: mismatchIndex,
+        consecutiveRetries,
+        ...buildOrderMismatchMeta(currentOrder, remainingKeys)
+      });
+    }
   }
 
   /**

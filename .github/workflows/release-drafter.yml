@@ -13,18 +13,27 @@ on:
 
 permissions:
   contents: write
-  pull-requests: read
+  pull-requests: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  auto-label:
+    name: Auto Label Pull Request
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Apply release labels
+        uses: release-drafter/release-drafter/autolabeler@693d20e7c1ce1a81d3a41962f85914253b518449 # v7.3.1
+
   update-release-draft:
     name: Update Release Draft
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Update draft release
-        uses: release-drafter/release-drafter@c2e2804cc59f45f57076a99af580d0fedb697927 # v7.3.0
+        uses: release-drafter/release-drafter@693d20e7c1ce1a81d3a41962f85914253b518449 # v7.3.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -534,7 +534,7 @@ function OverridableField({
   );
 }
 
-type EditModalTab = "user" | "collection" | "seerr";
+type EditModalTab = "user" | "collection" | "watchlist" | "seerr";
 
 function EditModal({
   user,
@@ -557,6 +557,8 @@ function EditModal({
   const [collectionSortOrderOverride, setCollectionSortOrderOverride] = useState<CollectionSortOrder | null>(
     user.collectionSortOrderOverride ?? null
   );
+  const [watchlistCleanupMovies, setWatchlistCleanupMovies] = useState(settings.watchlistCleanup.movieEnabled);
+  const [watchlistCleanupShows, setWatchlistCleanupShows] = useState(settings.watchlistCleanup.showEnabled);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -657,6 +659,15 @@ function EditModal({
         });
       }
 
+      if (user.isSelf) {
+        await apiPatch("/api/settings", {
+          watchlistCleanup: {
+            movieEnabled: watchlistCleanupMovies,
+            showEnabled: watchlistCleanupShows
+          }
+        });
+      }
+
       onClose();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -668,7 +679,8 @@ function EditModal({
   const tabs: { id: EditModalTab; label: string }[] = [
     { id: "user", label: "User" },
     { id: "collection", label: "Collection" },
-    ...(seerrEnabled ? [{ id: "seerr" as EditModalTab, label: "Seerr" }] : [])
+    ...(seerrEnabled ? [{ id: "seerr" as EditModalTab, label: "Seerr" }] : []),
+    ...(user.isSelf ? [{ id: "watchlist" as EditModalTab, label: "Watchlist" }] : [])
   ];
 
   const headerDisplayName = displayNameOverride.trim() || user.displayName;
@@ -849,6 +861,27 @@ function EditModal({
                   ))}
                 </div>
               </OverridableField>
+            </div>
+          )}
+
+          {/* Watchlist tab */}
+          {activeTab === "watchlist" && user.isSelf && (
+            <div className="space-y-4">
+              <ToggleField
+                label="Remove Movies When Watched"
+                hint="Remove movies from your watchlist once watched."
+                checked={watchlistCleanupMovies}
+                onChange={setWatchlistCleanupMovies}
+              />
+              <ToggleField
+                label="Remove Shows When Watched"
+                hint="Remove shows from your watchlist once all non-special episodes are watched."
+                checked={watchlistCleanupShows}
+                onChange={setWatchlistCleanupShows}
+              />
+              <p className="text-xs text-on-surface-variant leading-relaxed">
+                Hubarr can remove items from your Plex watchlist, but only when they have been fully viewed after they were watchlisted.
+              </p>
             </div>
           )}
 

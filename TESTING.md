@@ -127,6 +127,9 @@ Read-only. Safe to run against a live instance.
 | Disabled users never show a Sync Watchlist button | Expands the disabled users section and asserts no `Sync Watchlist` button is rendered there |
 | Refresh Users button is present | Asserts the Refresh Users button renders |
 | Edit modal shows collection ordering override section | Clicks the first user's edit button, asserts the "Collection Ordering" section is visible in the modal, and that the dropdown contains the two watchlist date sort options |
+| Watchlist tab is only available when editing the self user | Opens the self user edit modal and asserts the Watchlist tab is present, then opens a non-self user when available and asserts the tab is absent |
+| Self Watchlist tab shows cleanup options without changing them | Opens the self user edit modal, navigates to Watchlist, and asserts both cleanup options and explanatory text are visible without saving |
+| Watchlist Cleanup job is enabled when cleanup settings are already enabled | Reads current settings; if cleanup is already enabled, verifies the Jobs row is enabled, otherwise skips without changing settings |
 
 ---
 
@@ -140,6 +143,24 @@ Tests that cached images are served correctly from `/images/`, that the route is
 | Dashboard recently added posters all load | Waits for the dashboard to finish loading, then checks every `img.object-cover[src*='/images/']` has loaded successfully (`complete && naturalWidth > 0`) |
 | Watchlists page 1 posters all load | Same check on the first page of the Watchlists grid |
 | Users page avatar images load from /images/ or show fallback | Checks every `img[src*='/images/']` on the Users page has loaded successfully |
+
+---
+
+### `tests/playwright/history.spec.ts` — History filters
+
+Read-only. Safe to run against a live instance.
+
+| Test | What it checks |
+|---|---|
+| Type filter buttons are all visible | Verifies the history type filter includes All, GraphQL, RSS, Manual, and Collection |
+| Status filter buttons are all visible | Verifies the status filter includes All, Success, Error, and Running |
+| Activity filter buttons are all visible | Verifies the activity filter includes All, Changes, and No Changes |
+| Activity filter starts with All | Verifies the activity filter order is All, Changes, then No Changes |
+| Page size select is visible | Verifies the history page-size selector is rendered |
+| RSS type filter updates URL | Clicks the RSS type filter and verifies `?type=rss` appears in the URL |
+| Success status filter updates URL | Clicks the Success status filter and verifies `?status=success` appears in the URL |
+| No Changes activity filter updates URL | Clicks the No Changes activity filter and verifies `?activity=no_changes` appears in the URL |
+| All activity filter updates URL | Clicks the All activity filter and verifies `?activity=all` appears in the URL |
 
 ---
 

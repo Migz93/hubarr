@@ -1,26 +1,28 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { AlertCircle, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock, MinusCircle, Trash2, XCircle } from "lucide-react";
 import { apiGet } from "../lib/api";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { formatDateTime, formatRelativeTime } from "../lib/utils";
 import type { HistoryPageResponse, SearchCandidate, SyncRun, SyncRunDetail, SyncRunItem } from "../../shared/types";
 
-type KindFilter = "all" | "full" | "rss" | "user" | "publish" | "seerr";
+type KindFilter = "all" | "full" | "rss" | "user" | "publish" | "seerr" | "watchlist-cleanup";
 type StatusFilter = "all" | "success" | "error" | "running";
+type ActivityFilter = "changes" | "no_changes" | "all";
 
 const KIND_LABELS: Record<string, string> = {
   full: "GraphQL",
   rss: "RSS",
   user: "Manual",
   publish: "Collection",
-  seerr: "Seerr"
+  seerr: "Seerr",
+  "watchlist-cleanup": "Watchlist Cleanup"
 };
 
 // Strip the leading sync-kind prefix from a summary
 // string since the row header already shows the sync type.
 function stripKindPrefix(summary: string): string {
-  return summary.replace(/^(RSS sync|Full sync|Manual sync|Collection publish|Collection sync|Seerr request sync)[:\s]*/i, "").trim();
+  return summary.replace(/^(RSS sync|Full sync|Manual sync|Collection publish|Collection sync|Seerr request sync|Watchlist Cleanup)[:\s]*/i, "").trim();
 }
 
 function capitalizeSentence(text: string): string {
@@ -35,19 +37,27 @@ const ACTION_LABELS: Record<string, string> = {
   "watchlist.match.failed": "Match failed",
   "watchlist.date_unresolved": "Date unresolved",
   "collection.publish": "Collection publish",
+  "collection.publish.skipped": "Collection publish skipped",
   "collection.publish.followup": "Collection publish triggered",
   "isolation.filters": "Isolation filters",
+  "isolation.filters.skipped": "Isolation filters skipped",
   "sync.user": "User sync",
   "rss.feed.check.self": "Self RSS feed check",
   "rss.feed.check.friends": "Friends RSS feed check",
   "seerr.request.created": "Seerr request created",
   "seerr.request.existing": "Already in Seerr",
   "seerr.request.skipped": "Seerr request skipped",
-  "seerr.request.failed": "Seerr request failed"
+  "seerr.request.failed": "Seerr request failed",
+  "watchlist.cleanup.removed": "Watchlist cleanup removed",
+  "watchlist.cleanup.skipped": "Watchlist cleanup skipped",
+  "watchlist.cleanup.failed": "Watchlist cleanup failed",
+  "watchlist.cleanup.failed-item": "Watchlist cleanup item failed",
+  "watchlist.publish.failed": "Watchlist cleanup publish failed"
 };
 
-const VALID_KINDS: KindFilter[] = ["all", "full", "rss", "user", "publish", "seerr"];
+const VALID_KINDS: KindFilter[] = ["all", "full", "rss", "user", "publish", "seerr", "watchlist-cleanup"];
 const VALID_STATUSES: StatusFilter[] = ["all", "success", "error", "running"];
+const VALID_ACTIVITIES: ActivityFilter[] = ["all", "changes", "no_changes"];
 const VALID_PAGE_SIZES = [10, 25, 50, 100];
 const HISTORY_FAST_REFRESH_MS = 2_500;
 const HISTORY_IDLE_REFRESH_MS = 15_000;
@@ -57,6 +67,7 @@ export default function History() {
 
   const kind = (VALID_KINDS.includes(searchParams.get("type") as KindFilter) ? searchParams.get("type") : "all") as KindFilter;
   const status = (VALID_STATUSES.includes(searchParams.get("status") as StatusFilter) ? searchParams.get("status") : "all") as StatusFilter;
+  const activity = (VALID_ACTIVITIES.includes(searchParams.get("activity") as ActivityFilter) ? searchParams.get("activity") : "all") as ActivityFilter;
   const page = Math.max(1, Number(searchParams.get("page") ?? 1));
   const pageSize = VALID_PAGE_SIZES.includes(Number(searchParams.get("pageSize"))) ? Number(searchParams.get("pageSize")) : 10;
 
@@ -76,7 +87,7 @@ export default function History() {
   const load = useCallback(async (background = false) => {
     setLoading((current) => current || !background);
     try {
-      const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize), kind, status });
+      const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize), kind, status, activity });
       const result = await apiGet<HistoryPageResponse>(`/api/history?${params.toString()}`);
       setData(result);
       setError(null);
@@ -85,7 +96,7 @@ export default function History() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, kind, status]);
+  }, [page, pageSize, kind, status, activity]);
 
   const runs = data?.results ?? [];
   const pageInfo = data?.pageInfo;
@@ -115,7 +126,7 @@ export default function History() {
       {/* Filters */}
       <div className="flex flex-wrap gap-2 mb-4 items-center">
         {/* Kind filter */}
-        <div className="flex rounded-lg overflow-hidden border border-outline-variant/30">
+        <div role="group" aria-label="Type filter" className="flex rounded-lg overflow-hidden border border-outline-variant/30">
           {VALID_KINDS.map((k) => (
             <button
               key={k}
@@ -126,13 +137,13 @@ export default function History() {
                   : "bg-background-container text-on-surface-variant hover:text-on-surface"
               }`}
             >
-              {k === "all" ? "All types" : KIND_LABELS[k] ?? k}
+              {k === "all" ? "All" : KIND_LABELS[k] ?? k}
             </button>
           ))}
         </div>
 
         {/* Status filter */}
-        <div className="flex rounded-lg overflow-hidden border border-outline-variant/30">
+        <div role="group" aria-label="Status filter" className="flex rounded-lg overflow-hidden border border-outline-variant/30">
           {(["all", "success", "error", "running"] as StatusFilter[]).map((s) => (
             <button
               key={s}
@@ -143,7 +154,24 @@ export default function History() {
                   : "bg-background-container text-on-surface-variant hover:text-on-surface"
               }`}
             >
-              {s === "all" ? "All status" : titleCaseStatus(s)}
+              {s === "all" ? "All" : titleCaseStatus(s)}
+            </button>
+          ))}
+        </div>
+
+        {/* Activity filter */}
+        <div role="group" aria-label="Activity filter" className="flex rounded-lg overflow-hidden border border-outline-variant/30">
+          {VALID_ACTIVITIES.map((a) => (
+            <button
+              key={a}
+              onClick={() => setParam("activity", a, true)}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                activity === a
+                  ? "bg-primary-dim text-on-surface"
+                  : "bg-background-container text-on-surface-variant hover:text-on-surface"
+              }`}
+            >
+              {activityLabel(a)}
             </button>
           ))}
         </div>
@@ -218,6 +246,7 @@ interface HistoryStep {
   status: "success" | "error";
   label: string;
   meta?: string;
+  variant?: "default" | "removed" | "skipped";
 }
 
 interface WatchlistFetchDetails {
@@ -236,6 +265,7 @@ interface CollectionPublishDetails {
   collectionName?: string;
   collectionRatingKey?: string;
   matchedItems?: number;
+  reason?: string;
   message?: string;
 }
 
@@ -261,8 +291,27 @@ interface SyncUserErrorDetails {
   message?: string;
 }
 
+interface SeerrRequestDetails {
+  userId?: number;
+  displayName?: string;
+  plexItemId?: string;
+  title?: string;
+  type?: string;
+  tmdbId?: number;
+  outcome?: string;
+  reason?: string;
+  error?: string;
+}
+
 function titleCaseStatus(status: SyncRun["status"]): string {
   return capitalizeSentence(status);
+}
+
+function activityLabel(activity: ActivityFilter | SyncRun["activity"]): string {
+  if (activity === "changes") return "Changes";
+  if (activity === "no_changes") return "No Changes";
+  if (activity === "unknown") return "Unknown";
+  return "All";
 }
 
 function formatRunDuration(run: SyncRun, now = Date.now()): string | null {
@@ -286,7 +335,34 @@ function formatMediaTypeLabel(mediaType?: string): string {
   return "Items";
 }
 
+function formatSeerrOutcomeLabel(item: SyncRunItem, details: SeerrRequestDetails | null): string {
+  if (item.action === "seerr.request.created") return "requested in Seerr";
+  if (item.action === "seerr.request.failed") return "Seerr request failed";
+  if (item.action === "seerr.request.skipped") {
+    if (details?.reason === "missing_tmdb_id") return "skipped: missing TMDB ID";
+    if (details?.reason === "unlinked_user") return "skipped: no linked Seerr user";
+    return "Seerr request skipped";
+  }
+
+  if (details?.outcome === "already_requested") return "already requested in Seerr";
+  if (details?.outcome === "already_available") return "already in Seerr";
+  if (details?.outcome === "added_directly") return "already added in Seerr";
+  return "already in Seerr";
+}
+
+function formatSeerrStepLabel(item: SyncRunItem): string {
+  const details = item.details as SeerrRequestDetails | null;
+  const title = details?.title ?? "Unknown item";
+  const type = details?.type ? ` (${details.type})` : "";
+  const name = details?.displayName ?? "Unknown user";
+  return `${title}${type} for ${name}: ${formatSeerrOutcomeLabel(item, details)}`;
+}
+
 function formatStepLabel(item: SyncRunItem): string {
+  if (item.action.startsWith("seerr.request.")) {
+    return formatSeerrStepLabel(item);
+  }
+
   if (item.action === "sync.user" && item.status === "error") {
     const details = item.details as SyncUserErrorDetails | null;
     return details?.displayName
@@ -306,7 +382,18 @@ function formatStepLabel(item: SyncRunItem): string {
 
   if (item.action === "collection.publish.followup") {
     const details = item.details as { message?: string } | null;
-    return details?.message ?? "Triggered collection publish after full sync";
+    return details?.message ?? "Triggered collection publish";
+  }
+
+  if (item.action === "collection.publish.skipped") {
+    const details = item.details as CollectionPublishDetails | null;
+    const name = details?.displayName ?? "Unknown user";
+    const mediaType = formatMediaTypeLabel(details?.mediaType);
+    return `Skipped ${mediaType.toLowerCase()} collection publish for ${name}`;
+  }
+
+  if (item.action === "isolation.filters.skipped") {
+    return "Skipped isolation filters";
   }
 
   return ACTION_LABELS[item.action] ?? item.action;
@@ -323,11 +410,31 @@ function formatStepMeta(item: SyncRunItem): string | undefined {
     return details?.message;
   }
 
+  if (item.action === "collection.publish.skipped") {
+    const details = item.details as CollectionPublishDetails | null;
+    return details?.reason === "state-unchanged"
+      ? "Collection state was unchanged."
+      : details?.reason;
+  }
+
+  if (item.action === "isolation.filters.skipped") {
+    const details = item.details as { reason?: string } | null;
+    return details?.reason === "inputs-unchanged"
+      ? "Isolation inputs were unchanged."
+      : details?.reason;
+  }
+
   if (item.action === "rss.feed.check.self" || item.action === "rss.feed.check.friends") {
     const details = item.details as FeedCheckDetails | null;
     if (item.status === "error") return details?.message;
     if (details?.checked === false) return "Feed was not initialized for this run.";
     return `${details?.found ?? 0} new item${details?.found === 1 ? "" : "s"} found`;
+  }
+
+  if (item.action.startsWith("seerr.request.")) {
+    const details = item.details as SeerrRequestDetails | null;
+    if (item.status === "error") return details?.error;
+    return undefined;
   }
 
   if (item.details && typeof item.details === "object") {
@@ -383,11 +490,13 @@ function groupSuccessfulSteps(run: SyncRun, items: SyncRunItem[]): HistoryStep[]
       (item) => item.status === "success" && item.action !== "collection.publish"
     );
     for (const item of genericSuccesses) {
+      const isSkipped = item.action.endsWith(".skipped");
       steps.push({
         id: `${item.id}-generic-success`,
         status: "success",
         label: formatStepLabel(item),
-        meta: formatStepMeta(item)
+        meta: formatStepMeta(item),
+        variant: isSkipped ? "skipped" : undefined
       });
     }
   } else if (run.kind === "rss") {
@@ -428,6 +537,51 @@ function groupSuccessfulSteps(run: SyncRun, items: SyncRunItem[]): HistoryStep[]
         item.action !== "rss.feed.check.friends" &&
         item.action !== "watchlist.rss" &&
         item.action !== "watchlist.rss.self"
+    );
+    for (const item of genericSuccesses) {
+      steps.push({
+        id: `${item.id}-generic-success`,
+        status: "success",
+        label: formatStepLabel(item),
+        meta: formatStepMeta(item)
+      });
+    }
+  } else if (run.kind === "watchlist-cleanup") {
+    const cleanupItems = items.filter(
+      (item) =>
+        item.status === "success" &&
+        (item.action === "watchlist.cleanup.removed" || item.action === "watchlist.cleanup.skipped")
+    ).sort((a, b) => {
+      const aRemoved = a.action === "watchlist.cleanup.removed";
+      const bRemoved = b.action === "watchlist.cleanup.removed";
+      if (aRemoved !== bRemoved) return aRemoved ? -1 : 1;
+      return a.id - b.id;
+    });
+
+    for (const item of cleanupItems) {
+      const details = item.details as {
+        title?: string;
+        type?: string;
+        reason?: string;
+        message?: string;
+      } | null;
+      const title = details?.title ?? "Unknown item";
+      const type = details?.type ? ` (${details.type})` : "";
+      const verb = item.action === "watchlist.cleanup.removed" ? "Removed" : "Skipped";
+      steps.push({
+        id: `${item.id}-cleanup-item`,
+        status: "success",
+        label: `${verb}: ${title}${type}`,
+        meta: details?.message ?? details?.reason,
+        variant: item.action === "watchlist.cleanup.removed" ? "removed" : "skipped"
+      });
+    }
+
+    const genericSuccesses = items.filter(
+      (item) =>
+        item.status === "success" &&
+        item.action !== "watchlist.cleanup.removed" &&
+        item.action !== "watchlist.cleanup.skipped"
     );
     for (const item of genericSuccesses) {
       steps.push({
@@ -600,6 +754,8 @@ function RunRow({ run }: { run: SyncRun }) {
 
   const config = statusConfig[liveRun.status];
   const durationText = formatRunDuration(liveRun, now);
+  const showActivityBadge = liveRun.status === "success" &&
+    (liveRun.activity === "changes" || liveRun.activity === "no_changes");
 
   return (
     <div className="bg-background-container rounded-xl border border-outline-variant/20 overflow-hidden">
@@ -611,11 +767,16 @@ function RunRow({ run }: { run: SyncRun }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-medium text-on-surface text-sm">
-              {KIND_LABELS[run.kind] ?? run.kind} Sync
+              {run.kind === "watchlist-cleanup" ? "Watchlist Cleanup" : `${KIND_LABELS[run.kind] ?? run.kind} Sync`}
             </span>
             <span className={`text-xs px-1.5 py-0.5 rounded-full border font-medium ${config.badge}`}>
               {titleCaseStatus(liveRun.status)}
             </span>
+            {showActivityBadge && (
+              <span className="text-xs px-1.5 py-0.5 rounded-full border border-outline-variant/20 bg-background-container-high text-on-surface-variant font-medium">
+                {activityLabel(liveRun.activity)}
+              </span>
+            )}
           </div>
           <div className="text-on-surface-variant text-xs mt-0.5 truncate">
             {capitalizeSentence(stripKindPrefix(liveRun.summary))}
@@ -867,6 +1028,29 @@ function DateUnresolvedRow({ item }: { item: SyncRunItem }) {
 function StepsCollapsible({ items }: { items: HistoryStep[] }) {
   const [open, setOpen] = useState(false);
 
+  const renderStepIcon = (item: HistoryStep) => {
+    if (item.variant === "removed") {
+      return <Trash2 size={12} className="text-error flex-shrink-0" />;
+    }
+    if (item.variant === "skipped") {
+      return <MinusCircle size={12} className="text-warning flex-shrink-0" />;
+    }
+    return <CheckCircle size={12} className="text-success flex-shrink-0" />;
+  };
+
+  const stepClass = (item: HistoryStep) => {
+    if (item.variant === "removed") {
+      return "border-error/20 bg-error/5";
+    }
+    if (item.variant === "skipped") {
+      return "border-warning/20 bg-warning/5";
+    }
+    return "border-transparent bg-background-container/50";
+  };
+
+  const labelClass = (item: HistoryStep) =>
+    item.variant === "removed" ? "text-error" : "text-on-surface-variant";
+
   return (
     <div>
       <button
@@ -879,9 +1063,9 @@ function StepsCollapsible({ items }: { items: HistoryStep[] }) {
       {open && (
         <div className="mt-2 space-y-1">
           {items.map((item) => (
-            <div key={item.id} className="flex items-center gap-2 text-xs px-2 py-1 rounded-lg bg-background-container/50">
-              <CheckCircle size={12} className="text-success flex-shrink-0" />
-              <span className="text-on-surface-variant">{item.label}</span>
+            <div key={item.id} className={`flex items-center gap-2 text-xs px-2 py-1 rounded-lg border ${stepClass(item)}`}>
+              {renderStepIcon(item)}
+              <span className={labelClass(item)}>{item.label}</span>
               {item.meta && (
                 <span className="text-on-surface-variant/60 ml-auto text-right">{item.meta}</span>
               )}

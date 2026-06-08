@@ -16,9 +16,10 @@ import { generateCollectionPoster } from "./collection-artwork.js";
 import { HubarrDatabase } from "./db/index.js";
 import { ImageCacheService } from "./image-cache.js";
 import { Logger } from "./logger.js";
-import { PlexIntegration, WATCHLIST_DATE_UNKNOWN_SENTINEL, type PlexLibraryItemMatch, type ResolvedWatchlistItem } from "./integrations/plex.js";
+import { PlexIntegration, WATCHLIST_DATE_UNKNOWN_SENTINEL, type PlexDiscoverEpisodeRef, type PlexEpisodeRef, type PlexLibraryItemMatch, type ResolvedWatchlistItem } from "./integrations/plex.js";
 import { SeerrIntegration, extractTmdbId } from "./integrations/seerr.js";
 import { RssCache, type RssFeedItem } from "./rss-cache.js";
+import { buildOrderMismatchMeta, ratingKeyOrderMatches } from "./utils/collection-order.js";
 
 const PLEX_SYNC_CONCURRENCY = 3;
 
@@ -48,6 +49,30 @@ function computePublishStateHash(params: {
   return crypto.createHash("sha256").update(payload).digest("hex");
 }
 
+function computeIsolationFilterInputHash(
+  enabledUsers: UserRecord[],
+  getEffectiveVisibility: (user: UserRecord) => VisibilityConfig
+): string {
+  // version: bump this when the payload schema changes to force a one-time global re-run.
+  const users = enabledUsers
+    .map((user) => ({
+      id: user.id,
+      plexUserId: user.plexUserId,
+      username: user.username,
+      visibility: getEffectiveVisibility(user)
+    }))
+    .sort((a, b) => a.id - b.id);
+  const payload = JSON.stringify({
+    version: 2,
+    users
+  });
+  return crypto.createHash("sha256").update(payload).digest("hex");
+}
+
+function isCustomCollectionSort(sortOrder: CollectionSortOrder): boolean {
+  return sortOrder !== "title";
+}
+
 type SeerrRequestSyncScope =
   | { mode: "all"; triggeredBy: "manual" | "full" }
   | { mode: "user"; userId: number; triggeredBy: "user" }
@@ -58,6 +83,16 @@ type SeerrRequestProcessingOptions = {
 };
 
 type SeerrRequestWorkItem = { user: UserRecord; items: WatchlistItem[] };
+
+function buildEpisodeKey(episode: Pick<PlexEpisodeRef | PlexDiscoverEpisodeRef, "seasonIndex" | "episodeIndex">): string {
+  return `${episode.seasonIndex}:${episode.episodeIndex}`;
+}
+
+function isPastOrTodayDate(value: string | null, todayUtc: Date): boolean {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.getTime() <= todayUtc.getTime();
+}
 
 /**
  * Compare two watchlist items by release date for Plex collection ordering.
@@ -431,7 +466,8 @@ export class HubarrServices {
           runId,
           runStatus,
           `Onboarding preload: ${succeeded}/${total} users synced.`,
-          failures.length > 0 ? failures.join(" | ") : null
+          failures.length > 0 ? failures.join(" | ") : null,
+          runStatus === "success" ? this.classifySyncRunActivity(runId) : undefined
         );
         emit("graphql-sync", "done", `Synced watchlists for ${succeeded} of ${total} user${total !== 1 ? "s" : ""}`, { progress: total, total });
         this.logger.info("Onboarding preload: watchlist sync complete", { succeeded, failed: total - succeeded });
@@ -1023,6 +1059,8 @@ export class HubarrServices {
       return item;
     });
 
+    const watchlistChanges = this.diffWatchlistItems(existingItems, mergedWithDates);
+
     this.db.replaceWatchlistItems(friend.id, mergedWithDates);
 
     const plexSettings = this.db.getPlexSettings();
@@ -1068,7 +1106,11 @@ export class HubarrServices {
         isSelf: friend.isSelf,
         itemCount: mergedWithDates.length,
         matched: matchedCount,
-        unmatched: unmatchedItems.length
+        unmatched: unmatchedItems.length,
+        changed: watchlistChanges.changed,
+        added: watchlistChanges.added,
+        removed: watchlistChanges.removed,
+        updated: watchlistChanges.updated
       },
       friend.id
     );
@@ -1123,7 +1165,91 @@ export class HubarrServices {
       durationMs: Date.now() - syncStart
     });
 
-    return mergedWithDates;
+    return { items: mergedWithDates, selfPlexUuid };
+  }
+
+  private diffWatchlistItems(
+    before: WatchlistItem[],
+    after: WatchlistItem[]
+  ): { changed: boolean; added: number; removed: number; updated: number } {
+    const beforeById = new Map(before.map((item) => [item.plexItemId, item]));
+    const afterById = new Map(after.map((item) => [item.plexItemId, item]));
+    let added = 0;
+    let removed = 0;
+    let updated = 0;
+
+    for (const [plexItemId, item] of afterById) {
+      const existing = beforeById.get(plexItemId);
+      if (!existing) {
+        added++;
+        continue;
+      }
+      if (this.watchlistItemChanged(existing, item)) {
+        updated++;
+      }
+    }
+
+    for (const plexItemId of beforeById.keys()) {
+      if (!afterById.has(plexItemId)) {
+        removed++;
+      }
+    }
+
+    return {
+      changed: added > 0 || removed > 0 || updated > 0,
+      added,
+      removed,
+      updated
+    };
+  }
+
+  private watchlistItemChanged(before: WatchlistItem, after: WatchlistItem): boolean {
+    const beforeGuids = [...(before.guids ?? [])].sort();
+    const afterGuids = [...(after.guids ?? [])].sort();
+    return before.title !== after.title ||
+      before.type !== after.type ||
+      before.year !== after.year ||
+      before.releaseDate !== after.releaseDate ||
+      before.thumb !== after.thumb ||
+      before.discoverKey !== after.discoverKey ||
+      before.source !== after.source ||
+      before.addedAt !== after.addedAt ||
+      before.matchedRatingKey !== after.matchedRatingKey ||
+      beforeGuids.length !== afterGuids.length ||
+      beforeGuids.some((guid, index) => guid !== afterGuids[index]);
+  }
+
+  private classifySyncRunActivity(runId: number): "changes" | "no_changes" {
+    const run = this.db.getSyncRunWithItems(runId);
+    const hasChanges = run?.items.some((item) => {
+      if (item.status !== "success") return false;
+      if (item.action === "watchlist.fetch") {
+        const details = item.details as { changed?: unknown };
+        return details.changed === true;
+      }
+      if (item.action === "isolation.filters") {
+        const details = item.details as { updated?: unknown };
+        return typeof details.updated === "number" && details.updated > 0;
+      }
+      return item.action === "collection.publish" ||
+        item.action === "watchlist.cleanup.removed" ||
+        item.action === "seerr.request.created" ||
+        (item.action === "seerr.request.existing" && (item.details as { stateChanged?: unknown }).stateChanged === true);
+    }) ?? false;
+
+    return hasChanges ? "changes" : "no_changes";
+  }
+
+  private seerrRequestStateChanged(before: SeerrRequestState | null, after: SeerrRequestState): boolean {
+    if (!before) return true;
+    return before.plexItemId !== after.plexItemId ||
+      before.seerrRequestId !== after.seerrRequestId ||
+      before.seerrMediaId !== after.seerrMediaId ||
+      before.tmdbId !== after.tmdbId ||
+      before.outcome !== after.outcome ||
+      before.lastError !== after.lastError ||
+      before.effectiveSeerrUserId !== after.effectiveSeerrUserId ||
+      before.executionSeerrUserId !== after.executionSeerrUserId;
   }
 
   private async publishUserCollections(
@@ -1132,7 +1258,8 @@ export class HubarrServices {
     runId: number | null,
     force: boolean,
     plex = this.getPlexIntegration()
-  ) {
+  ): Promise<string[]> {
+    const publishFailures: string[] = [];
     const appSettings = this.db.getAppSettings();
     // Per-user override takes precedence over the global setting; null means use global.
     const effectiveSortOrder = friend.collectionSortOrderOverride ?? appSettings.collectionSortOrder ?? "date-desc";
@@ -1205,9 +1332,9 @@ export class HubarrServices {
         if (stored?.collectionRatingKey && stored.lastSyncedHash === stateHash) {
           // Hash matches — validate the collection still exists in Plex before
           // skipping. A transient error (network, auth) falls through to the
-          // full publish rather than silently skipping; a definitive 400/404
+          // full publish without clearing the stored key; a definitive false
           // means the collection was externally deleted and needs to be recreated.
-          let exists: boolean;
+          let exists: boolean | null;
           try {
             exists = await plex.collectionExists(stored.collectionRatingKey);
           } catch (err) {
@@ -1217,24 +1344,76 @@ export class HubarrServices {
               collectionRatingKey: stored.collectionRatingKey,
               error: err instanceof Error ? err.message : String(err)
             });
-            exists = false; // fall through to full publish
+            exists = null; // fall through to full publish without treating the collection as deleted
           }
 
-          if (exists) {
-            this.logger.debug("Collection state unchanged and collection validated, skipping publish", {
+          if (exists === true) {
+            let skipPublish = false;
+
+            if (isCustomCollectionSort(effectiveSortOrder)) {
+              let liveKeys: string[] | null;
+              try {
+                liveKeys = await plex.getCollectionItems(stored.collectionRatingKey);
+              } catch (err) {
+                this.logger.warn("Could not validate collection item order, falling through to republish", {
+                  userId: friend.id,
+                  mediaType,
+                  collectionRatingKey: stored.collectionRatingKey,
+                  effectiveSortOrder,
+                  error: err instanceof Error ? err.message : String(err)
+                });
+                liveKeys = null;
+              }
+
+              if (liveKeys && ratingKeyOrderMatches(liveKeys, matchedRatingKeys)) {
+                this.logger.debug("Collection state unchanged and collection order validated, skipping publish", {
+                  userId: friend.id,
+                  mediaType,
+                  collectionRatingKey: stored.collectionRatingKey,
+                  effectiveSortOrder
+                });
+                skipPublish = true;
+              } else if (liveKeys) {
+                this.logger.info("Collection item order differs from desired state, republishing", {
+                  userId: friend.id,
+                  mediaType,
+                  collectionRatingKey: stored.collectionRatingKey,
+                  effectiveSortOrder,
+                  ...buildOrderMismatchMeta(liveKeys, matchedRatingKeys)
+                });
+              }
+              // Hash matches but Plex order drifted — fall through to the reorder path.
+            } else {
+              this.logger.debug("Collection state unchanged and collection validated, skipping publish", {
+                userId: friend.id,
+                mediaType,
+                collectionRatingKey: stored.collectionRatingKey
+              });
+              skipPublish = true;
+            }
+
+            if (skipPublish) {
+              if (runId !== null) {
+                this.db.addSyncRunItem(runId, "collection.publish.skipped", "success", {
+                  userId: friend.id,
+                  displayName: friend.displayName,
+                  mediaType,
+                  collectionName,
+                  collectionRatingKey: stored.collectionRatingKey,
+                  matchedItems: matchedRatingKeys.length,
+                  reason: "state-unchanged"
+                }, friend.id);
+              }
+              continue;
+            }
+          } else if (exists === false) {
+            this.logger.info("Stored collection no longer exists in Plex, clearing and republishing", {
               userId: friend.id,
               mediaType,
               collectionRatingKey: stored.collectionRatingKey
             });
-            continue;
+            this.db.clearCollectionRatingKey(friend.id, mediaType);
           }
-
-          this.logger.info("Stored collection no longer exists in Plex, clearing and republishing", {
-            userId: friend.id,
-            mediaType,
-            collectionRatingKey: stored.collectionRatingKey
-          });
-          this.db.clearCollectionRatingKey(friend.id, mediaType);
         }
       }
 
@@ -1275,11 +1454,16 @@ export class HubarrServices {
       // For custom-order modes (date/watchlist-date, collectionSort=2) push
       // explicit item positions which also catches stale keys via 404 failures.
       let reorderStaleKeys: Set<string>;
+      let reorderConverged = true;
+      let reorderFinalOrder: string[] | null = null;
       if (effectiveSortOrder === "title") {
         const liveKeys = new Set(await plex.getCollectionItems(collectionRatingKey));
         reorderStaleKeys = new Set(reorderKeys.filter((k) => !liveKeys.has(k)));
       } else {
-        ({ staleKeys: reorderStaleKeys } = await plex.reorderCollectionItems(collectionRatingKey, reorderKeys));
+        const reorderResult = await plex.reorderCollectionItems(collectionRatingKey, reorderKeys);
+        reorderStaleKeys = reorderResult.staleKeys;
+        reorderConverged = reorderResult.converged;
+        reorderFinalOrder = reorderResult.finalOrder;
       }
       if (reorderStaleKeys.size > 0) {
         this.logger.warn("Clearing stale matched rating keys found during post-sync validation", {
@@ -1304,6 +1488,60 @@ export class HubarrServices {
         collectionRatingKey,
         matchedItems: cleanedKeys.length
       });
+
+      let customOrderValidated = true;
+      let collectionPublishErrorDetails: Record<string, unknown> | null = null;
+      if (isCustomCollectionSort(effectiveSortOrder)) {
+        try {
+          const liveKeys = reorderFinalOrder ?? await plex.getCollectionItems(collectionRatingKey);
+          customOrderValidated = ratingKeyOrderMatches(liveKeys, cleanedKeys);
+          if (!customOrderValidated) {
+            const mismatch = buildOrderMismatchMeta(liveKeys, cleanedKeys);
+            this.logger.warn("Collection item order still differs after reorder; leaving sync hash dirty", {
+              userId: friend.id,
+              mediaType,
+              collectionRatingKey,
+              effectiveSortOrder,
+              reorderConverged,
+              ...mismatch
+            });
+            collectionPublishErrorDetails = {
+              userId: friend.id,
+              displayName: friend.displayName,
+              mediaType,
+              collectionName,
+              collectionRatingKey,
+              effectiveSortOrder,
+              matchedItems: cleanedKeys.length,
+              reason: reorderConverged ? "post-reorder-validation-mismatch" : "reorder-did-not-converge",
+              message: "Plex collection order does not match Hubarr's desired order after bounded reorder attempts.",
+              ...mismatch
+            };
+          }
+        } catch (err) {
+          customOrderValidated = false;
+          const error = err instanceof Error ? err.message : String(err);
+          this.logger.warn("Could not validate collection item order after reorder; leaving sync hash dirty", {
+            userId: friend.id,
+            mediaType,
+            collectionRatingKey,
+            effectiveSortOrder,
+            error
+          });
+          collectionPublishErrorDetails = {
+            userId: friend.id,
+            displayName: friend.displayName,
+            mediaType,
+            collectionName,
+            collectionRatingKey,
+            effectiveSortOrder,
+            matchedItems: cleanedKeys.length,
+            reason: "post-reorder-validation-error",
+            message: "Hubarr could not verify Plex collection order after reorder.",
+            error
+          };
+        }
+      }
 
       await plex.applyLabelToCollection(collectionRatingKey, labelName);
       this.logger.info("Collection label applied", {
@@ -1338,27 +1576,39 @@ export class HubarrServices {
         visibleName: collectionName,
         labelName,
         hubIdentifier,
-        lastSyncedHash: storedHash,
+        lastSyncedHash: customOrderValidated ? storedHash : null,
         lastSyncedAt: new Date().toISOString(),
-        lastSyncError: null
+        lastSyncError: collectionPublishErrorDetails
+          ? String(collectionPublishErrorDetails.message)
+          : null
       });
       if (runId !== null) {
-        this.db.addSyncRunItem(
-          runId,
-          "collection.publish",
-          "success",
-          {
-            userId: friend.id,
-            displayName: friend.displayName,
-            mediaType,
-            collectionName,
-            collectionRatingKey,
-            matchedItems: cleanedKeys.length
-          },
-          friend.id
-        );
+        if (collectionPublishErrorDetails) {
+          this.db.addSyncRunItem(runId, "collection.publish", "error", collectionPublishErrorDetails, friend.id);
+        } else {
+          this.db.addSyncRunItem(
+            runId,
+            "collection.publish",
+            "success",
+            {
+              userId: friend.id,
+              displayName: friend.displayName,
+              mediaType,
+              collectionName,
+              collectionRatingKey,
+              matchedItems: cleanedKeys.length
+            },
+            friend.id
+          );
+        }
+      }
+
+      if (collectionPublishErrorDetails) {
+        publishFailures.push(`${friend.displayName} ${mediaType} collection ${collectionRatingKey}: ${collectionPublishErrorDetails.message}`);
       }
     }
+
+    return publishFailures;
   }
 
   private async applyCollectionPoster(
@@ -1478,7 +1728,7 @@ export class HubarrServices {
         durationMs: Date.now() - syncStart
       });
     } else {
-      this.db.completeSyncRun(runId, "success", `Full sync finished for ${friends.length} users.`, null);
+      this.db.completeSyncRun(runId, "success", `Full sync finished for ${friends.length} users.`, null, this.classifySyncRunActivity(runId));
       this.logger.info("Full sync complete", {
         succeeded: friends.length,
         failed: 0,
@@ -1560,8 +1810,8 @@ export class HubarrServices {
         });
       }
 
-      const items = await this.syncUser(friend, runId, rssDateMap);
-      this.db.completeSyncRun(runId, "success", `Manual sync finished for ${label}.`, null);
+      const { items } = await this.syncUser(friend, runId, rssDateMap);
+      this.db.completeSyncRun(runId, "success", `Manual sync finished for ${label}.`, null, this.classifySyncRunActivity(runId));
 
       // Publish pass runs first so stale matchedRatingKey values are cleared before
       // Seerr sync evaluates which items are genuinely missing from Plex.
@@ -1607,6 +1857,7 @@ export class HubarrServices {
     const { publishingUsers } = this.getUserScopes();
     const friends = publishingUsers;
     const failures: string[] = [];
+    const failedUserIds = new Set<number>();
     const plex = this.getPlexIntegration();
 
     this.logger.info("Collection sync started", { userCount: friends.length, force });
@@ -1617,8 +1868,15 @@ export class HubarrServices {
     await Promise.all(friends.map((friend) =>
       publishLimit(async () => {
         try {
-          await this.publishUserCollections(friend, this.db.getWatchlistItems(friend.id), runId, force, plex);
-          this.db.markUserSyncResult(friend.id, null);
+          const publishFailures = await this.publishUserCollections(friend, this.db.getWatchlistItems(friend.id), runId, force, plex);
+          if (publishFailures.length > 0) {
+            const message = publishFailures.join(" | ");
+            this.db.markUserSyncResult(friend.id, message);
+            failedUserIds.add(friend.id);
+            failures.push(...publishFailures);
+          } else {
+            this.db.markUserSyncResult(friend.id, null);
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           this.logger.error("Collection sync failed for user — continuing with remaining users", {
@@ -1632,6 +1890,7 @@ export class HubarrServices {
             displayName: friend.displayName,
             message
           }, friend.id);
+          failedUserIds.add(friend.id);
           failures.push(`${friend.displayName}: ${message}`);
         } finally {
           publishCompleted++;
@@ -1640,18 +1899,22 @@ export class HubarrServices {
       })
     ));
 
-    await this.applyIsolationFilters(friends, runId);
+    const isolationFailure = await this.applyIsolationFilters(friends, runId, force, plex);
+    if (isolationFailure) {
+      failures.push(`Isolation filters: ${isolationFailure}`);
+    }
 
     if (failures.length > 0) {
-      const summary = `Collection sync finished: ${friends.length - failures.length}/${friends.length} users succeeded.`;
+      const failedUsers = failedUserIds.size;
+      const summary = `Collection sync finished: ${friends.length - failedUsers}/${friends.length} users succeeded.`;
       this.db.completeSyncRun(runId, "error", summary, failures.join(" | "));
       this.logger.info("Collection sync complete", {
-        succeeded: friends.length - failures.length,
-        failed: failures.length,
+        succeeded: friends.length - failedUsers,
+        failed: failedUsers,
         durationMs: Date.now() - syncStart
       });
     } else {
-      this.db.completeSyncRun(runId, "success", `Collection sync finished for ${friends.length} users.`, null);
+      this.db.completeSyncRun(runId, "success", `Collection sync finished for ${friends.length} users.`, null, this.classifySyncRunActivity(runId));
       this.logger.info("Collection sync complete", {
         succeeded: friends.length,
         failed: 0,
@@ -1660,6 +1923,455 @@ export class HubarrServices {
     }
 
     return this.db.listSyncRuns(1)[0];
+  }
+
+  async cleanupDisabledUserCollections(users: UserRecord[]) {
+    if (users.length === 0) {
+      return {
+        users: 0,
+        deleted: 0,
+        failed: 0,
+        localRecordsDeleted: 0
+      };
+    }
+
+    let plex: ReturnType<HubarrServices["getPlexIntegration"]>;
+    try {
+      plex = this.getPlexIntegration();
+    } catch (error) {
+      let localRecordsDeleted = 0;
+      for (const user of users) {
+        localRecordsDeleted += this.db.deleteCollectionsForUser(user.id);
+      }
+      this.db.clearIsolationFilterState();
+      this.logger.error("Disabled-user collection cleanup could not contact Plex", {
+        userCount: users.length,
+        localRecordsDeleted,
+        message: error instanceof Error ? error.message : String(error)
+      });
+      return {
+        users: users.length,
+        deleted: 0,
+        failed: users.length,
+        localRecordsDeleted
+      };
+    }
+
+    let libraries: Array<{ key: string; title: string; type: "movie" | "show" }>;
+    try {
+      libraries = await plex.getLibraries();
+    } catch (error) {
+      libraries = [];
+      this.logger.warn("Could not list Plex libraries during disabled-user collection cleanup; only DB-tracked collections will be deleted", {
+        userCount: users.length,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+    let deleted = 0;
+    let failed = 0;
+    let localRecordsDeleted = 0;
+
+    this.logger.info("Disabled-user collection cleanup started", {
+      userCount: users.length,
+      libraryCount: libraries.length
+    });
+
+    const allCollections = this.db.listCollections();
+    const collectionsByLabel = new Map<string, Array<{ ratingKey: string; source: "label-scan"; title?: string; libraryId?: string }>>();
+
+    for (const library of libraries) {
+      let plexCollections: Array<{ ratingKey: string; title: string }>;
+      try {
+        plexCollections = await plex.getCollections(library.key);
+      } catch (error) {
+        this.logger.warn("Could not scan Plex library during disabled-user collection cleanup", {
+          libraryId: library.key,
+          libraryTitle: library.title,
+          message: error instanceof Error ? error.message : String(error)
+        });
+        continue;
+      }
+
+      for (const collection of plexCollections) {
+        try {
+          const labels = await plex.getCollectionLabels(collection.ratingKey);
+          for (const label of labels) {
+            const normalizedLabel = label.toLowerCase();
+            if (!normalizedLabel.startsWith("hubarr:")) {
+              continue;
+            }
+
+            const entries = collectionsByLabel.get(normalizedLabel) ?? [];
+            entries.push({
+              ratingKey: collection.ratingKey,
+              source: "label-scan",
+              title: collection.title,
+              libraryId: library.key
+            });
+            collectionsByLabel.set(normalizedLabel, entries);
+          }
+        } catch (error) {
+          this.logger.warn("Could not read Plex collection labels during disabled-user collection cleanup", {
+            collectionRatingKey: collection.ratingKey,
+            title: collection.title,
+            libraryId: library.key,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    }
+
+    for (const user of users) {
+      const expectedLabel = plex.createCollectionLabel(user.username).toLowerCase();
+      const candidates = new Map<string, { ratingKey: string; source: "db" | "label-scan"; title?: string; libraryId?: string }>();
+
+      for (const record of allCollections.filter((collection) => collection.userId === user.id)) {
+        if (record.collectionRatingKey) {
+          candidates.set(record.collectionRatingKey, {
+            ratingKey: record.collectionRatingKey,
+            source: "db"
+          });
+        }
+      }
+
+      for (const collection of collectionsByLabel.get(expectedLabel) ?? []) {
+        candidates.set(collection.ratingKey, collection);
+      }
+
+      for (const candidate of candidates.values()) {
+        try {
+          await plex.deleteCollection(candidate.ratingKey);
+          deleted++;
+        } catch (error) {
+          failed++;
+          this.logger.error("Could not delete Plex collection during disabled-user cleanup", {
+            userId: user.id,
+            displayName: user.displayName,
+            collectionRatingKey: candidate.ratingKey,
+            title: candidate.title,
+            libraryId: candidate.libraryId,
+            source: candidate.source,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+
+      const deletedRecords = this.db.deleteCollectionsForUser(user.id);
+      localRecordsDeleted += deletedRecords;
+      this.logger.info("Disabled-user collection cleanup finished for user", {
+        userId: user.id,
+        displayName: user.displayName,
+        candidates: candidates.size,
+        localRecordsDeleted: deletedRecords
+      });
+    }
+
+    this.db.clearIsolationFilterState();
+    this.logger.info("Disabled-user collection cleanup complete", {
+      users: users.length,
+      deleted,
+      failed,
+      localRecordsDeleted
+    });
+
+    return {
+      users: users.length,
+      deleted,
+      failed,
+      localRecordsDeleted
+    };
+  }
+
+  async runWatchlistCleanup() {
+    const startedAt = Date.now();
+    const settings = this.db.getAppSettings();
+    const runId = this.db.createSyncRun("watchlist-cleanup", "Watchlist Cleanup started.");
+    const cleanupMovies = settings.watchlistCleanupMovies;
+    const cleanupShows = settings.watchlistCleanupShows;
+
+    this.logger.info("Watchlist Cleanup started", { cleanupMovies, cleanupShows });
+
+    if (!cleanupMovies && !cleanupShows) {
+      this.db.addSyncRunItem(runId, "watchlist.cleanup.skipped", "success", {
+        reason: "cleanup-disabled",
+        message: "Watchlist cleanup is disabled."
+      });
+      this.db.completeSyncRun(runId, "success", "Watchlist Cleanup skipped: cleanup is disabled.", null, "no_changes");
+      this.logger.info("Watchlist Cleanup skipped because cleanup is disabled");
+      return { removed: 0, skipped: 1 };
+    }
+
+    const selfUser = this.db.listUsers().find((user) => user.isSelf);
+    const owner = this.db.getPlexOwner();
+    if (!selfUser || !owner) {
+      this.db.addSyncRunItem(runId, "watchlist.cleanup.skipped", "success", {
+        reason: "missing-admin-user",
+        message: "Admin/self user is not configured."
+      });
+      this.db.completeSyncRun(runId, "success", "Watchlist Cleanup skipped: admin user is not configured.", null, "no_changes");
+      return { removed: 0, skipped: 1 };
+    }
+
+    const plex = this.getPlexIntegration();
+    const selfServerAccountId = await this.resolveSelfServerAccountId(plex, selfUser.username);
+    const items = this.db.getWatchlistItems(selfUser.id)
+      .filter((item) => item.type === "movie" ? cleanupMovies : cleanupShows);
+    let removed = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    const logDecision = (
+      level: "info" | "warn" | "error",
+      message: string,
+      item: WatchlistItem,
+      meta: Record<string, unknown>
+    ) => {
+      this.logger[level](message, {
+        userId: selfUser.id,
+        title: item.title,
+        type: item.type,
+        plexItemId: item.plexItemId,
+        matchedRatingKey: item.matchedRatingKey,
+        addedAt: item.addedAt,
+        ...meta
+      });
+    };
+
+    try {
+      for (const item of items) {
+        const details = { plexItemId: item.plexItemId, title: item.title, type: item.type, addedAt: item.addedAt };
+
+        try {
+          if (!item.matchedRatingKey) {
+            skipped++;
+            logDecision("info", "Watchlist Cleanup skipped item", item, {
+              reason: "not-matched-locally",
+              message: "Item is not matched to a local Plex library item."
+            });
+            this.db.addSyncRunItem(runId, "watchlist.cleanup.skipped", "success", {
+              ...details,
+              reason: "not-matched-locally",
+              message: "Item is not matched to a local Plex library item."
+            }, selfUser.id);
+            continue;
+          }
+
+          const addedAtMs = Date.parse(item.addedAt);
+          if (!Number.isFinite(addedAtMs) || item.addedAt === WATCHLIST_DATE_UNKNOWN_SENTINEL) {
+            skipped++;
+            logDecision("info", "Watchlist Cleanup skipped item", item, {
+              reason: "watchlist-date-unknown",
+              message: "Item does not have a trustworthy watchlisted date."
+            });
+            this.db.addSyncRunItem(runId, "watchlist.cleanup.skipped", "success", {
+              ...details,
+              reason: "watchlist-date-unknown",
+              message: "Item does not have a trustworthy watchlisted date."
+            }, selfUser.id);
+            continue;
+          }
+
+          const decision = item.type === "movie"
+            ? await this.shouldRemoveWatchedMovie(item, plex, addedAtMs, selfServerAccountId)
+            : await this.shouldRemoveWatchedShow(item, plex, addedAtMs, selfServerAccountId);
+
+          if (!decision.remove) {
+            skipped++;
+            logDecision("info", "Watchlist Cleanup skipped item", item, {
+              reason: decision.reason,
+              message: decision.message,
+              ...decision.meta
+            });
+            this.db.addSyncRunItem(runId, "watchlist.cleanup.skipped", "success", {
+              ...details,
+              reason: decision.reason,
+              message: decision.message,
+              ...decision.meta
+            }, selfUser.id);
+            continue;
+          }
+
+          await plex.removeFromWatchlist(item, owner.plexToken);
+          const deletedRows = this.db.deleteWatchlistItem(selfUser.id, item.plexItemId);
+          removed++;
+          logDecision("info", "Watchlist Cleanup removed item", item, {
+            reason: decision.reason,
+            message: decision.message,
+            deletedRows,
+            ...decision.meta
+          });
+          this.db.addSyncRunItem(runId, "watchlist.cleanup.removed", "success", {
+            ...details,
+            reason: decision.reason,
+            message: decision.message,
+            deletedRows,
+            ...decision.meta
+          }, selfUser.id);
+        } catch (error) {
+          failed++;
+          const message = error instanceof Error ? error.message : String(error);
+          logDecision("error", "Watchlist Cleanup item failed", item, {
+            reason: "item-processing-failed",
+            message
+          });
+          this.db.addSyncRunItem(runId, "watchlist.cleanup.failed-item", "error", {
+            ...details,
+            reason: "item-processing-failed",
+            message
+          }, selfUser.id);
+        }
+      }
+
+      const summary = removed > 0
+        ? `Watchlist Cleanup removed ${removed} item${removed !== 1 ? "s" : ""}; skipped ${skipped}; failed ${failed}.`
+        : `Watchlist Cleanup skipped: no watched items to remove (${skipped} skipped; ${failed} failed).`;
+      this.db.completeSyncRun(runId, "success", summary, null, removed > 0 ? "changes" : "no_changes");
+      this.logger.info("Watchlist Cleanup complete", { removed, skipped, failed, durationMs: Date.now() - startedAt });
+
+      if (removed > 0) {
+        this.logger.info("Collection publish queued after Watchlist Cleanup removed items", { removed });
+        try {
+          await this.runPublishPass();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.error("Collection publish after Watchlist Cleanup failed", { removed, message });
+          this.db.addSyncRunItem(runId, "watchlist.publish.failed", "error", {
+            removed,
+            message
+          });
+        }
+      }
+
+      return { removed, skipped };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.db.addSyncRunItem(runId, "watchlist.cleanup.failed", "error", { message });
+      this.db.completeSyncRun(runId, "error", "Watchlist Cleanup failed.", message);
+      this.logger.error("Watchlist Cleanup failed", { message, durationMs: Date.now() - startedAt });
+      throw error;
+    }
+  }
+
+  private async resolveSelfServerAccountId(plex: PlexIntegration, selfUsername: string): Promise<string> {
+    const accounts = await plex.fetchServerAccounts();
+    const selfAccount = accounts.find((account) => account.name.toLowerCase() === selfUsername.toLowerCase());
+    if (!selfAccount) {
+      throw new Error(`Unable to resolve Plex server account ID for self user "${selfUsername}".`);
+    }
+    return selfAccount.id;
+  }
+
+  private async shouldRemoveWatchedMovie(item: WatchlistItem, plex: PlexIntegration, addedAtMs: number, selfServerAccountId: string) {
+    const viewedAt = await plex.fetchPlayHistoryViewedAt(item.matchedRatingKey!, selfServerAccountId);
+    const watchedAfter = viewedAt.filter((value) => Date.parse(value) > addedAtMs);
+
+    if (watchedAfter.length > 0) {
+      return {
+        remove: true as const,
+        reason: "watched-after-watchlist-date",
+        message: "Movie was watched after it was added to the watchlist.",
+        meta: { watchedAfter }
+      };
+    }
+
+    return {
+      remove: false as const,
+      reason: viewedAt.length > 0 ? "watched-before-watchlist-date" : "not-watched",
+      message: viewedAt.length > 0
+        ? "Movie was only watched before it was added to the watchlist."
+        : "Movie has no completed play history.",
+      meta: { viewedAt }
+    };
+  }
+
+  private async shouldRemoveWatchedShow(item: WatchlistItem, plex: PlexIntegration, addedAtMs: number, selfServerAccountId: string) {
+    const [localEpisodes, discoverEpisodes] = await Promise.all([
+      plex.fetchLocalShowEpisodes(item.matchedRatingKey!),
+      plex.fetchDiscoverShowEpisodes(item)
+    ]);
+
+    if (!discoverEpisodes?.length) {
+      return {
+        remove: false as const,
+        reason: "discover-data-incomplete",
+        message: "Plex Discover did not return a complete non-special episode list.",
+        meta: { localEpisodeCount: localEpisodes.length }
+      };
+    }
+
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const uncertainEpisode = discoverEpisodes.find((episode) => !isPastOrTodayDate(episode.originallyAvailableAt, today));
+    if (uncertainEpisode) {
+      return {
+        remove: false as const,
+        reason: "future-or-uncertain-episodes",
+        message: "Show has future, current-season, or uncertain Discover episode data.",
+        meta: { episode: uncertainEpisode, expectedEpisodeCount: discoverEpisodes.length }
+      };
+    }
+
+    const localBySeasonEpisode = new Map(localEpisodes.map((episode) => [
+      buildEpisodeKey(episode),
+      episode
+    ]));
+
+    const missingLocal = discoverEpisodes.filter((episode) => !localBySeasonEpisode.has(buildEpisodeKey(episode)));
+    if (missingLocal.length > 0) {
+      return {
+        remove: false as const,
+        reason: "local-episodes-incomplete",
+        message: "Not every expected non-special episode exists in the local Plex library.",
+        meta: { missingLocalCount: missingLocal.length, expectedEpisodeCount: discoverEpisodes.length }
+      };
+    }
+
+    const watchedEpisodeKeys = new Set<string>();
+    // Tracks episodes confirmed via the viewCount/lastViewedAt fallback rather than
+    // the play history API — only used in logging meta, not in the removal decision.
+    const watchedByMetadataKeys = new Set<string>();
+    const historyLimit = pLimit(PLEX_SYNC_CONCURRENCY);
+    await Promise.all(discoverEpisodes.map((episode) =>
+      historyLimit(async () => {
+        const localEpisode = localBySeasonEpisode.get(buildEpisodeKey(episode));
+        if (!localEpisode) return;
+        const viewedAt = await plex.fetchPlayHistoryViewedAt(localEpisode.ratingKey, selfServerAccountId);
+        if (viewedAt.some((value) => Date.parse(value) > addedAtMs)) {
+          watchedEpisodeKeys.add(buildEpisodeKey(episode));
+          return;
+        }
+        if ((localEpisode.viewCount ?? 0) > 0 && localEpisode.lastViewedAt && Date.parse(localEpisode.lastViewedAt) > addedAtMs) {
+          watchedEpisodeKeys.add(buildEpisodeKey(episode));
+          watchedByMetadataKeys.add(buildEpisodeKey(episode));
+        }
+      })
+    ));
+
+    if (watchedEpisodeKeys.size === discoverEpisodes.length) {
+      return {
+        remove: true as const,
+        reason: "all-episodes-watched-after-watchlist-date",
+        message: "Every required non-special episode was watched after the show was added to the watchlist.",
+        meta: {
+          watchedEpisodeCount: watchedEpisodeKeys.size,
+          expectedEpisodeCount: discoverEpisodes.length,
+          watchedByMetadataCount: watchedByMetadataKeys.size
+        }
+      };
+    }
+
+    return {
+      remove: false as const,
+      reason: watchedEpisodeKeys.size > 0 ? "partially-watched-after-watchlist-date" : "watched-before-watchlist-date",
+      message: watchedEpisodeKeys.size > 0
+        ? "Only some required non-special episodes were watched after the watchlist date."
+        : "No required non-special episodes were watched after the watchlist date.",
+      meta: {
+        watchedEpisodeCount: watchedEpisodeKeys.size,
+        expectedEpisodeCount: discoverEpisodes.length,
+        watchedByMetadataCount: watchedByMetadataKeys.size
+      }
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -1777,6 +2489,167 @@ export class HubarrServices {
     }
   }
 
+  async backfillUserActivityDates(userId: number): Promise<void> {
+    const friend = this.db.getUser(userId);
+    if (!friend) {
+      this.logger.warn("User activity-date backfill skipped — user not found", { userId });
+      return;
+    }
+    if (!friend.enabled) {
+      this.logger.warn("User activity-date backfill skipped — user is disabled", {
+        userId: friend.id,
+        displayName: friend.displayName
+      });
+      return;
+    }
+
+    const plexSettings = this.db.getPlexSettings();
+    if (!plexSettings) {
+      this.logger.warn("User activity-date backfill skipped — Plex is not configured yet", {
+        userId: friend.id,
+        displayName: friend.displayName
+      });
+      return;
+    }
+
+    const label = friend.isSelf ? "self" : friend.displayName;
+    const runId = this.db.createSyncRun("user", `Activity-date backfill for ${label}.`);
+    const plex = new PlexIntegration(plexSettings, this.logger);
+    const stateId = `activity-date-backfill:${friend.id}`;
+    const savedState = this.db.getJobRunState(stateId);
+    let after = savedState?.lastRunAt ?? null;
+    let scannedPages = 0;
+    let fetched = 0;
+    let upserted = 0;
+
+    this.logger.info("User activity-date backfill started", {
+      userId: friend.id,
+      displayName: friend.displayName,
+      plexUserId: friend.plexUserId,
+      resumeCursorPresent: Boolean(after)
+    });
+
+    try {
+      const initialSync = await this.syncUser(friend, runId);
+      let activityFeedPlexUserId = friend.plexUserId;
+      if (friend.isSelf) {
+        if (!initialSync.selfPlexUuid) {
+          throw new Error("Self user activity-date backfill could not resolve the Plex UUID.");
+        }
+        activityFeedPlexUserId = initialSync.selfPlexUuid;
+        this.db.upsertUserIdentifierAlias(friend.id, activityFeedPlexUserId);
+      }
+      let remaining = this.db.countUnresolvedWatchlistDatesAfterActivityCache(friend.id);
+      const initialRemaining = remaining;
+
+      if (remaining === 0) {
+        this.db.addSyncRunItem(runId, "watchlist.date_backfill", "success", {
+          userId: friend.id,
+          displayName: friend.displayName,
+          scannedPages,
+          fetched,
+          upserted,
+          initialRemaining,
+          remaining
+        }, friend.id);
+        this.db.completeSyncRun(runId, "success", `Activity-date backfill found no unresolved dates for ${label}.`, null, "no_changes");
+        this.db.saveJobRunState(stateId, {
+          lastRunAt: null,
+          lastRunStatus: "success"
+        });
+        this.logger.info("User activity-date backfill skipped scan — no unresolved dates", {
+          userId: friend.id,
+          displayName: friend.displayName
+        });
+        return;
+      }
+
+      await plex.fetchWatchlistActivityFeed(null, {
+        plexUserId: activityFeedPlexUserId,
+        after,
+        onPage: (entries, page) => {
+          scannedPages = page.pageNumber;
+          fetched += entries.length;
+          if (entries.length > 0) {
+            this.db.upsertActivityCacheEntries(entries);
+            upserted += entries.length;
+          }
+          remaining = this.db.countUnresolvedWatchlistDatesAfterActivityCache(friend.id);
+          this.logger.debug("User activity-date backfill page processed", {
+            userId: friend.id,
+            displayName: friend.displayName,
+            page: page.pageNumber,
+            entries: entries.length,
+            remaining
+          });
+          after = page.endCursor;
+          this.db.saveJobRunState(stateId, {
+            lastRunAt: after,
+            lastRunStatus: "error"
+          });
+          return remaining > 0;
+        }
+      });
+
+      await this.syncUser(friend, runId);
+      const finalRemaining = this.db.countUnresolvedWatchlistDatesAfterActivityCache(friend.id);
+      const resolved = Math.max(0, initialRemaining - finalRemaining);
+
+      this.db.addSyncRunItem(runId, "watchlist.date_backfill", "success", {
+        userId: friend.id,
+        displayName: friend.displayName,
+        scannedPages,
+        fetched,
+        upserted,
+        resolved,
+        initialRemaining,
+        remaining: finalRemaining
+      }, friend.id);
+      this.db.completeSyncRun(
+        runId,
+        "success",
+        `Activity-date backfill finished for ${label}: resolved ${resolved}, ${finalRemaining} unresolved.`,
+        null,
+        this.classifySyncRunActivity(runId)
+      );
+      this.db.saveJobRunState(stateId, {
+        lastRunAt: null,
+        lastRunStatus: "success"
+      });
+
+      this.logger.info("User activity-date backfill complete", {
+        userId: friend.id,
+        displayName: friend.displayName,
+        scannedPages,
+        fetched,
+        upserted,
+        resolved,
+        remaining: finalRemaining
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error("User activity-date backfill failed", {
+        userId: friend.id,
+        displayName: friend.displayName,
+        message
+      });
+      this.db.addSyncRunItem(runId, "watchlist.date_backfill", "error", {
+        userId: friend.id,
+        displayName: friend.displayName,
+        scannedPages,
+        fetched,
+        upserted,
+        message
+      }, friend.id);
+      this.db.completeSyncRun(runId, "error", `Activity-date backfill failed for ${label}.`, message);
+      this.db.saveJobRunState(stateId, {
+        lastRunAt: after,
+        lastRunStatus: "error"
+      });
+      throw err;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // RSS — initialization
   // ---------------------------------------------------------------------------
@@ -1877,7 +2750,7 @@ export class HubarrServices {
       }
 
       if (!this.selfRssPrimed && !this.usersRssPrimed) {
-        this.db.completeSyncRun(runId, "success", "RSS sync skipped: neither feed is initialized.", null);
+        this.db.completeSyncRun(runId, "success", "RSS sync skipped: neither feed is initialized.", null, "no_changes");
         return this.db.listSyncRuns(1)[0];
       }
 
@@ -1986,7 +2859,8 @@ export class HubarrServices {
         total > 0
           ? `RSS sync: ${total} new item(s) processed (self: ${selfProcessed}, friends: ${friendsProcessed}).`
           : "RSS sync: 0 new items.",
-        null
+        null,
+        total > 0 ? "changes" : "no_changes"
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2342,19 +3216,61 @@ export class HubarrServices {
 
   /**
    * Apply per-user Plex content filter exclusions so each managed Plex user
-   * only sees their own watchlist hub row. Non-throwing — a failure here is
-   * logged as a warning so it doesn't abort a sync run.
+   * only sees their own watchlist hub row. Non-throwing so collection publishing
+   * can finish, but returns a failure message so the run can be marked errored.
    */
-  async applyIsolationFilters(enabledUsers: UserRecord[], runId: number): Promise<void> {
+  async applyIsolationFilters(
+    enabledUsers: UserRecord[],
+    runId: number,
+    force = false,
+    plex = this.getPlexIntegration()
+  ): Promise<string | null> {
+    const appSettings = this.db.getAppSettings();
+    const inputHash = computeIsolationFilterInputHash(
+      enabledUsers,
+      (user) => user.visibilityOverride ?? appSettings.visibilityDefaults
+    );
+    const previousState = this.db.getIsolationFilterState();
+
+    // Skip is based on local input hash only — out-of-band Plex filter changes are not
+    // detected here and will not be repaired until force=true (manual refresh / user sync).
+    if (!force && previousState?.inputHash === inputHash) {
+      this.logger.info("Isolation filters skipped because isolation inputs are unchanged", {
+        userCount: enabledUsers.length,
+        inputHash,
+        lastSyncedAt: previousState.lastSyncedAt
+      });
+      this.db.addSyncRunItem(runId, "isolation.filters.skipped", "success", {
+        reason: "inputs-unchanged",
+        forced: false,
+        userCount: enabledUsers.length,
+        inputHash,
+        lastSyncedAt: previousState.lastSyncedAt
+      });
+      return null;
+    }
+
     try {
-      const plex = this.getPlexIntegration();
       const { updated, skipped } = await plex.syncIsolationFilters(enabledUsers);
-      this.logger.info("Isolation filters applied", { updated, skipped });
-      this.db.addSyncRunItem(runId, "isolation.filters", "success", { updated, skipped });
+      const state = this.db.saveIsolationFilterState(inputHash);
+      this.logger.info("Isolation filters applied", { updated, skipped, force, inputHash });
+      this.db.addSyncRunItem(runId, "isolation.filters", "success", {
+        updated,
+        skipped,
+        forced: force,
+        userCount: enabledUsers.length,
+        inputHash,
+        lastSyncedAt: state.lastSyncedAt
+      });
+      return null;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn("Isolation filter sync failed — collections are still published, but visibility isolation may be incomplete", { message });
-      this.db.addSyncRunItem(runId, "isolation.filters", "error", { message });
+      // Clear stored state so the next scheduled run retries rather than skipping
+      // because the previous successful hash still matches the current inputs.
+      this.db.clearIsolationFilterState();
+      this.db.addSyncRunItem(runId, "isolation.filters", "error", { message, inputHash });
+      return message;
     }
   }
 
@@ -2379,18 +3295,30 @@ export class HubarrServices {
     return this.db.getWatchlistItems(userId).filter((item) => !item.matchedRatingKey);
   }
 
+  private isSeerrRequestWorkEnabled(userId: number): boolean {
+    const link = this.db.getSeerrUserLink(userId);
+    return Boolean(link?.autoRequestEnabled && link.effectiveSeerrUserId);
+  }
+
   private buildSeerrRequestWork(scope: SeerrRequestSyncScope): SeerrRequestWorkItem[] {
     if (scope.mode === "all") {
       const { trackedUsers } = this.getUserScopes();
-      return trackedUsers.map((user) => ({
-        user,
-        items: this.getMissingWatchlistItemsForUser(user.id)
-      })).filter((entry) => entry.items.length > 0);
+      return trackedUsers
+        .filter((user) => this.isSeerrRequestWorkEnabled(user.id))
+        .map((user) => ({
+          user,
+          items: this.getMissingWatchlistItemsForUser(user.id)
+        }))
+        .filter((entry) => entry.items.length > 0);
     }
 
     const user = this.db.getUser(scope.userId);
     if (!user) {
       throw new Error("User not found.");
+    }
+
+    if (!this.isSeerrRequestWorkEnabled(user.id)) {
+      return [];
     }
 
     if (scope.mode === "items") {
@@ -2438,7 +3366,7 @@ export class HubarrServices {
     try {
       const seerrSettings = this.db.getSeerrSettings();
       if (!seerrSettings.enabled || !seerrSettings.baseUrl || !seerrSettings.apiKey) {
-        this.db.completeSyncRun(runId, "success", "Seerr request sync skipped: Seerr is not configured.", null);
+        this.db.completeSyncRun(runId, "success", "Seerr request sync skipped: Seerr is not configured.", null, "no_changes");
         this.db.saveJobRunState("seerr-request-sync", {
           lastRunAt: new Date().toISOString(),
           lastRunStatus: "success"
@@ -2454,6 +3382,7 @@ export class HubarrServices {
       const work = this.dedupeSeerrRequestWork(rawWork);
       const requireAutoRequest = scope.mode !== "all";
       const itemCount = work.reduce((sum, entry) => sum + entry.items.length, 0);
+      const rawItemCount = rawWork.reduce((sum, entry) => sum + entry.items.length, 0);
       let processedUsers = 0;
 
       this.logger.info("Seerr request sync work prepared", {
@@ -2461,6 +3390,8 @@ export class HubarrServices {
         triggeredBy: scope.triggeredBy,
         userCount: work.length,
         itemCount,
+        rawUserCount: rawWork.length,
+        rawItemCount,
         requireAutoRequest
       });
 
@@ -2473,7 +3404,7 @@ export class HubarrServices {
       const summary = itemCount > 0
         ? `Seerr request sync finished for ${work.length} user(s) and ${itemCount} missing item(s).`
         : "Seerr request sync: 0 missing items.";
-      this.db.completeSyncRun(runId, "success", summary, null);
+      this.db.completeSyncRun(runId, "success", summary, null, this.classifySyncRunActivity(runId));
       this.db.saveJobRunState("seerr-request-sync", {
         lastRunAt: new Date().toISOString(),
         lastRunStatus: "success"
@@ -2685,7 +3616,8 @@ export class HubarrServices {
 
       if (evaluation) {
         // Item is already known to Seerr — update cached state and move on
-        this.db.upsertSeerrRequestState({
+        const previousState = this.db.getSeerrRequestState(friend.id, item.plexItemId);
+        const savedState = this.db.upsertSeerrRequestState({
           userId: friend.id,
           plexItemId: item.plexItemId,
           seerrRequestId: evaluation.seerrRequestId,
@@ -2695,6 +3627,7 @@ export class HubarrServices {
           effectiveSeerrUserId: requesterSeerrUserId,
           executionSeerrUserId
         });
+        const stateChanged = this.seerrRequestStateChanged(previousState, savedState);
         this.db.addSyncRunItem(runId, "seerr.request.existing", "success", {
           userId: friend.id,
           displayName: friend.displayName,
@@ -2704,7 +3637,8 @@ export class HubarrServices {
           tmdbId,
           outcome: evaluation.outcome,
           seerrRequestId: evaluation.seerrRequestId,
-          seerrMediaId: evaluation.seerrMediaId
+          seerrMediaId: evaluation.seerrMediaId,
+          stateChanged
         }, friend.id);
         continue;
       }
@@ -2898,6 +3832,7 @@ export class HubarrServices {
 
     const isolation = await plex.clearHubarrIsolationFilters();
     this.db.clearCollections();
+    this.db.clearIsolationFilterState();
 
     this.logger.info("Hubarr collections reset", {
       deleted,
