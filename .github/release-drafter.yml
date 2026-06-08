@@ -10,6 +10,20 @@ template: |
   - `ghcr.io/$OWNER/$REPOSITORY:latest`
   - `ghcr.io/$OWNER/$REPOSITORY:v$RESOLVED_VERSION`
 
+autolabeler:
+  - label: enhancement
+    title:
+      - "/^feat(\\(.+\\))?:/i"
+  - label: bug
+    title:
+      - "/^fix(\\(.+\\))?:/i"
+  - label: documentation
+    title:
+      - "/^docs(\\(.+\\))?:/i"
+  - label: github_actions
+    title:
+      - "/^ci(\\(.+\\))?:/i"
+
 categories:
   - title: Features
     labels:
