@@ -35,10 +35,10 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@playwright/test": "^1.61.0",
+    "@playwright/test": "^1.61.1",
     "@types/better-sqlite3": "^7.6.12",
     "@types/express": "^5.0.1",
-    "@types/node": "^26.0.0",
+    "@types/node": "^26.0.1",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.1.6",
     "@types/xml2js": "^0.4.14",
