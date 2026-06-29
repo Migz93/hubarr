@@ -17,12 +17,12 @@
     "test:e2e:auth": "playwright test --project=auth-setup"
   },
   "dependencies": {
-    "@tailwindcss/vite": "^4.3.1",
+    "@tailwindcss/vite": "^4.3.2",
     "better-sqlite3": "^12.11.1",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",
     "helmet": "^8.2.0",
-    "lucide-react": "^1.21.0",
+    "lucide-react": "^1.22.0",
     "p-limit": "^7.3.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
@@ -44,7 +44,7 @@
     "@types/xml2js": "^0.4.14",
     "@vitejs/plugin-react": "^6.0.3",
     "dotenv": "^17.4.2",
-    "eslint": "^10.5.0",
+    "eslint": "^10.6.0",
     "eslint-plugin-playwright": "^2.10.4",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.7.0",
