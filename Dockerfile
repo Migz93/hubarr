@@ -4,13 +4,21 @@ COPY package.json package-lock.json* ./
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
-RUN npm install
+RUN npm ci
 
 FROM node:22-trixie-slim AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
+
+FROM node:22-trixie-slim AS production-deps
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
+RUN npm ci --omit=dev
 
 FROM node:22-trixie-slim AS runtime
 WORKDIR /app
@@ -25,10 +33,10 @@ ENV COMMIT_SHA=$COMMIT_SHA
 RUN apt-get update \
   && apt-get install -y --no-install-recommends fontconfig fonts-dejavu-core \
   && rm -rf /var/lib/apt/lists/*
-COPY --from=build /app/package.json ./package.json
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
-RUN mkdir -p /config && chown -R node:node /config /app
+COPY --chown=node:node --from=build /app/package.json ./package.json
+COPY --chown=node:node --from=production-deps /app/node_modules ./node_modules
+COPY --chown=node:node --from=build /app/dist ./dist
+RUN mkdir -p /config && chown node:node /config
 USER node
 EXPOSE 9301
 CMD ["node", "dist/server/server/index.js"]
