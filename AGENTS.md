@@ -106,7 +106,7 @@ type/branch-name branch → PR into develop → develop → chore/bump-version �
 
 2. **Do the work** on that branch. Commit as many times as needed.
 
-2a. **Get a cross-AI review before opening the PR.** See "Cross-AI Review Before Opening The PR" below — this is mandatory, not optional polish. Push the branch to GitHub once this review pass is clean.
+2a. **Get a cross-AI review before opening the PR.** See "Cross-AI Review Before Opening The PR" below — this is mandatory, not optional polish. Push the branch to GitHub whenever the reviewer needs to see it (the diff can also be pasted directly into the prompt) — pushing early is fine. What matters is that the **PR itself** is not opened until a full review comes back clean.
 
 3. **Open a PR** from that branch into `develop` using `gh pr create`. This is what feeds the release notes — the PR title becomes the changelog entry. Use a semantic title (`feat:`, `fix:`, `chore:`, etc.).
 
