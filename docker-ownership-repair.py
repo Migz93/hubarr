@@ -22,26 +22,36 @@ def repair_entry(name: str, directory_fd: int, node_uid: int, node_gid: int) -> 
 
 
 def repair_tree(directory_fd: int, node_uid: int, node_gid: int) -> None:
-    try:
-        entries = list(os.scandir(directory_fd))
-    except OSError:
-        return
-
-    for entry in entries:
-        repair_entry(entry.name, directory_fd, node_uid, node_gid)
-        if entry.is_dir(follow_symlinks=False):
+    # Keep traversal depth independent of Python's recursion limit. Directory
+    # descriptors are opened one level at a time and closed after processing.
+    stack = [(directory_fd, False)]
+    while stack:
+        current_fd, close_after = stack.pop()
+        try:
             try:
-                child_fd = os.open(
-                    entry.name,
-                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                    dir_fd=directory_fd,
-                )
-            except (FileNotFoundError, NotADirectoryError, PermissionError):
+                entries = list(os.scandir(current_fd))
+            except OSError:
                 continue
-            try:
-                repair_tree(child_fd, node_uid, node_gid)
-            finally:
-                os.close(child_fd)
+
+            for entry in entries:
+                repair_entry(entry.name, current_fd, node_uid, node_gid)
+                if entry.is_dir(follow_symlinks=False):
+                    try:
+                        child_fd = os.open(
+                            entry.name,
+                            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                            dir_fd=current_fd,
+                        )
+                    except (
+                        FileNotFoundError,
+                        NotADirectoryError,
+                        PermissionError,
+                    ):
+                        continue
+                    stack.append((child_fd, True))
+        finally:
+            if close_after:
+                os.close(current_fd)
 
 
 def repair(data_dir: str) -> None:
