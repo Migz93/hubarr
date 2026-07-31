@@ -31,12 +31,14 @@ ARG COMMIT_SHA=local
 ENV BUILD_CHANNEL=$BUILD_CHANNEL
 ENV COMMIT_SHA=$COMMIT_SHA
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends fontconfig fonts-dejavu-core \
+  && apt-get install -y --no-install-recommends fontconfig fonts-dejavu-core gosu \
   && rm -rf /var/lib/apt/lists/*
-COPY --chown=node:node --from=build /app/package.json ./package.json
-COPY --chown=node:node --from=production-deps /app/node_modules ./node_modules
-COPY --chown=node:node --from=build /app/dist ./dist
+COPY --from=build /app/package.json ./package.json
+COPY --from=production-deps /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY docker-entrypoint.sh /entrypoint.sh
+RUN chmod 755 /entrypoint.sh
 RUN mkdir -p /config && chown node:node /config
-USER node
+ENTRYPOINT ["/entrypoint.sh"]
 EXPOSE 9301
 CMD ["node", "dist/server/server/index.js"]
