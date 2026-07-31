@@ -23,35 +23,45 @@ def repair_entry(name: str, directory_fd: int, node_uid: int, node_gid: int) -> 
 
 def repair_tree(directory_fd: int, node_uid: int, node_gid: int) -> None:
     # Keep traversal depth independent of Python's recursion limit. Directory
-    # descriptors are opened one level at a time and closed after processing.
-    stack = [(directory_fd, False)]
+    # descriptors are opened lazily one level at a time and closed after
+    # processing, so descriptor usage is bounded by traversal depth rather
+    # than directory breadth.
+    stack = [(directory_fd, False, None, 0)]
     while stack:
-        current_fd, close_after = stack.pop()
-        try:
+        current_fd, close_after, child_names, child_index = stack[-1]
+
+        if child_names is None:
             try:
                 entries = list(os.scandir(current_fd))
             except OSError:
-                continue
+                child_names = []
+                entries = []
 
+            child_names = []
             for entry in entries:
                 repair_entry(entry.name, current_fd, node_uid, node_gid)
                 if entry.is_dir(follow_symlinks=False):
-                    try:
-                        child_fd = os.open(
-                            entry.name,
-                            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                            dir_fd=current_fd,
-                        )
-                    except (
-                        FileNotFoundError,
-                        NotADirectoryError,
-                        PermissionError,
-                    ):
-                        continue
-                    stack.append((child_fd, True))
-        finally:
+                    child_names.append(entry.name)
+            stack[-1] = (current_fd, close_after, child_names, 0)
+            continue
+
+        if child_index == len(child_names):
+            stack.pop()
             if close_after:
                 os.close(current_fd)
+            continue
+
+        child_name = child_names[child_index]
+        stack[-1] = (current_fd, close_after, child_names, child_index + 1)
+        try:
+            child_fd = os.open(
+                child_name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=current_fd,
+            )
+        except (FileNotFoundError, NotADirectoryError, PermissionError):
+            continue
+        stack.append((child_fd, True, None, 0))
 
 
 def repair(data_dir: str) -> None:
