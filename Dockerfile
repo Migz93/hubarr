@@ -31,12 +31,13 @@ ARG COMMIT_SHA=local
 ENV BUILD_CHANNEL=$BUILD_CHANNEL
 ENV COMMIT_SHA=$COMMIT_SHA
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends fontconfig fonts-dejavu-core gosu \
+  && apt-get install -y --no-install-recommends fontconfig fonts-dejavu-core gosu python3 \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/package.json ./package.json
 COPY --from=production-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY docker-entrypoint.sh /entrypoint.sh
+COPY docker-ownership-repair.py /ownership-repair.py
 RUN chmod 755 /entrypoint.sh
 RUN mkdir -p /config && chown node:node /config
 ENTRYPOINT ["/entrypoint.sh"]
