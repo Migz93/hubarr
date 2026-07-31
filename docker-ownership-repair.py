@@ -19,6 +19,11 @@ def repair_entry(name: str, directory_fd: int, node_uid: int, node_gid: int) -> 
             )
     except FileNotFoundError:
         return
+    except PermissionError:
+        print(
+            f"warning: unable to repair ownership for {name!r}",
+            file=sys.stderr,
+        )
 
 
 def repair_tree(directory_fd: int, node_uid: int, node_gid: int) -> None:
