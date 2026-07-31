@@ -12,26 +12,10 @@
 
 ## Running It
 
-```bash
-docker compose up -d --build
-```
-
-Or without compose:
-
-```bash
-docker rm -f hubarr
-docker run -d \
-  --name hubarr \
-  --network bridge \
-  -p 9301:9301 \
-  -v /opt/hubarr:/config \
-  --restart unless-stopped \
-  hubarr
-```
-
-Keep the image and container name as `hubarr`, use bridge networking, and
-preserve the `/opt/hubarr:/config` bind mount so config, database, and logs
-survive the container being recreated.
+Build, run, and rebuild commands live in `AGENTS.md` under "Rebuilding The
+Container After Code Changes", alongside the container conventions they have
+to stay consistent with. This file covers what the deployment *is*, not how to
+drive it.
 
 ## Persistent Data
 
