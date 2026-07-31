@@ -1,4 +1,7 @@
-﻿FROM node:22-trixie-slim AS deps
+﻿# Base image pinned by digest so a rebuild can't silently pull a different
+# toolchain under the same tag. Bump deliberately: resolve the new digest with
+# `docker buildx imagetools inspect node:22-trixie-slim` and replace all four.
+FROM node:22-trixie-slim@sha256:517aa41d78545cb1b8c67b13655b4c13ede1ee9df1da8aab54cd7434aefbcaf8 AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN apt-get update \
@@ -6,13 +9,13 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 RUN npm ci
 
-FROM node:22-trixie-slim AS build
+FROM node:22-trixie-slim@sha256:517aa41d78545cb1b8c67b13655b4c13ede1ee9df1da8aab54cd7434aefbcaf8 AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
-FROM node:22-trixie-slim AS production-deps
+FROM node:22-trixie-slim@sha256:517aa41d78545cb1b8c67b13655b4c13ede1ee9df1da8aab54cd7434aefbcaf8 AS production-deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN apt-get update \
@@ -20,7 +23,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 RUN npm ci --omit=dev
 
-FROM node:22-trixie-slim AS runtime
+FROM node:22-trixie-slim@sha256:517aa41d78545cb1b8c67b13655b4c13ede1ee9df1da8aab54cd7434aefbcaf8 AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=9301

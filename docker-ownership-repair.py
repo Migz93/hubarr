@@ -39,7 +39,6 @@ def repair_tree(directory_fd: int, node_uid: int, node_gid: int) -> None:
             try:
                 entries = list(os.scandir(current_fd))
             except OSError:
-                child_names = []
                 entries = []
 
             child_names = []
