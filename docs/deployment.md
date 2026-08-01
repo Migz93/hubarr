@@ -1,3 +1,5 @@
+<!-- shared: content — keep in sync across Migz93 self-hosted apps -->
+
 # Deployment
 
 ## Image And Container
@@ -10,18 +12,23 @@
 | Host data directory | `/opt/hubarr` |
 | Container data directory | `/config` |
 
+The image holds the built React client in `dist/client`, the compiled Express
+server in `dist/server`, and production dependencies only. The server command is
+`node dist/server/server/index.js`.
+
 ## Running It
 
 Build, run, and rebuild commands live in `AGENTS.md` under "Rebuilding The
-Container After Code Changes", alongside the container conventions they have
-to stay consistent with. This file covers what the deployment *is*, not how to
-drive it.
+Container After Code Changes", alongside the container and environment
+conventions they have to stay consistent with. This file covers what the
+deployment *is*, not how to drive it.
 
 ## Persistent Data
 
-Everything Hubarr keeps — config, SQLite database, image cache, logs — lives in
-`/config`, bind-mounted from `/opt/hubarr` on the host. Keep it flat; don't add
-`config/`, `data/`, or `logs/` subdirectories.
+Everything Hubarr keeps — config, SQLite database, image cache, logs — lives in `/config`,
+bind-mounted from `/opt/hubarr` on the host. Keep it flat; don't add
+`config/`, `data/`, or `logs/` subdirectories. Don't use named Docker volumes for
+this app; the user needs host-visible files.
 
 ## Container User
 
@@ -77,12 +84,3 @@ lines:
 ```bash
 docker buildx imagetools inspect node:22-trixie-slim
 ```
-
-## DooD Notes
-
-The devcontainer talks to the host Docker daemon through
-Docker-outside-of-Docker:
-
-- always use bridge networking; never `network_mode: host`
-- don't browse or inspect `/opt/hubarr` from inside the devcontainer
-- referencing `/opt/hubarr` in Docker bind mounts is fine

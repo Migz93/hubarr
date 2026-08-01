@@ -1,3 +1,5 @@
+<!-- shared: structure — headings kept in sync across Migz93 self-hosted apps, content is app-specific -->
+
 # Hubarr Architecture Overview
 
 ## What Hubarr Is
@@ -87,7 +89,7 @@ Hubarr tries to match watchlist items against Plex library items so it can tell 
 
 ### Collection publishing
 
-Hubarr creates and updates Plex collections, applies Hubarr labels, configures sort behavior, and publishes those collections into Plex hubs.
+Hubarr creates and updates Plex collections, applies Hubarr labels, configures sort behaviour, and publishes those collections into Plex hubs.
 
 ### Frontend freshness
 

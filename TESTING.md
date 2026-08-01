@@ -1,37 +1,68 @@
+<!-- shared: structure — headings kept in sync across Migz93 self-hosted apps, content is app-specific -->
+
 # Testing
 
-Hubarr uses [Playwright](https://playwright.dev/) for end-to-end tests. Tests run against a **live, fully set-up Hubarr instance** — there is no mocking or test database. You need a running app with a real Plex connection before the tests are meaningful.
+Hubarr uses [Playwright](https://playwright.dev/) for end-to-end tests. Tests run
+against a **live, fully set-up Hubarr instance** — there is no mocking and no
+test database. You need a running app with a real Plex connection before the
+tests are meaningful.
 
-## First-time setup
+## Commands
+
+| Command | What it does |
+|---|---|
+| `npm run test:e2e` | Runs all Playwright tests (auth check + full suite) |
+| `npm run test:e2e:auth` | Runs the auth setup step only |
+| `npm run check` | Runs TypeScript checks for the client, shared types, and server |
+| `npm run lint` | Runs ESLint across the repo |
+| `npm run build` | Builds the Vite client and TypeScript server |
+
+## Server Tests
+
+Hubarr has no server-side unit test suite. All automated coverage is
+Playwright-based and runs against a live instance, so behaviour that is hard to
+reach through the UI — database invariants, migration steps, matching helpers —
+is currently only verified manually.
+
+## Playwright End-To-End Tests
+
+### First-Time Setup
 
 1. Copy the env template:
+
    ```bash
    cp .env.playwright.example .env.playwright
    ```
 
 2. Edit `.env.playwright` and set `BASE_URL` to your running instance:
+
    ```
-   BASE_URL=http://your-hubarr-host:3000
+   BASE_URL=http://your-hubarr-host:9301
    ```
 
 3. Grab your session cookie from the browser:
    - Open your Hubarr instance in Chrome or Firefox
    - DevTools → Application → Cookies → find `hubarr_session`
    - Copy the **Value** and paste it into `.env.playwright`:
+
    ```
    SESSION_COOKIE=<paste here>
    ```
 
 4. Run the tests:
+
    ```bash
    npm run test:e2e
    ```
 
-   The first run validates the cookie and saves the session to `tests/playwright/.auth/storageState.json` (gitignored). Test run artifacts are written to `tests/test-results/` (also gitignored). All subsequent runs reuse the saved session automatically.
+The first run validates the cookie and saves the session to
+`tests/playwright/.auth/storageState.json` (gitignored). All subsequent runs
+reuse the saved session automatically.
 
-## Re-authenticating
+### Re-Authenticating
 
-When your session expires, the auth setup will tell you. Clear the saved session and re-run with a fresh cookie:
+When your session expires, the auth setup will tell you. Clear the saved session
+and re-run with a fresh cookie:
 
 ```bash
 rm tests/playwright/.auth/storageState.json
@@ -39,34 +70,27 @@ rm tests/playwright/.auth/storageState.json
 npm run test:e2e
 ```
 
-## Generated test files
+### Generated Files
 
-Playwright-generated files are kept under `tests/` so the repo root stays tidy:
+Playwright-generated files are kept under `tests/` so the repo root stays tidy.
+All are gitignored:
 
 - `tests/playwright/.auth/storageState.json` — saved authenticated session state
 - `tests/test-results/` — Playwright run artifacts
 - `tests/playwright-report/` — Playwright HTML report output
 
-Both are gitignored.
+### Devcontainer Note
 
-## Commands
+The tests normally run inside the VS Code devcontainer. Because the devcontainer
+has no display, a headed browser window cannot be opened — which is why auth uses
+the `SESSION_COOKIE` env var rather than a Playwright-driven OAuth flow.
 
-| Command | What it does |
-|---|---|
-| `npm run test:e2e` | Run all tests (auth check + full suite) |
-| `npm run test:e2e:auth` | Run the auth setup step only |
-
-## Devcontainer note
-
-The tests run inside the VS Code devcontainer. Because the devcontainer has no display, a headed browser window cannot be opened — which is why auth uses the `SESSION_COOKIE` env var rather than a Playwright-driven OAuth flow.
-
-## Adding new tests
-
-Create a `*.spec.ts` file in `tests/playwright/` and it will be picked up automatically. The saved session in `storageState.json` is loaded for every test, so all tests start already authenticated.
+Elsewhere the suite still runs, as long as `BASE_URL` points at a reachable
+instance.
 
 ---
 
-## Test suite
+## Test Suite
 
 ### `tests/playwright/pages.spec.ts` — Page smoke tests
 
@@ -164,7 +188,7 @@ Read-only. Safe to run against a live instance.
 
 ---
 
-### `tests/playwright/live-refresh.spec.ts` — Live refresh behavior
+### `tests/playwright/live-refresh.spec.ts` — Live refresh behaviour
 
 These tests trigger real background work and verify that the open page updates
 without a browser reload. They are not read-only.
@@ -180,12 +204,12 @@ without a browser reload. They are not read-only.
 ### `tests/playwright/history-background-refresh.spec.ts` — History background polling
 
 Read-only. Safe to run against a live instance. These tests stub the History API
-responses in-browser so they can verify polling behavior without triggering real
+responses in-browser so they can verify polling behaviour without triggering real
 jobs on the server.
 
 | Test | What it checks |
 |---|---|
-| Running history rows show `Just now` and live elapsed text | Opens `/history` with a stubbed running sync and verifies the row shows capitalized relative time plus a live `Running for ...` duration |
+| Running history rows show `Just now` and live elapsed text | Opens `/history` with a stubbed running sync and verifies the row shows capitalised relative time plus a live `Running for ...` duration |
 | History list keeps polling while the tab is hidden when a run is active | Opens `/history` with a stubbed running sync, switches to another tab, and verifies the hidden History page still polls `/api/history` |
 | Expanded history details keep polling while the tab is hidden when a run is active | Expands a stubbed running History row, switches to another tab, and verifies the hidden page keeps polling `/api/history/:runId` for updated details |
 | Expanded errors stay collapsed by default and grouped steps render readable labels | Opens a stubbed failed History run, verifies the errors section stays collapsed initially, and checks that repeated low-level steps render as grouped human-readable labels |
@@ -207,3 +231,48 @@ integration is off.
 | Seerr tab shows the Behaviour section with request toggles | Navigates to `/settings?tab=seerr`, asserts the "Behaviour" divider and "Automatic Requests" and "Use Hubarr Service Account" toggles are visible |
 | Seerr action labels render correctly when stubbed into the history API | Stubs the History API with a run containing Seerr step entries and verifies the readable labels "Seerr request created", "Already in Seerr", and "Seerr request skipped" appear in the expanded details |
 | Edit modal Seerr section visibility matches the Seerr enabled state | Reads current settings to determine whether Seerr is enabled; opens the first user's edit modal and asserts that the Seerr tab is present (or absent) accordingly |
+
+---
+
+## Adding New Tests
+
+Create a `*.spec.ts` file in `tests/playwright/` and it will be picked up
+automatically. The saved session in `storageState.json` is loaded for every test,
+so all tests start already authenticated.
+
+When a test is agreed and written, add a row for it in the relevant table above.
+
+## Manual Smoke Test
+
+For a local Docker verification:
+
+```bash
+docker build -t hubarr .
+docker stop hubarr && docker rm hubarr
+docker run -d \
+  --name hubarr \
+  --network bridge \
+  -p 9301:9301 \
+  -v /opt/hubarr:/config \
+  --restart unless-stopped \
+  hubarr
+docker logs hubarr 2>&1 | tail -5
+```
+
+Expected log line:
+
+```text
+Hubarr listening on port 9301
+```
+
+Then open `http://localhost:9301` and smoke-test:
+
+- Dashboard loads after authentication
+- Settings loads and the About tab reports version/build info
+- Users page lists discovered friends
+- A manual sync runs and appears in History
+- `/api/settings` returns `401` from an unauthenticated browser/session
+- `/images/...` returns `401` without a valid session
+
+This section needs Docker. See "Where You're Running" in `AGENTS.md` — where it
+is unavailable, say so rather than substituting a workspace check.
