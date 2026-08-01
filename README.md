@@ -103,6 +103,8 @@ services:
       - "9301:9301"
     volumes:
       - /opt/hubarr:/config
+    environment:
+      - TZ=UTC
 ```
 
 ```bash
@@ -115,6 +117,11 @@ Hubarr is configured through its web UI after first run. The two things you may 
 
 - **Port** — change the left side of `9301:9301` to expose Hubarr on a different host port (e.g. `8080:9301`)
 - **Data directory** — change the left side of `/opt/hubarr:/config` to store Hubarr's database and logs wherever you prefer on your host
+- **Timezone** — set `TZ` to your preferred timezone if you do not want UTC
+
+Hubarr runs as an unprivileged user (UID/GID `1000`), not root. The container starts as root only long enough to take ownership of the data directory, including on a fresh bind mount, then drops privileges. You do not need to `chown` anything on the host.
+
+That fix ships in the image, so upgrading means replacing the container, not restarting it: `docker compose pull && docker compose up -d`, or re-run the `docker pull`/`stop`/`rm`/`run` sequence.
 
 ### First Setup
 
@@ -138,7 +145,7 @@ Plex Home managed users (sub-accounts with no independent Plex account) have two
 
 Hubarr was created with heavy AI assistance.
 
-Claude, Codex, and OpenAI Sora were all used throughout the project for design exploration, implementation help, refactoring, explanation, and iteration. The intent is not to hide that. Hubarr has been built by combining hands-on product direction with a lot of AI-assisted development work.
+Claude, Codex, Leonardo.ai, and CodeRabbit were all used throughout the project for design exploration, implementation help, refactoring, review, explanation, and iteration. The intent is not to hide that. Hubarr has been built by combining hands-on product direction with a lot of AI-assisted development work.
 
 ## Credits And Inspiration
 
