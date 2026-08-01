@@ -2,10 +2,11 @@
 
 # Testing
 
-Hubarr uses [Playwright](https://playwright.dev/) for end-to-end tests. Tests run
-against a **live, fully set-up Hubarr instance** — there is no mocking and no
-test database. You need a running app with a real Plex connection before the
-tests are meaningful.
+Hubarr has two test layers. [Playwright](https://playwright.dev/) end-to-end
+tests run against a **live, fully set-up Hubarr instance** — no mocking, no test
+database — so you need a running app with a real Plex connection before they are
+meaningful. Server tests exist under `tests/server/` but have no runner wired up
+yet; see below.
 
 ## Commands
 
@@ -19,10 +20,20 @@ tests are meaningful.
 
 ## Server Tests
 
-Hubarr has no server-side unit test suite. All automated coverage is
-Playwright-based and runs against a live instance, so behaviour that is hard to
-reach through the UI — database invariants, migration steps, matching helpers —
-is currently only verified manually.
+Not runnable yet. Tracked in
+[#247](https://github.com/Migz93/hubarr/issues/247).
+
+Hubarr has 11 server test files under `tests/server/` covering GUID merge
+chains, disabled-user cleanup, isolation filter skip logic, collection order
+validation, and Plex reorder convergence. They are committed and kept up to
+date, but `package.json` has no `test` script and no CI workflow runs them, so
+nothing has ever executed them.
+
+Once [#247](https://github.com/Migz93/hubarr/issues/247) adds the script and the
+CI step, replace this section with the setup notes from
+[pacearr](https://github.com/Migz93/pacearr) or
+[shelfbridge](https://github.com/Migz93/shelfbridge), and add a row per test to
+the Test Suite table below — the same shape both siblings use.
 
 ## Playwright End-To-End Tests
 
@@ -236,9 +247,15 @@ integration is off.
 
 ## Adding New Tests
 
-Create a `*.spec.ts` file in `tests/playwright/` and it will be picked up
-automatically. The saved session in `storageState.json` is loaded for every test,
-so all tests start already authenticated.
+Which layer to reach for — server test or Playwright — is covered in `AGENTS.md`
+under Tests. Mechanically:
+
+- **Playwright:** create a `*.spec.ts` file in `tests/playwright/` and it is picked
+  up automatically. The saved session in `storageState.json` is loaded for every
+  test, so all tests start already authenticated.
+- **Server tests:** `tests/server/` exists and is used, but nothing runs it yet —
+  see [#247](https://github.com/Migz93/hubarr/issues/247). Add the test alongside
+  the existing files and note in the PR that it has not been executed.
 
 When a test is agreed and written, add a row for it in the relevant table above.
 

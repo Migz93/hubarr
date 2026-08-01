@@ -28,7 +28,7 @@ This table is the only place the projects differ — when a rule below refers to
 | Workspace path | `/workspaces/hubarr` (same as `app/` on the host at `/opt/vscode/node/hubarr/app/`) |
 | Version files | `package.json` and `package-lock.json` (`src/server/version.ts` reads the version from `package.json` at runtime, so there is nothing else to update) |
 | Checks to run before closing out work | `npm run check`, `npm run lint` |
-| Test suite | Playwright end-to-end suite — `npm run test:e2e` |
+| Test suite | Playwright end-to-end suite — `npm run test:e2e`. Server tests exist under `tests/server/` but nothing runs them yet ([#247](https://github.com/Migz93/hubarr/issues/247)). |
 | Integrations to flag in review | Plex, Seerr |
 
 ## Before You Start — What To Read
@@ -476,11 +476,26 @@ without re-litigating, but say what you're doing.
 run it, and what each test covers. Read it rather than assuming — the three
 projects do not have identical test infrastructure.
 
+There are two layers, and they catch different things:
+
+| Layer | Catches | Needs |
+|---|---|---|
+| **Server tests** | Failures that are invisible in the UI — the wrong rows deleted, a dry-run leaking a real write, a failed API call mistaken for "the library is empty", a migration corrupting data | Nothing running. A throwaway SQLite database that the test seeds itself, plus `fetch` or the source adapters swapped for fakes |
+| **Playwright** | What the user sees — routes loading, filters applying, live refresh, auth redirects | A live, fully configured instance |
+
+They are not redundant and neither substitutes for the other. Reach for a server
+test when the failure would be **silent and destructive**; reach for Playwright
+when the failure would be **visible**.
+
 **When implementing a new feature**, before closing out the work consider
-whether a test makes sense for it. If it does, suggest it to the user — describe
-what you'd test and ask if they want it added. Don't add tests silently; always
-check first. When a test is agreed and written, add a row for it in the relevant
-table in `TESTING.md`.
+whether a test makes sense for it, at either layer. If it does, suggest it to
+the user — describe what you'd test and which layer it belongs at, then ask if
+they want it added. Don't add tests silently; always check first. When a test is
+agreed and written, add a row for it in the relevant table in `TESTING.md`.
+
+If the layer that fits is one this repo has not wired up yet, say so and point at
+the issue tracking it. Do not force the test into the other layer to avoid the
+gap — a UI test standing in for a logic test proves much less than it appears to.
 
 ---
 
