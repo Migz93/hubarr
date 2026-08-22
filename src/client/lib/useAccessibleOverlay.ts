@@ -14,6 +14,31 @@ function getFocusableElements(container: HTMLElement) {
     .filter((element) => !element.hasAttribute("hidden") && element.getClientRects().length > 0);
 }
 
+function inertBackground(overlay: HTMLElement) {
+  const changedElements = new Map<HTMLElement, boolean>();
+  let child: HTMLElement = overlay;
+  let parent = child.parentElement;
+
+  // The dialogs are rendered in place rather than through a portal, so make every
+  // sibling branch from the dialog to <body> unavailable to assistive technology.
+  while (parent) {
+    for (const sibling of parent.children) {
+      if (!(sibling instanceof HTMLElement) || sibling === child || sibling.inert) continue;
+      changedElements.set(sibling, false);
+      sibling.inert = true;
+    }
+    if (parent === document.body) break;
+    child = parent;
+    parent = parent.parentElement;
+  }
+
+  return () => {
+    for (const [element, wasInert] of changedElements) {
+      element.inert = wasInert;
+    }
+  };
+}
+
 /** Keeps a mounted overlay usable without a mouse and returns focus to its trigger. */
 export function useAccessibleOverlay(
   overlayRef: RefObject<HTMLElement | null>,
@@ -27,6 +52,8 @@ export function useAccessibleOverlay(
     if (!isOpen) return;
 
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const overlay = overlayRef.current;
+    const restoreBackground = overlay ? inertBackground(overlay) : () => {};
     const focusInitialElement = () => {
       const overlay = overlayRef.current;
       if (!overlay) return;
@@ -67,6 +94,7 @@ export function useAccessibleOverlay(
     return () => {
       window.clearTimeout(timer);
       document.removeEventListener("keydown", handleKeydown);
+      restoreBackground();
       if (previouslyFocused?.isConnected) window.setTimeout(() => previouslyFocused.focus(), 0);
     };
   }, [isOpen, overlayRef]);

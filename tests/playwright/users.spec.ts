@@ -72,6 +72,7 @@ test.describe("Users page structure", () => {
     const dialog = page.getByRole("dialog");
     const closeButton = dialog.getByRole("button", { name: "Close" });
     await expect(closeButton).toBeFocused();
+    expect(await editButton.evaluate((element) => element.closest("[inert]") !== null)).toBe(true);
 
     await page.keyboard.press("Shift+Tab");
     await page.keyboard.press("Tab");
