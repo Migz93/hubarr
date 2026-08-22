@@ -1,4 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap');
+@import "@fontsource/manrope/600.css";
+@import "@fontsource/manrope/700.css";
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
 @import "tailwindcss";
 
 @theme {
@@ -26,8 +31,6 @@
 }
 
 :root {
-  /* Derived from --color-background-container (#18191e) at 60% opacity */
-  --overlay-glass: rgba(24, 25, 30, 0.6);
   /* Derived from --color-background (#0d0e12) at 95% opacity */
   --overlay-poster: rgba(13, 14, 18, 0.95);
   /* Derived from --color-background (#0d0e12) at 0% opacity */
@@ -49,22 +52,4 @@
   * {
     @apply border-outline-variant/20;
   }
-}
-
-.glass-panel {
-  background: var(--overlay-glass);
-  backdrop-filter: blur(20px);
-}
-
-.poster-gradient {
-  background: linear-gradient(to top, var(--overlay-poster) 0%, var(--overlay-poster-transparent) 60%);
-}
-
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
-}
-
-.no-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
 }
