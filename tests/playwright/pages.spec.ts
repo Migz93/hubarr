@@ -65,6 +65,23 @@ test.describe("Page smoke tests", () => {
     await expect(page).toHaveURL(/\/dashboard/);
   });
 
+  test("Mobile navigation closes on Escape and returns focus to its trigger", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 800 });
+    await page.goto("/dashboard");
+
+    const menuButton = page.getByRole("button", { name: "Toggle navigation" });
+    await menuButton.focus();
+    await menuButton.click();
+
+    const dialog = page.getByRole("dialog", { name: "Navigation" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("link", { name: "Dashboard" })).toBeFocused();
+
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(menuButton).toBeFocused();
+  });
+
   test("Unauthenticated request redirects to login", async ({ browser }) => {
     // Use a fresh context with no stored session
     const freshContext = await browser.newContext({ storageState: undefined });

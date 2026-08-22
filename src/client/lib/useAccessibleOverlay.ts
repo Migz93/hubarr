@@ -1,0 +1,73 @@
+import { useEffect, useRef, type RefObject } from "react";
+
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])"
+].join(", ");
+
+function getFocusableElements(container: HTMLElement) {
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+    .filter((element) => !element.hasAttribute("hidden") && element.getClientRects().length > 0);
+}
+
+/** Keeps a mounted overlay usable without a mouse and returns focus to its trigger. */
+export function useAccessibleOverlay(
+  overlayRef: RefObject<HTMLElement | null>,
+  isOpen: boolean,
+  onClose: () => void
+) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusInitialElement = () => {
+      const overlay = overlayRef.current;
+      if (!overlay) return;
+      const focusable = getFocusableElements(overlay);
+      (overlay.querySelector<HTMLElement>("[data-overlay-initial-focus]") ?? focusable[0] ?? overlay).focus();
+    };
+
+    const timer = window.setTimeout(focusInitialElement, 0);
+    const handleKeydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const overlay = overlayRef.current;
+      if (!overlay) return;
+      const focusable = getFocusableElements(overlay);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        overlay.focus();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeydown);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("keydown", handleKeydown);
+      if (previouslyFocused?.isConnected) window.setTimeout(() => previouslyFocused.focus(), 0);
+    };
+  }, [isOpen, overlayRef]);
+}

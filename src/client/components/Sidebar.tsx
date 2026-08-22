@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { NavLink, Link } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -28,9 +28,10 @@ interface SidebarProps {
   onLogout: () => void;
   mobileOpen: boolean;
   onMobileClose: () => void;
+  sidebarRef: RefObject<HTMLElement | null>;
 }
 
-export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: SidebarProps) {
+export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose, sidebarRef }: SidebarProps) {
   const [popupOpen, setPopupOpen] = useState(false);
   const footerRef = useRef<HTMLDivElement>(null);
 
@@ -47,6 +48,12 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: S
 
   return (
     <aside
+      ref={sidebarRef}
+      id="mobile-navigation"
+      role={mobileOpen ? "dialog" : undefined}
+      aria-modal={mobileOpen || undefined}
+      aria-label={mobileOpen ? "Navigation" : undefined}
+      tabIndex={-1}
       className={`fixed inset-y-0 left-0 w-64 flex flex-col bg-background-container-low border-r border-outline-variant/20 z-40 transition-transform duration-300
         md:translate-x-0 ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
     >

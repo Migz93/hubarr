@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, Edit2, Play, RefreshCw, X } from "lucide-rea
 import { apiGet, apiPatch, apiPost } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
+import { useAccessibleOverlay } from "../lib/useAccessibleOverlay";
 import { Field, SelectInput, ToggleField } from "../components/FormControls";
 import type { CollectionSortOrder, SeerrUser, SeerrUserLink, UserRecord, ManagedUserRecord, JobInfo, SettingsResponse, VisibilityConfig } from "../../shared/types";
 
@@ -383,16 +384,8 @@ function WatchlistInfoModal({
   trackAllUsersEnabled: boolean;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    function handleKeydown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    document.addEventListener("keydown", handleKeydown);
-    return () => document.removeEventListener("keydown", handleKeydown);
-  }, [onClose]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useAccessibleOverlay(dialogRef, true, onClose);
 
   const detail = !user.enabled && !trackAllUsersEnabled
     ? "No watchlist data is available for this user right now. They are currently disabled in Hubarr and Track All Users is turned off."
@@ -404,15 +397,21 @@ function WatchlistInfoModal({
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="watchlist-info-title"
         className="bg-background-container rounded-2xl p-6 w-full max-w-md border border-outline-variant/20 shadow-xl"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-headline font-semibold text-lg text-on-surface">
+          <h3 id="watchlist-info-title" className="font-headline font-semibold text-lg text-on-surface">
             {user.displayName}
           </h3>
           <button
             onClick={onClose}
+            data-overlay-initial-focus
+            aria-label="Close"
             className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-background-container-high"
           >
             <X size={18} />
@@ -547,6 +546,8 @@ function EditModal({
   onSave: (patch: Partial<UserRecord>) => Promise<void>;
   onClose: () => void;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useAccessibleOverlay(dialogRef, true, onClose);
   const [activeTab, setActiveTab] = useState<EditModalTab>("user");
   const [enabled, setEnabled] = useState(user.enabled);
   const [displayNameOverride, setDisplayNameOverride] = useState(user.displayNameOverride ?? "");
@@ -621,14 +622,6 @@ function EditModal({
     };
   }, [user.id, seerrEnabled]);
 
-  useEffect(() => {
-    function handleKeydown(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", handleKeydown);
-    return () => document.removeEventListener("keydown", handleKeydown);
-  }, [onClose]);
-
   const defaultName = settings.collections.collectionNamePattern.replace(
     "{user}",
     displayNameOverride.trim() || user.username
@@ -691,6 +684,10 @@ function EditModal({
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-user-title"
         className="bg-background-container rounded-2xl w-full max-w-md border border-outline-variant/20 shadow-xl flex flex-col"
         onClick={(event) => event.stopPropagation()}
       >
@@ -699,7 +696,7 @@ function EditModal({
           <Avatar avatarUrl={user.avatarUrl} displayName={headerDisplayName} size="w-12 h-12" />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-semibold text-on-surface text-base leading-snug truncate">
+              <span id="edit-user-title" className="font-semibold text-on-surface text-base leading-snug truncate">
                 {user.username}
               </span>
               {user.isSelf && (
@@ -721,6 +718,7 @@ function EditModal({
           </div>
           <button
             onClick={onClose}
+            data-overlay-initial-focus
             className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-background-container-high transition-colors flex-shrink-0"
             aria-label="Close"
           >

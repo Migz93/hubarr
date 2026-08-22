@@ -129,6 +129,7 @@ Read-only. Safe to run against a live instance.
 | Settings loads | Navigates to `/settings`, asserts the "Settings" heading is visible |
 | Sidebar navigation links are present | On the dashboard, checks all five nav links exist inside `<nav>` (scoped to avoid false matches from dashboard stat chips which share label names) |
 | Sidebar navigation works | Clicks each sidebar link in turn and verifies the URL and page heading update correctly |
+| Mobile navigation closes on Escape and returns focus to its trigger | Opens the small-screen navigation drawer, verifies its initial focus, then verifies Escape restores the menu-button focus |
 | Unauthenticated request redirects to login | Opens a fresh browser context with no session cookies and navigates to `/dashboard`, expects a redirect to `/login` |
 
 ---
@@ -175,6 +176,7 @@ Read-only. Safe to run against a live instance.
 | Disabled users never show a Sync Watchlist button | Expands the disabled users section and asserts no `Sync Watchlist` button is rendered there |
 | Refresh Users button is present | Asserts the Refresh Users button renders |
 | Edit modal shows collection ordering override section | Clicks the first user's edit button, asserts the "Collection Ordering" section is visible in the modal, and that the dropdown contains the two watchlist date sort options |
+| Edit modal traps focus and restores the trigger after Escape | Opens the edit modal, verifies Tab wraps within it, then verifies Escape returns focus to the edit trigger |
 | Watchlist tab is only available when editing the self user | Opens the self user edit modal and asserts the Watchlist tab is present, then opens a non-self user when available and asserts the tab is absent |
 | Self Watchlist tab shows cleanup options without changing them | Opens the self user edit modal, navigates to Watchlist, and asserts both cleanup options and explanatory text are visible without saving |
 | Watchlist Cleanup job is enabled when cleanup settings are already enabled | Reads current settings; if cleanup is already enabled, verifies the Jobs row is enabled, otherwise skips without changing settings |

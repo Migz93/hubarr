@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Outlet } from "react-router-dom";
 import { Menu } from "lucide-react";
 import Sidebar from "./Sidebar";
+import { useAccessibleOverlay } from "../lib/useAccessibleOverlay";
 import type { SessionUser } from "../../shared/types";
 
 interface LayoutProps {
@@ -11,6 +12,8 @@ interface LayoutProps {
 
 export default function Layout({ user, onLogout }: LayoutProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const sidebarRef = useRef<HTMLElement>(null);
+  useAccessibleOverlay(sidebarRef, mobileOpen, () => setMobileOpen(false));
 
   return (
     <div className="min-h-screen bg-background">
@@ -27,6 +30,7 @@ export default function Layout({ user, onLogout }: LayoutProps) {
         onLogout={onLogout}
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
+        sidebarRef={sidebarRef}
       />
 
       <div className="md:ml-64 min-h-screen">
@@ -34,6 +38,9 @@ export default function Layout({ user, onLogout }: LayoutProps) {
         <div className="md:hidden flex items-center gap-3 px-4 py-3 bg-background-container-low border-b border-outline-variant/20 sticky top-0 z-20">
           <button
             onClick={() => setMobileOpen((o) => !o)}
+            aria-controls="mobile-navigation"
+            aria-expanded={mobileOpen}
+            aria-label="Toggle navigation"
             className="p-1.5 rounded-lg text-on-surface-variant hover:bg-background-container-high hover:text-on-surface transition-colors"
           >
             <Menu size={20} />
