@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Outlet } from "react-router-dom";
 import { Menu } from "lucide-react";
 import Sidebar from "./Sidebar";
@@ -10,10 +10,24 @@ interface LayoutProps {
   onLogout: () => void;
 }
 
+function useIsMobileViewport() {
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia("(max-width: 767px)").matches);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 767px)");
+    const updateViewport = () => setIsMobile(mediaQuery.matches);
+    mediaQuery.addEventListener("change", updateViewport);
+    return () => mediaQuery.removeEventListener("change", updateViewport);
+  }, []);
+
+  return isMobile;
+}
+
 export default function Layout({ user, onLogout }: LayoutProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const isMobileViewport = useIsMobileViewport();
   const sidebarRef = useRef<HTMLElement>(null);
-  useAccessibleOverlay(sidebarRef, mobileOpen, () => setMobileOpen(false));
+  useAccessibleOverlay(sidebarRef, mobileOpen && isMobileViewport, () => setMobileOpen(false));
 
   return (
     <div className="min-h-screen bg-background">
@@ -29,6 +43,7 @@ export default function Layout({ user, onLogout }: LayoutProps) {
         user={user}
         onLogout={onLogout}
         mobileOpen={mobileOpen}
+        isMobileViewport={isMobileViewport}
         onMobileClose={() => setMobileOpen(false)}
         sidebarRef={sidebarRef}
       />

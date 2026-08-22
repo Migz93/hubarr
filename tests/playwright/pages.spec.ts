@@ -70,11 +70,14 @@ test.describe("Page smoke tests", () => {
     await page.goto("/dashboard");
 
     const menuButton = page.getByRole("button", { name: "Toggle navigation" });
+    const sidebar = page.locator("aside");
+    await expect(sidebar).toHaveAttribute("inert", "");
     await menuButton.focus();
     await menuButton.click();
 
     const dialog = page.getByRole("dialog", { name: "Navigation" });
     await expect(dialog).toBeVisible();
+    await expect(sidebar).not.toHaveAttribute("inert", "");
     await expect(dialog.getByRole("link", { name: "Dashboard" })).toBeFocused();
 
     await page.keyboard.press("Escape");

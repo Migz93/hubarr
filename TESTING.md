@@ -129,7 +129,7 @@ Read-only. Safe to run against a live instance.
 | Settings loads | Navigates to `/settings`, asserts the "Settings" heading is visible |
 | Sidebar navigation links are present | On the dashboard, checks all five nav links exist inside `<nav>` (scoped to avoid false matches from dashboard stat chips which share label names) |
 | Sidebar navigation works | Clicks each sidebar link in turn and verifies the URL and page heading update correctly |
-| Mobile navigation closes on Escape and returns focus to its trigger | Opens the small-screen navigation drawer, verifies its initial focus, then verifies Escape restores the menu-button focus |
+| Mobile navigation closes on Escape and returns focus to its trigger | Verifies the closed small-screen drawer is inert, then verifies opening it sets initial focus and Escape restores the menu-button focus |
 | Unauthenticated request redirects to login | Opens a fresh browser context with no session cookies and navigates to `/dashboard`, expects a redirect to `/login` |
 
 ---

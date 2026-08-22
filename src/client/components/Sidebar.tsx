@@ -27,11 +27,12 @@ interface SidebarProps {
   user: SessionUser | null;
   onLogout: () => void;
   mobileOpen: boolean;
+  isMobileViewport: boolean;
   onMobileClose: () => void;
   sidebarRef: RefObject<HTMLElement | null>;
 }
 
-export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose, sidebarRef }: SidebarProps) {
+export default function Sidebar({ user, onLogout, mobileOpen, isMobileViewport, onMobileClose, sidebarRef }: SidebarProps) {
   const [popupOpen, setPopupOpen] = useState(false);
   const footerRef = useRef<HTMLDivElement>(null);
 
@@ -50,9 +51,10 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose, sid
     <aside
       ref={sidebarRef}
       id="mobile-navigation"
-      role={mobileOpen ? "dialog" : undefined}
-      aria-modal={mobileOpen || undefined}
-      aria-label={mobileOpen ? "Navigation" : undefined}
+      role={mobileOpen && isMobileViewport ? "dialog" : undefined}
+      aria-modal={mobileOpen && isMobileViewport || undefined}
+      aria-label={mobileOpen && isMobileViewport ? "Navigation" : undefined}
+      inert={!mobileOpen && isMobileViewport}
       tabIndex={-1}
       className={`fixed inset-y-0 left-0 w-64 flex flex-col bg-background-container-low border-r border-outline-variant/20 z-40 transition-transform duration-300
         md:translate-x-0 ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
