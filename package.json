@@ -13,6 +13,7 @@
     "start": "node dist/server/server/index.js",
     "lint": "eslint .",
     "check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.server.json",
+    "test": "tsx --test 'tests/server/**/*.test.ts'",
     "test:e2e": "playwright test",
     "test:e2e:auth": "playwright test --project=auth-setup"
   },
