@@ -28,7 +28,7 @@ This table is the only place the projects differ — when a rule below refers to
 | Workspace path | `/workspaces/hubarr` (same as `app/` on the host at `/opt/vscode/node/hubarr/app/`) |
 | Version files | `package.json` and `package-lock.json` (`src/server/version.ts` reads the version from `package.json` at runtime, so there is nothing else to update) |
 | Checks to run before closing out work | `npm run check`, `npm run lint` |
-| Test suite | Playwright end-to-end suite — `npm run test:e2e`. Server tests exist under `tests/server/` but nothing runs them yet ([#247](https://github.com/Migz93/hubarr/issues/247)). |
+| Test suite | Server tests — `npm test`. Playwright end-to-end suite — `npm run test:e2e`. |
 | Integrations to flag in review | Plex, Seerr |
 
 ## Before You Start — What To Read

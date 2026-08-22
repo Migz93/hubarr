@@ -5,13 +5,14 @@
 Hubarr has two test layers. [Playwright](https://playwright.dev/) end-to-end
 tests run against a **live, fully set-up Hubarr instance** — no mocking, no test
 database — so you need a running app with a real Plex connection before they are
-meaningful. Server tests exist under `tests/server/` but have no runner wired up
-yet; see below.
+meaningful. Server tests that need persistence use a throwaway SQLite database,
+with external services replaced by fakes where needed.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
+| `npm test` | Runs all server tests; persistence-dependent tests use a throwaway SQLite database |
 | `npm run test:e2e` | Runs all Playwright tests (auth check + full suite) |
 | `npm run test:e2e:auth` | Runs the auth setup step only |
 | `npm run check` | Runs TypeScript checks for the client, shared types, and server |
@@ -20,20 +21,16 @@ yet; see below.
 
 ## Server Tests
 
-Not runnable yet. Tracked in
-[#247](https://github.com/Migz93/hubarr/issues/247).
+Run all server tests with:
 
-Hubarr has 11 server test files under `tests/server/` covering GUID merge
-chains, disabled-user cleanup, isolation filter skip logic, collection order
-validation, and Plex reorder convergence. They are committed and kept up to
-date, but `package.json` has no `test` script and no CI workflow runs them, so
-nothing has ever executed them.
+```bash
+npm test
+```
 
-Once [#247](https://github.com/Migz93/hubarr/issues/247) adds the script and the
-CI step, replace this section with the setup notes from
-[pacearr](https://github.com/Migz93/pacearr) or
-[shelfbridge](https://github.com/Migz93/shelfbridge), and add a row per test to
-the Test Suite table below — the same shape both siblings use.
+The test files use Node's built-in test runner through `tsx`. Tests that need
+persistence create an isolated SQLite database in a temporary directory, which
+is removed after the test completes. They do not require a running Hubarr
+instance, Plex, or Seerr, and are safe to run locally and in CI.
 
 ## Playwright End-To-End Tests
 
@@ -102,6 +99,22 @@ instance.
 ---
 
 ## Test Suite
+
+### Server tests
+
+| File | What it checks |
+|---|---|
+| `tests/server/collection-artwork.test.ts` | Generated collection posters are Plex poster-sized JPEGs and vary by media type |
+| `tests/server/collection-order-validation.test.ts` | Collection ordering is republished when live order drifts, and validation failures retain retry state and history |
+| `tests/server/dashboard.test.ts` | Dashboard GUID merge chains collapse duplicates without merging movies and shows |
+| `tests/server/disabled-user-cleanup.test.ts` | Disabled-user collection cleanup handles Plex, database-only fallback, bulk scans, and deletion failures safely |
+| `tests/server/history-progress.test.ts` | Running history summaries refresh and activity filtering separates changes from no-change runs |
+| `tests/server/identifiers.test.ts` | Media identifier aliases seed and resolve canonical, discover, and GUID lookups |
+| `tests/server/isolation-filter-skip.test.ts` | Isolation filters skip, rerun, reset state, and record failures correctly |
+| `tests/server/maintenance.test.ts` | Maintenance removes orphaned poster cache rows while preserving active cache entries |
+| `tests/server/plex-reorder.test.ts` | Plex collection reordering progressively retries until the requested order converges |
+| `tests/server/seerr-work.test.ts` | Seerr work only counts linked users with automatic requests enabled |
+| `tests/server/watchlist-grouping.test.ts` | Watchlist grouping merges compatible GUID chains once and orders paginated results deterministically |
 
 ### `tests/playwright/pages.spec.ts` — Page smoke tests
 
@@ -253,9 +266,9 @@ under Tests. Mechanically:
 - **Playwright:** create a `*.spec.ts` file in `tests/playwright/` and it is picked
   up automatically. The saved session in `storageState.json` is loaded for every
   test, so all tests start already authenticated.
-- **Server tests:** `tests/server/` exists and is used, but nothing runs it yet —
-  see [#247](https://github.com/Migz93/hubarr/issues/247). Add the test alongside
-  the existing files and note in the PR that it has not been executed.
+- **Server tests:** create a `*.test.ts` file in `tests/server/`. It is picked
+  up automatically by `npm test`; use the existing test database and helper
+  modules to keep tests isolated from external services.
 
 When a test is agreed and written, add a row for it in the relevant table above.
 
