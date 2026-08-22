@@ -155,17 +155,21 @@ function getChannelConfig(buildChannel: string) {
 
 function VersionFooter({ onMobileClose }: { onMobileClose: () => void }) {
   const [info, setInfo] = useState<AboutInfo | null>(null);
+  const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
 
   useEffect(() => {
     apiGet<AboutInfo>("/api/settings/about")
-      .then((data) => setInfo(data))
-      .catch(() => null);
+      .then((data) => {
+        setInfo(data);
+        setStatus("loaded");
+      })
+      .catch(() => setStatus("error"));
   }, []);
 
   // Don't render a channel label until the API has responded — any guess
   // before that point could misrepresent the build (e.g. showing "Stable"
   // for a develop image during the load window).
-  if (!info) {
+  if (status === "loading") {
     return (
       <div className="px-3 pb-3">
         <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg">
@@ -179,6 +183,8 @@ function VersionFooter({ onMobileClose }: { onMobileClose: () => void }) {
     );
   }
 
+  if (status === "error" || !info) return null;
+
   const { label, Icon } = getChannelConfig(info.buildChannel);
 
   // Show the commit SHA for develop/custom builds, version number for stable
@@ -186,7 +192,7 @@ function VersionFooter({ onMobileClose }: { onMobileClose: () => void }) {
     ? `v${info.version}`
     : info.commitSha === "local"
       ? "local"
-      : info.commitSha;
+      : info.commitSha.slice(0, 7);
 
   return (
     <div className="px-3 pb-3">
