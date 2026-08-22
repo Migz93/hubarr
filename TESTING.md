@@ -5,14 +5,14 @@
 Hubarr has two test layers. [Playwright](https://playwright.dev/) end-to-end
 tests run against a **live, fully set-up Hubarr instance** — no mocking, no test
 database — so you need a running app with a real Plex connection before they are
-meaningful. Server tests run against a throwaway SQLite database, with external
-services replaced by fakes where needed.
+meaningful. Server tests that need persistence use a throwaway SQLite database,
+with external services replaced by fakes where needed.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `npm test` | Runs all server tests with a throwaway SQLite database |
+| `npm test` | Runs all server tests; persistence-dependent tests use a throwaway SQLite database |
 | `npm run test:e2e` | Runs all Playwright tests (auth check + full suite) |
 | `npm run test:e2e:auth` | Runs the auth setup step only |
 | `npm run check` | Runs TypeScript checks for the client, shared types, and server |
@@ -27,10 +27,10 @@ Run all server tests with:
 npm test
 ```
 
-The test files use Node's built-in test runner through `tsx`. Each test creates
-an isolated SQLite database in a temporary directory, which is removed after
-the test completes. They do not require a running Hubarr instance, Plex, or
-Seerr, and are safe to run locally and in CI.
+The test files use Node's built-in test runner through `tsx`. Tests that need
+persistence create an isolated SQLite database in a temporary directory, which
+is removed after the test completes. They do not require a running Hubarr
+instance, Plex, or Seerr, and are safe to run locally and in CI.
 
 ## Playwright End-To-End Tests
 
