@@ -23,7 +23,12 @@ function inertBackground(overlay: HTMLElement) {
   // sibling branch from the dialog to <body> unavailable to assistive technology.
   while (parent) {
     for (const sibling of parent.children) {
-      if (!(sibling instanceof HTMLElement) || sibling === child || sibling.inert) continue;
+      if (
+        !(sibling instanceof HTMLElement) ||
+        sibling === child ||
+        sibling.inert ||
+        sibling.hasAttribute("data-overlay-backdrop")
+      ) continue;
       changedElements.set(sibling, false);
       sibling.inert = true;
     }
@@ -46,7 +51,10 @@ export function useAccessibleOverlay(
   onClose: () => void
 ) {
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!isOpen) return;

@@ -34,6 +34,7 @@ export default function Layout({ user, onLogout }: LayoutProps) {
       {/* Mobile backdrop */}
       {mobileOpen && (
         <div
+          data-overlay-backdrop
           className="fixed inset-0 bg-black/50 z-30 md:hidden"
           onClick={() => setMobileOpen(false)}
         />

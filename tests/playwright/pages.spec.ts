@@ -65,7 +65,7 @@ test.describe("Page smoke tests", () => {
     await expect(page).toHaveURL(/\/dashboard/);
   });
 
-  test("Mobile navigation closes on Escape and returns focus to its trigger", async ({ page }) => {
+  test("Mobile navigation closes from its backdrop or Escape and returns focus to its trigger", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 800 });
     await page.goto("/dashboard");
 
@@ -80,6 +80,12 @@ test.describe("Page smoke tests", () => {
     await expect(sidebar).not.toHaveAttribute("inert", "");
     await expect(dialog.getByRole("link", { name: "Dashboard" })).toBeFocused();
 
+    await page.locator("[data-overlay-backdrop]").click({ position: { x: 350, y: 700 } });
+    await expect(dialog).toHaveCount(0);
+    await expect(menuButton).toBeFocused();
+
+    await menuButton.click();
+    await expect(dialog).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
     await expect(menuButton).toBeFocused();
