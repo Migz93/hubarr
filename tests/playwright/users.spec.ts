@@ -64,6 +64,25 @@ test.describe("Users page structure", () => {
     await expect(modal.getByRole("button", { name: "Cancel" })).toBeVisible();
   });
 
+  test("Edit modal traps focus and restores the trigger after Escape", async ({ page }) => {
+    const editButton = page.getByTitle("Edit user").first();
+    await editButton.focus();
+    await editButton.click();
+
+    const dialog = page.getByRole("dialog");
+    const closeButton = dialog.getByRole("button", { name: "Close" });
+    await expect(closeButton).toBeFocused();
+    expect(await editButton.evaluate((element) => element.closest("[inert]") !== null)).toBe(true);
+
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
+    await expect(closeButton).toBeFocused();
+
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(editButton).toBeFocused();
+  });
+
   test("Watchlist tab is only available when editing the self user", async ({ page, request }) => {
     const users = await request.get("/api/users").then((response) => response.json() as Promise<UserRecord[]>);
     const selfUser = users.find((user) => user.isSelf);
