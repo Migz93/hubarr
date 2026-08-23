@@ -113,6 +113,7 @@ instance.
 | `tests/server/identifiers.test.ts` | Media identifier aliases seed and resolve canonical, discover, and GUID lookups |
 | `tests/server/isolation-filter-skip.test.ts` | Isolation filters skip, rerun, reset state, and record failures correctly |
 | `tests/server/maintenance.test.ts` | Maintenance removes orphaned poster cache rows while preserving active cache entries |
+| `tests/server/logs-endpoint.test.ts` | Log-viewer fallback honors both the configured log level and the requested UI filter |
 | `tests/server/plex-reorder.test.ts` | Plex collection reordering progressively retries until the requested order converges |
 | `tests/server/seerr-work.test.ts` | Seerr work only counts linked users with automatic requests enabled |
 | `tests/server/watchlist-grouping.test.ts` | Watchlist grouping merges compatible GUID chains once and orders paginated results deterministically |
