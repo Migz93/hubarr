@@ -71,18 +71,22 @@ test.describe("Page smoke tests", () => {
 
     const menuButton = page.getByRole("button", { name: "Toggle navigation" });
     const sidebar = page.locator("aside");
+    const pageContent = page.locator("[data-overlay-page-content]");
     await expect(sidebar).toHaveAttribute("inert", "");
+    await expect(pageContent).not.toHaveAttribute("inert", "");
     await menuButton.focus();
     await menuButton.click();
 
     const dialog = page.getByRole("dialog", { name: "Navigation" });
     await expect(dialog).toBeVisible();
     await expect(sidebar).not.toHaveAttribute("inert", "");
+    await expect(pageContent).toHaveAttribute("inert", "");
     await expect(dialog.getByRole("link", { name: "Dashboard" })).toBeFocused();
 
     await page.locator("[data-overlay-backdrop]").click({ position: { x: 350, y: 700 } });
     await expect(dialog).toHaveCount(0);
     await expect(menuButton).toBeFocused();
+    await expect(pageContent).not.toHaveAttribute("inert", "");
 
     await menuButton.click();
     await expect(dialog).toBeVisible();

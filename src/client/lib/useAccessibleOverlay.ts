@@ -6,12 +6,12 @@ const FOCUSABLE_SELECTOR = [
   "input:not([disabled])",
   "select:not([disabled])",
   "textarea:not([disabled])",
-  "[tabindex]:not([tabindex='-1'])"
+  "[tabindex]"
 ].join(", ");
 
 function getFocusableElements(container: HTMLElement) {
   return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
-    .filter((element) => !element.hasAttribute("hidden") && element.getClientRects().length > 0);
+    .filter((element) => element.tabIndex >= 0 && !element.hasAttribute("hidden") && element.getClientRects().length > 0);
 }
 
 function inertBackground(overlay: HTMLElement) {

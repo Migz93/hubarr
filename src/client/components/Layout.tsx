@@ -49,7 +49,7 @@ export default function Layout({ user, onLogout }: LayoutProps) {
         sidebarRef={sidebarRef}
       />
 
-      <div className="md:ml-64 min-h-screen">
+      <div data-overlay-page-content className="md:ml-64 min-h-screen">
         {/* Mobile top bar */}
         <div className="md:hidden flex items-center gap-3 px-4 py-3 bg-background-container-low border-b border-outline-variant/20 sticky top-0 z-20">
           <button
