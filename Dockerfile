@@ -36,6 +36,10 @@ ENV COMMIT_SHA=$COMMIT_SHA
 RUN apt-get update \
   && apt-get install -y --no-install-recommends fontconfig fonts-dejavu-core gosu python3 \
   && rm -rf /var/lib/apt/lists/*
+# The production image starts Node directly. Remove build-time package managers
+# to reduce the runtime attack surface; the Yarn directory includes its version.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-v* \
+  && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg
 COPY --from=build /app/package.json ./package.json
 COPY --from=production-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
