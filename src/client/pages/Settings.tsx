@@ -420,11 +420,11 @@ function LogsTab() {
 
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
-    if (autoRefresh) {
+    if (autoRefresh && activeLog === null) {
       intervalRef.current = setInterval(() => { void load(); }, 5000);
     }
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [autoRefresh, load]);
+  }, [activeLog, autoRefresh, load]);
 
   // Reset page when filter/search/pageSize changes
   useEffect(() => { setPage(1); }, [filter, pageSize]);
@@ -568,8 +568,8 @@ function LogsTab() {
             </div>
           ) : (
             <div className="divide-y divide-outline-variant/10">
-              {results.map((entry, i) => (
-                <div key={i} className="flex items-start gap-3 px-4 py-2 text-xs font-mono hover:bg-background-container/50 group">
+              {results.map((entry) => (
+                <div key={`${entry.timestamp}:${entry.level}:${entry.message}:${JSON.stringify(entry.meta)}`} className="flex items-start gap-3 px-4 py-2 text-xs font-mono hover:bg-background-container/50 group">
                   <span className="text-on-surface-variant/60 flex-shrink-0 w-[7.5rem] truncate pt-0.5">
                     {new Date(entry.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                   </span>

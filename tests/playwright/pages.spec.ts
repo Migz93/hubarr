@@ -83,6 +83,17 @@ test.describe("Page smoke tests", () => {
     await expect(pageContent).toHaveAttribute("inert", "");
     await expect(dialog.getByRole("link", { name: "Dashboard" })).toBeFocused();
 
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await expect(dialog).toHaveCount(0);
+    await expect(pageContent).not.toHaveAttribute("inert", "");
+
+    await page.setViewportSize({ width: 375, height: 800 });
+    await expect(sidebar).toHaveAttribute("inert", "");
+    await expect(pageContent).not.toHaveAttribute("inert", "");
+
+    await menuButton.click();
+    await expect(dialog).toBeVisible();
+
     await page.locator("[data-overlay-backdrop]").click({ position: { x: 350, y: 700 } });
     await expect(dialog).toHaveCount(0);
     await expect(menuButton).toBeFocused();

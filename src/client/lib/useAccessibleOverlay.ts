@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 
 const FOCUSABLE_SELECTOR = [
   "a[href]",
@@ -51,13 +51,19 @@ export function useAccessibleOverlay(
   onClose: () => void
 ) {
   const onCloseRef = useRef(onClose);
+  const restoreFocusTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isOpen) return;
+
+    if (restoreFocusTimerRef.current !== null) {
+      window.clearTimeout(restoreFocusTimerRef.current);
+      restoreFocusTimerRef.current = null;
+    }
 
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const overlay = overlayRef.current;
@@ -69,7 +75,7 @@ export function useAccessibleOverlay(
       (overlay.querySelector<HTMLElement>("[data-overlay-initial-focus]") ?? focusable[0] ?? overlay).focus();
     };
 
-    const timer = window.setTimeout(focusInitialElement, 0);
+    focusInitialElement();
     const handleKeydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -100,10 +106,16 @@ export function useAccessibleOverlay(
 
     document.addEventListener("keydown", handleKeydown);
     return () => {
-      window.clearTimeout(timer);
       document.removeEventListener("keydown", handleKeydown);
       restoreBackground();
-      if (previouslyFocused?.isConnected) window.setTimeout(() => previouslyFocused.focus(), 0);
+      if (previouslyFocused?.isConnected) {
+        restoreFocusTimerRef.current = window.setTimeout(() => {
+          if (previouslyFocused.isConnected && previouslyFocused.getClientRects().length > 0) {
+            previouslyFocused.focus();
+          }
+          restoreFocusTimerRef.current = null;
+        }, 0);
+      }
     };
   }, [isOpen, overlayRef]);
 }

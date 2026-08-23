@@ -29,6 +29,10 @@ export default function Layout({ user, onLogout }: LayoutProps) {
   const sidebarRef = useRef<HTMLElement>(null);
   useAccessibleOverlay(sidebarRef, mobileOpen && isMobileViewport, () => setMobileOpen(false));
 
+  useEffect(() => {
+    if (!isMobileViewport) setMobileOpen(false);
+  }, [isMobileViewport]);
+
   return (
     <div className="min-h-screen bg-background">
       {/* Mobile backdrop */}
