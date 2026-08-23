@@ -38,8 +38,8 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 # The production image starts Node directly; package managers are build-time
 # tooling and their bundled dependencies do not need to be shipped at runtime.
-RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
-  && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-v1.22.22 \
+  && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg
 COPY --from=build /app/package.json ./package.json
 COPY --from=production-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
