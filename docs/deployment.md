@@ -1,4 +1,4 @@
-<!-- shared: content — keep in sync across Migz93 self-hosted apps -->
+<!-- shared: structure — keep headings aligned across Migz93 self-hosted apps -->
 
 # Deployment
 
