@@ -102,7 +102,7 @@ function summarizeSettingsPatch(patch: Record<string, unknown>) {
 }
 
 export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
-  const logger = new Logger(config.dataDir);
+  const logger = new Logger(config.dataDir, config.logLevel);
   const db = new HubarrDatabase(config, logger);
   const sessionSecret = db.getSessionSecret();
   const imageCache = new ImageCacheService(config.dataDir, db, logger);

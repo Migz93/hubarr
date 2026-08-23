@@ -106,6 +106,7 @@ instance.
 |---|---|
 | `tests/server/collection-artwork.test.ts` | Generated collection posters are Plex poster-sized JPEGs and vary by media type |
 | `tests/server/collection-order-validation.test.ts` | Collection ordering is republished when live order drifts, and validation failures retain retry state and history |
+| `tests/server/config.test.ts` | Runtime log-level configuration accepts supported levels and safely falls back for invalid values |
 | `tests/server/dashboard.test.ts` | Dashboard GUID merge chains collapse duplicates without merging movies and shows |
 | `tests/server/disabled-user-cleanup.test.ts` | Disabled-user collection cleanup handles Plex, database-only fallback, bulk scans, and deletion failures safely |
 | `tests/server/history-progress.test.ts` | Running history summaries refresh and activity filtering separates changes from no-change runs |

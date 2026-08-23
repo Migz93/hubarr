@@ -3,6 +3,7 @@ import fs from "node:fs";
 import * as winston from "winston";
 import "winston-daily-rotate-file";
 import type { LogEntry } from "../shared/types.js";
+import type { LogLevel } from "./config.js";
 
 const LOG_RING_SIZE = 500;
 
@@ -15,7 +16,7 @@ export class Logger {
   private readonly ring: LogEntry[] = [];
   private readonly winstonLogger: winston.Logger;
 
-  constructor(dataDir: string) {
+  constructor(dataDir: string, logLevel: LogLevel) {
     const logDir = path.join(dataDir, "logs");
 
     const transports: winston.transport[] = [
@@ -65,7 +66,7 @@ export class Logger {
     }
 
     this.winstonLogger = winston.createLogger({
-      level: process.env["LOG_LEVEL"] || "info",
+      level: logLevel,
       transports
     });
   }
