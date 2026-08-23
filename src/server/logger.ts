@@ -65,7 +65,7 @@ export class Logger {
     }
 
     this.winstonLogger = winston.createLogger({
-      level: "debug",
+      level: process.env["LOG_LEVEL"] || "info",
       transports
     });
   }
