@@ -19,7 +19,7 @@ import type {
   VisibilityConfig
 } from "../shared/types.js";
 import { createSessionId } from "./auth.js";
-import type { RuntimeConfig } from "./config.js";
+import { LOG_LEVELS, type LogLevel, type RuntimeConfig } from "./config.js";
 import { HubarrDatabase } from "./db/index.js";
 import { PlexIntegration } from "./integrations/plex.js";
 import { JobScheduler } from "./job-scheduler.js";
@@ -102,7 +102,7 @@ function summarizeSettingsPatch(patch: Record<string, unknown>) {
 }
 
 export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
-  const logger = new Logger(config.dataDir);
+  const logger = new Logger(config.dataDir, config.logLevel);
   const db = new HubarrDatabase(config, logger);
   const sessionSecret = db.getSessionSecret();
   const imageCache = new ImageCacheService(config.dataDir, db, logger);
@@ -1078,12 +1078,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     const pageSize = Math.min(100, Math.max(1, Number.isFinite(rawPageSize) ? rawPageSize : 25));
 
     // Cascade: debug=all, info=info+warn+error, warn=warn+error, error=error only
-    const LEVEL_ORDER = ["debug", "info", "warn", "error"] as const;
-    type LogLevel = (typeof LEVEL_ORDER)[number];
-    const isLogLevel = (v: unknown): v is LogLevel => typeof v === "string" && (LEVEL_ORDER as readonly string[]).includes(v);
+    const isLogLevel = (v: unknown): v is (typeof LOG_LEVELS)[number] =>
+      typeof v === "string" && (LOG_LEVELS as readonly string[]).includes(v);
     const filterParam: LogLevel = isLogLevel(req.query["filter"]) ? req.query["filter"] : "debug";
-    const filterIndex = LEVEL_ORDER.indexOf(filterParam);
-    const allowed = new Set<string>(LEVEL_ORDER.slice(filterIndex));
+    const filterIndex = LOG_LEVELS.indexOf(filterParam);
+    const configuredLevelIndex = LOG_LEVELS.indexOf(config.logLevel);
+    const allowed = new Set<string>(LOG_LEVELS.slice(Math.max(filterIndex, configuredLevelIndex)));
 
     const rawSearch = req.query["search"];
     const search: string = typeof rawSearch === "string" ? rawSearch.slice(0, 200) : "";
@@ -1126,7 +1126,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         }
       }
     } catch {
-      // File not available — fall back to ring buffer
+      // Keep the in-memory fallback consistent with the configured Winston level.
       entries = logger.getRecentLogs(500).filter((e) => allowed.has(e.level));
       if (search) {
         const needle = search.toLowerCase();
