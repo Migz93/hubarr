@@ -69,7 +69,7 @@ distributions) blocks creating such a link without access to the target.
 |---|---|---|
 | `PORT` | `9301` | HTTP listen port |
 | `DATA_DIR` | `/config` | Persistent config/database/log directory |
-| `LOG_LEVEL` | `info` | Server log level: `debug`, `info`, `warn`, or `error` |
+| `LOG_LEVEL` | `info` | Server log level |
 | `TZ` | `UTC` | Container timezone |
 | `BUILD_CHANNEL` | `custom` | Build metadata shown by the app |
 | `COMMIT_SHA` | `local` | Build metadata shown by the app |
