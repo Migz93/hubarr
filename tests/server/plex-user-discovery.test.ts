@@ -63,11 +63,16 @@ test("discoverUsers adds shared Plex users after resolving their Community UUID"
     if (url.startsWith("https://plex.tv/api/users")) {
       return xmlResponse(`
         <MediaContainer>
-          <User id="1" username="owner" />
-          <User id="2" username="friend" />
-          <User id="3" username="shared-user" />
+          <User id="1" username="owner"><Server machineIdentifier="machine-id" /></User>
+          <User id="2" username="friend"><Server machineIdentifier="machine-id" /></User>
+          <User id="3" username="shared-user"><Server machineIdentifier="machine-id" /></User>
+          <User id="4" username="other-server-user"><Server machineIdentifier="other-machine" /></User>
         </MediaContainer>
       `);
+    }
+
+    if (url === "http://plex.test/identity") {
+      return jsonResponse({ MediaContainer: { machineIdentifier: "machine-id" } });
     }
 
     if (url === "https://plex.tv/users/account.json") {
@@ -116,6 +121,10 @@ test("discoverUsers keeps Community friends when the wider Plex account list is 
 
     if (url.startsWith("https://plex.tv/api/users")) {
       return xmlResponse("Unavailable", 503);
+    }
+
+    if (url === "http://plex.test/identity") {
+      return jsonResponse({ MediaContainer: { machineIdentifier: "machine-id" } });
     }
 
     if (url === "https://plex.tv/users/account.json") {

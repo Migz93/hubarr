@@ -984,6 +984,7 @@ export class PlexIntegration {
   }
 
   private async fetchSharedServerUsernames(): Promise<string[]> {
+    const machineIdentifier = await this.getMachineIdentifier();
     const url = new URL(PLEX_TV_USERS_URL);
     url.searchParams.set("X-Plex-Token", this.settings.token);
 
@@ -998,12 +999,16 @@ export class PlexIntegration {
     const xml = await response.text();
     const parsed = await parseStringPromise(xml) as {
       MediaContainer?: {
-        User?: Array<{ $: { username?: string } }>;
+        User?: Array<{
+          $: { username?: string };
+          Server?: Array<{ $: { machineIdentifier: string } }>;
+        }>;
       };
     };
 
     return [...new Set(
       (parsed.MediaContainer?.User ?? [])
+        .filter((user) => (user.Server ?? []).some((server) => server.$.machineIdentifier === machineIdentifier))
         .map((user) => user.$.username?.trim())
         .filter((username): username is string => Boolean(username))
     )];
