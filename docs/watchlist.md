@@ -9,7 +9,9 @@ resolved and what happens when a date cannot be determined.
 ## Overview
 
 Hubarr maintains watchlists through three complementary mechanisms that run at
-different frequencies and serve different purposes:
+different frequencies and serve different purposes. It discovers Plex friends
+and shared-server users, but can only read a user's watchlist when that user's
+Plex privacy setting allows the Hubarr admin account to view it.
 
 | Mechanism | Frequency | Purpose |
 |---|---|---|
@@ -30,6 +32,14 @@ Hubarr distinguishes between:
 - `tracked users` — publishing users plus disabled users when `Track All Users`
   is enabled
 
+### Watchlist privacy
+
+Plex defaults watchlists to **Friends Only**. Shared-server users who are not
+Plex friends need to change their watchlist privacy to **Anyone signed in to
+Plex** (or a less restrictive option) before Hubarr can sync it. Plex does not
+return a distinct privacy error when a watchlist is inaccessible, so it may look
+empty to Hubarr.
+
 ---
 
 ## GraphQL Full Sync
@@ -42,9 +52,10 @@ optionally on startup if `fullSyncOnStartup` is enabled.
 
 ### What it does
 
-For each tracked user (self and friends), Hubarr queries the Plex Community
-GraphQL API for their full watchlist. The query paginates in batches of 100
-until all items are retrieved:
+For each tracked user, Hubarr queries the Plex Community GraphQL API for their
+full watchlist. This includes the admin, friends, and shared-server users whose
+privacy settings allow the Hubarr admin account to view their watchlist. The
+query paginates in batches of 100 until all items are retrieved:
 
 ```graphql
 query GetFriendWatchlist($user: UserInput!, $first: PaginationInt!, $after: String) {
@@ -67,8 +78,9 @@ matched against the configured Plex server libraries to find the local
 ### Why GraphQL
 
 The GraphQL API is the only endpoint that returns a complete, paginated watchlist
-for both the admin and their friends using a single token. It is used as the
-definitive record of what is on a watchlist at any given moment.
+for the admin and any tracked user whose watchlist is visible to the Hubarr admin
+account. It is used as the definitive record of what is on a watchlist at any
+given moment.
 
 **Limitation:** The GraphQL watchlist response contains no date fields. It cannot
 tell Hubarr when an item was added to the watchlist. The `addedAt` date is
@@ -137,6 +149,11 @@ RSS feeds update faster than the GraphQL sync interval. A new item added to a
 watchlist typically appears in the RSS feed within seconds. This gives Hubarr
 near-real-time awareness of new additions without running a full GraphQL sync
 every few seconds.
+
+The friends feed is a Plex friends feature. Shared-server users who are not
+friends may not appear in it, even when their privacy setting allows their
+watchlist to be read. Their scheduled GraphQL reconciliation remains the
+authoritative sync path.
 
 ### Date attribution
 
