@@ -52,9 +52,10 @@ optionally on startup if `fullSyncOnStartup` is enabled.
 
 ### What it does
 
-For each tracked user (self and friends), Hubarr queries the Plex Community
-GraphQL API for their full watchlist. The query paginates in batches of 100
-until all items are retrieved:
+For each tracked user, Hubarr queries the Plex Community GraphQL API for their
+full watchlist. This includes the admin, friends, and shared-server users whose
+privacy settings allow the Hubarr admin account to view their watchlist. The
+query paginates in batches of 100 until all items are retrieved:
 
 ```graphql
 query GetFriendWatchlist($user: UserInput!, $first: PaginationInt!, $after: String) {
@@ -77,8 +78,9 @@ matched against the configured Plex server libraries to find the local
 ### Why GraphQL
 
 The GraphQL API is the only endpoint that returns a complete, paginated watchlist
-for both the admin and their friends using a single token. It is used as the
-definitive record of what is on a watchlist at any given moment.
+for the admin and any tracked user whose watchlist is visible to the Hubarr admin
+account. It is used as the definitive record of what is on a watchlist at any
+given moment.
 
 **Limitation:** The GraphQL watchlist response contains no date fields. It cannot
 tell Hubarr when an item was added to the watchlist. The `addedAt` date is

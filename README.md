@@ -17,7 +17,7 @@ It keeps your own Plex watchlist and selected Plex users' watchlists in sync wit
 - Matches watchlist items against content already available in Plex
 - Keeps per-user movie and TV collections synced automatically
 - Publishes those collections into Plex as hub rows
-- Applies per-user label exclusions so each friend only sees their own watchlist
+- Applies per-user label exclusions so each selected user only sees their own watchlist
 
 ## Preview
 
