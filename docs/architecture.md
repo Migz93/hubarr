@@ -6,9 +6,11 @@
 
 Hubarr is a single-purpose Plex companion app.
 
-It tracks the owner's Plex watchlist and selected friends' watchlists, stores
-that watchlist state locally, matches items against Plex libraries, and keeps
-per-user Plex collections and hub rows up to date.
+It tracks the owner's Plex watchlist and selected Plex users' watchlists,
+stores that watchlist state locally, matches items against Plex libraries, and
+keeps per-user Plex collections and hub rows up to date. Users can be Plex
+friends or people with access to the selected Plex server, subject to each
+person's watchlist privacy setting.
 
 When Seerr integration is enabled, Hubarr can also submit missing watchlist items as Seerr requests on behalf of the matching user.
 

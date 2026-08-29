@@ -263,12 +263,12 @@ export class HubarrServices {
 
   async discoverUsers() {
     const plex = this.getPlexIntegration();
-    const [friendsResult, managedResult] = await Promise.allSettled([
+    const [usersResult, managedResult] = await Promise.allSettled([
       plex.discoverUsers(),
       plex.fetchManagedUsers()
     ]);
 
-    if (friendsResult.status === "rejected") throw friendsResult.reason as Error;
+    if (usersResult.status === "rejected") throw usersResult.reason as Error;
 
     if (managedResult.status === "fulfilled") {
       this.db.upsertManagedUsers(managedResult.value);
@@ -282,14 +282,14 @@ export class HubarrServices {
       this.logger.warn("Managed user fetch failed during discover — cache not updated", { message });
     }
 
-    const users = this.db.upsertUsers(friendsResult.value);
-    for (const user of friendsResult.value) {
+    const users = this.db.upsertUsers(usersResult.value);
+    for (const user of usersResult.value) {
       if (user.avatarUrl) {
         await this.imageCache.ensureAvatarCached(user.plexUserId, user.avatarUrl);
       }
     }
     this.logger.info("Plex users discovered", {
-      friends: users.length,
+      users: users.length,
       managedUsers: managedResult.status === "fulfilled" ? managedResult.value.length : 0
     });
     return users;

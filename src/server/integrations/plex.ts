@@ -183,6 +183,13 @@ interface PlexFriendNode {
   };
 }
 
+interface PlexCommunityUser {
+  id: string;
+  username: string;
+  displayName: string;
+  avatar: string | null;
+}
+
 interface PlexWatchlistNode {
   id: string;
   title: string;
@@ -976,6 +983,49 @@ export class PlexIntegration {
     return items;
   }
 
+  private async fetchSharedServerUsernames(): Promise<string[]> {
+    const url = new URL(PLEX_TV_USERS_URL);
+    url.searchParams.set("X-Plex-Token", this.settings.token);
+
+    const response = await fetch(url.toString(), {
+      headers: { Accept: "application/xml", "User-Agent": PLEX_USER_AGENT }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch Plex server users: ${response.status} ${response.statusText}`);
+    }
+
+    const xml = await response.text();
+    const parsed = await parseStringPromise(xml) as {
+      MediaContainer?: {
+        User?: Array<{ $: { username?: string } }>;
+      };
+    };
+
+    return [...new Set(
+      (parsed.MediaContainer?.User ?? [])
+        .map((user) => user.$.username?.trim())
+        .filter((username): username is string => Boolean(username))
+    )];
+  }
+
+  private async resolveCommunityUserByUsername(username: string): Promise<PlexCommunityUser | null> {
+    const data = await this.requestCommunity<{ userV2: PlexCommunityUser | null }>(`
+      query GetUserByUsername($user: UserInput!) {
+        userV2(user: $user) {
+          ... on User {
+            id
+            username
+            displayName
+            avatar
+          }
+        }
+      }
+    `, { user: { username } });
+
+    return data.userV2;
+  }
+
   async discoverUsers() {
     const data = await this.requestCommunity<{ allFriendsV2: PlexFriendNode[] }>(`
       query GetAllFriends {
@@ -990,12 +1040,61 @@ export class PlexIntegration {
       }
     `);
 
-    return data.allFriendsV2.map((friend) => ({
-      plexUserId: friend.user.id,
-      username: friend.user.username,
-      displayName: friend.user.displayName || friend.user.username,
-      avatarUrl: friend.user.avatar
-    }));
+    const discoveredUsers = new Map<string, {
+      plexUserId: string;
+      username: string;
+      displayName: string;
+      avatarUrl: string | null;
+    }>();
+
+    for (const friend of data.allFriendsV2) {
+      const username = friend.user.username.trim();
+      if (!username) continue;
+      discoveredUsers.set(username.toLowerCase(), {
+        plexUserId: friend.user.id,
+        username,
+        displayName: friend.user.displayName || username,
+        avatarUrl: friend.user.avatar
+      });
+    }
+
+    try {
+      const [sharedUsernames, self] = await Promise.all([
+        this.fetchSharedServerUsernames(),
+        this.fetchSelfAccountData()
+      ]);
+      const selfUsername = self.username.toLowerCase();
+
+      for (const username of sharedUsernames) {
+        const key = username.toLowerCase();
+        if (key === selfUsername || discoveredUsers.has(key)) continue;
+
+        try {
+          const user = await this.resolveCommunityUserByUsername(username);
+          if (!user) {
+            this.logger.debug("Shared Plex user is not available in the Community API", { username });
+            continue;
+          }
+          discoveredUsers.set(user.username.toLowerCase(), {
+            plexUserId: user.id,
+            username: user.username,
+            displayName: user.displayName || user.username,
+            avatarUrl: user.avatar
+          });
+        } catch (error) {
+          this.logger.warn("Could not resolve shared Plex user in the Community API", {
+            username,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    } catch (error) {
+      this.logger.warn("Could not discover shared Plex server users; using friends only", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    return [...discoveredUsers.values()];
   }
 
   private async fetchGraphqlWatchlist(userId: string): Promise<WatchlistItem[]> {

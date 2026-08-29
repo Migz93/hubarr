@@ -278,7 +278,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       });
     });
     services.discoverUsers().catch((err) => {
-      logger.warn("Friend discovery failed after Plex settings save", {
+      logger.warn("Plex user discovery failed after Plex settings save", {
         error: err instanceof Error ? err.message : String(err)
       });
     });

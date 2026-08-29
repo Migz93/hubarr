@@ -9,11 +9,11 @@
 
 Hubarr is a self-hosted Plex companion that turns watchlists into managed Plex collections and hub rows.
 
-It keeps your own Plex watchlist and selected friends' watchlists in sync with Plex, matches items against what is already in your libraries, and keeps per-user collections updated automatically through a simple web UI.
+It keeps your own Plex watchlist and selected Plex users' watchlists in sync with Plex, matches items against what is already in your libraries, and keeps per-user collections updated automatically through a simple web UI.
 
 ## What Hubarr Does
 
-- Tracks your and/or your friends watchlists
+- Tracks your and/or selected Plex users' watchlists
 - Matches watchlist items against content already available in Plex
 - Keeps per-user movie and TV collections synced automatically
 - Publishes those collections into Plex as hub rows
@@ -48,7 +48,7 @@ As with movies, admins see every managed collection for the library and users on
 ## Key Features
 
 - Plex-only sign-in with no local passwords
-- Tracks your and/or your friends watchlists
+- Tracks your and/or selected Plex users' watchlists
 - Fast watchlist updates using Plex RSS, with a scheduled GraphQL sync as a safety net
 - Separate per-user movie and TV collections with shared naming
 - Configurable publishing to Library Recommended, Home, and Friends Home
@@ -123,11 +123,23 @@ Hubarr is configured through its web UI after first run. The main things you may
 
 1. Log in with Plex
 2. Select the Plex server you want Hubarr to manage, then set the target movie and TV libraries
-3. Discover friends from the Users page
+3. Discover Plex users from the Users page
 4. Enable the users you want to track
 5. Run a sync, or wait for the scheduled jobs to start working
 
 ## Important Limitations
+
+### Watchlist Privacy
+
+Hubarr can discover Plex friends and people with access to your Plex server. It
+can only sync a person's watchlist when their Plex watchlist privacy setting
+allows your account to view it.
+
+Plex defaults watchlists to **Friends Only**. A shared-server user who is not
+your Plex friend must make their watchlist visible to **Anyone signed in to
+Plex** (or a less restrictive option) before Hubarr can read it. Plex does not
+return a distinct privacy error for an unavailable watchlist, so Hubarr may show
+it as empty.
 
 ### Plex Home Managed Users
 

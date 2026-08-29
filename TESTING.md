@@ -115,6 +115,7 @@ instance.
 | `tests/server/maintenance.test.ts` | Maintenance removes orphaned poster cache rows while preserving active cache entries |
 | `tests/server/logs-endpoint.test.ts` | Log-viewer fallback honors both the configured log level and the requested UI filter |
 | `tests/server/plex-reorder.test.ts` | Plex collection reordering progressively retries until the requested order converges |
+| `tests/server/plex-user-discovery.test.ts` | Plex user discovery includes shared users resolved through the Community API and falls back to friends when the broader account list is unavailable |
 | `tests/server/seerr-work.test.ts` | Seerr work only counts linked users with automatic requests enabled |
 | `tests/server/watchlist-grouping.test.ts` | Watchlist grouping merges compatible GUID chains once and orders paginated results deterministically |
 
