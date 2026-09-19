@@ -25,7 +25,8 @@ specific moment, so read it when you reach that moment rather than up front.
 Use `gh` for all GitHub operations:
 
 - `gh pr create --draft --base develop --title "..." --body "..."`
-- `gh pr merge --squash --delete-branch`
+- Ordinary PRs into `develop`: `gh pr merge --squash --delete-branch`
+- Release and ancestry-reconciliation PRs: `gh pr merge --merge`
 - `gh release create vX.Y.Z --generate-notes`
 - `gh issue create --title "..." --body "..."`
 
@@ -84,8 +85,13 @@ rather than implying the container was rebuilt and verified.
 - PR titles are semantic and become changelog entries: `feat: add poster
   caching`, `fix: correct sync ordering`, `chore: bump to 1.2.0`
 - One logical change per PR. Split unrelated work.
-- Squash-merge into `develop` so each PR is one commit in the history.
-- Delete the branch after merging.
+- Squash-merge feature, fix, chore, docs, CI, and version-bump PRs into
+  `develop` so each PR is one commit in the history.
+- Exception: use a merge commit for an ancestry-reconciliation PR and for every
+  `develop` → `main` release PR: `gh pr merge --merge`. Never
+  squash a release PR. The merge commit preserves `develop` ancestry on `main`,
+  avoiding overlapping, non-identical history and future release conflicts.
+- Delete the branch after merging an ordinary work PR.
 - PRs are opened as drafts (`gh pr create --draft`). Mark ready for review only
   once the changeset is actually finished — no more fix commits expected — via
   `gh pr ready`. This includes staying in draft through any post-open fix
@@ -107,8 +113,8 @@ When the user says it's time to release:
 3. Update the version files listed in the Project Facts table in `AGENTS.md`
 4. Open a PR from that branch into `develop` and merge it
 5. Open a PR from `develop` into `main`, take it through the review gate, and
-   merge it
-6. Push the tag `vX.Y.Z` from `main`
+   merge it with a merge commit: `gh pr merge --merge`
+6. Create and push the tag `vX.Y.Z` from the resulting merge commit on `main`
 7. Review the release-drafter draft on GitHub and publish it
 
 Do not invent the version — always confirm with the user if ambiguous.
