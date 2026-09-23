@@ -42,7 +42,7 @@ test.describe("Live refresh", () => {
     const panelTextBefore = await recentSyncsPanel.innerText();
 
     const triggerResponse = await request.post("/api/settings/jobs/collection-publish/run");
-    expect(triggerResponse.ok()).toBe(true);
+    await expect(triggerResponse).toBeOK();
 
     const runningRun = await waitForNewRun(request, "publish", latestBefore?.startedAt ?? null, "running");
     const completedRun = await waitForRunCompletion(request, "publish", runningRun.startedAt);
@@ -62,7 +62,7 @@ test.describe("Live refresh", () => {
     const firstRowTextBefore = await firstRunRow.innerText();
 
     const triggerResponse = await request.post("/api/settings/jobs/collection-publish/run");
-    expect(triggerResponse.ok()).toBe(true);
+    await expect(triggerResponse).toBeOK();
 
     const runningRun = await waitForNewRun(request, "publish", latestBefore?.startedAt ?? null, "running");
     const completedRun = await waitForRunCompletion(request, "publish", runningRun.startedAt);
@@ -96,7 +96,7 @@ test.describe("Live refresh", () => {
 
 async function getLatestRun(request: APIRequestContext, kind: SyncRun["kind"]): Promise<SyncRun | null> {
   const response = await request.get(`/api/history?page=1&pageSize=10&kind=${kind}&status=all&activity=all`);
-  expect(response.ok()).toBe(true);
+  await expect(response).toBeOK();
   const body = await response.json() as { results: SyncRun[] };
   return body.results[0] ?? null;
 }
@@ -144,7 +144,7 @@ async function waitForRunCompletion(
 
 async function getJob(request: APIRequestContext, jobId: string): Promise<JobInfo | null> {
   const response = await request.get("/api/settings/jobs");
-  expect(response.ok()).toBe(true);
+  await expect(response).toBeOK();
   const jobs = await response.json() as JobInfo[];
   return jobs.find((job) => job.id === jobId) ?? null;
 }

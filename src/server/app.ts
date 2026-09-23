@@ -2,7 +2,6 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
-import { rateLimit } from "express-rate-limit";
 import helmet from "helmet";
 import type {
   CollectionSortOrder,
@@ -24,6 +23,7 @@ import { HubarrDatabase } from "./db/index.js";
 import { PlexIntegration } from "./integrations/plex.js";
 import { JobScheduler } from "./job-scheduler.js";
 import { Logger } from "./logger.js";
+import { createGlobalRateLimiter, createSignInRateLimiter } from "./rate-limit.js";
 import { ImageCacheService } from "./image-cache.js";
 import { HubarrServices } from "./services.js";
 import { APP_VERSION, BUILD_CHANNEL, BUILD_COMMIT } from "./version.js";
@@ -136,18 +136,9 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     hsts: false
   }));
   const clientDir = path.resolve(process.cwd(), "dist/client");
-  const logsRateLimiter = rateLimit({
-    windowMs: 60_000,
-    limit: 60,
-    standardHeaders: "draft-8",
-    legacyHeaders: false
-  });
-  const staticRateLimiter = rateLimit({
-    windowMs: 60_000,
-    limit: 600,
-    standardHeaders: "draft-8",
-    legacyHeaders: false
-  });
+  // Applies to every route. Built assets, cached images and the favicon are
+  // exempt from the count (see rate-limit.ts); /images still requires a session.
+  app.use(createGlobalRateLimiter(logger));
 
   app.use(express.json());
 
@@ -311,7 +302,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   // Plex OAuth auth
   // ---------------------------------------------------------------------------
 
-  app.post("/api/auth/plex", async (req, res) => {
+  app.post("/api/auth/plex", createSignInRateLimiter(logger), async (req, res) => {
     const body = req.body as { authToken?: string };
     if (!body.authToken) {
       res.status(400).json({ error: "authToken is required." });
@@ -1068,8 +1059,6 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     await handlePlexConnectionTest(req.body as PlexConfigPayload, res);
   });
 
-  app.use("/api/settings/logs", logsRateLimiter);
-
   /** Log viewer */
   app.get("/api/settings/logs", requireAuth, (req, res) => {
     const rawPage = typeof req.query["page"] === "string" ? Number(req.query["page"]) : 1;
@@ -1806,7 +1795,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   if (fs.existsSync(clientDir)) {
     app.use(express.static(clientDir));
-    app.get("/*path", staticRateLimiter, (req, res, next) => {
+    app.get("/*path", (req, res, next) => {
       if (req.path.startsWith("/api/")) {
         next();
         return;
