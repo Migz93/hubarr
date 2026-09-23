@@ -90,7 +90,7 @@ All are gitignored:
 ### Rate limiting
 
 The app's rate limits live in `src/server/rate-limit.ts`, which is shared
-unchanged across the Migz93 self-hosted apps. There are two limiters: 600
+unchanged across the Migz93 self-hosted apps. There are two limiters: 3,000
 requests per minute per client IP across the app, and 10 failed sign-in
 attempts per 15 minutes. Built assets (`/assets/`), cached images (`/images/`)
 and `/favicon.ico` don't count toward the global limit, so a full Playwright
