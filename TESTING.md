@@ -148,6 +148,7 @@ Read-only. Safe to run against a live instance.
 | Sidebar navigation works | Clicks each sidebar link in turn and verifies the URL and page heading update correctly |
 | Mobile navigation closes from its backdrop or Escape and returns focus to its trigger | Verifies the closed small-screen drawer is inert, the open drawer inerts page content, viewport changes close it without reopening, and either dismissal path restores the menu-button focus |
 | Unauthenticated request redirects to login | Opens a fresh browser context with no session cookies and navigates to `/dashboard`, expects a redirect to `/login` |
+| Failed session check shows a retry screen, not the login page | Fakes a 429 on `/api/auth/session` in the browser, navigates to `/settings`, expects the "Unable to load Hubarr" error with no Plex login button and the URL unchanged; clicking Retry once the request succeeds loads Settings |
 
 ---
 
