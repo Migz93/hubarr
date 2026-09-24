@@ -65,6 +65,49 @@ test.describe("Page smoke tests", () => {
     await expect(page).toHaveURL(/\/dashboard/);
   });
 
+  test("Mobile navigation closes from its backdrop or Escape and returns focus to its trigger", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 800 });
+    await page.goto("/dashboard");
+
+    const menuButton = page.getByRole("button", { name: "Toggle navigation" });
+    const sidebar = page.locator("aside");
+    const pageContent = page.locator("[data-overlay-page-content]");
+    await expect(sidebar).toHaveAttribute("inert", "");
+    await expect(pageContent).not.toHaveAttribute("inert", "");
+    await menuButton.focus();
+    await menuButton.click();
+
+    const dialog = page.getByRole("dialog", { name: "Navigation" });
+    await expect(dialog).toBeVisible();
+    await expect(sidebar).not.toHaveAttribute("inert", "");
+    await expect(pageContent).toHaveAttribute("inert", "");
+    await expect(dialog.getByRole("link", { name: "Dashboard" })).toBeFocused();
+
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await expect(dialog).toHaveCount(0);
+    await expect(pageContent).not.toHaveAttribute("inert", "");
+
+    await page.setViewportSize({ width: 375, height: 800 });
+    await expect(sidebar).toHaveAttribute("inert", "");
+    await expect(pageContent).not.toHaveAttribute("inert", "");
+
+    await menuButton.focus();
+    await menuButton.click();
+    await expect(dialog).toBeVisible();
+
+    await page.locator("[data-overlay-backdrop]").click({ position: { x: 350, y: 700 } });
+    await expect(dialog).toHaveCount(0);
+    await expect(menuButton).toBeFocused();
+    await expect(pageContent).not.toHaveAttribute("inert", "");
+
+    await menuButton.focus();
+    await menuButton.click();
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(menuButton).toBeFocused();
+  });
+
   test("Unauthenticated request redirects to login", async ({ browser }) => {
     // Use a fresh context with no stored session
     const freshContext = await browser.newContext({ storageState: undefined });
@@ -74,5 +117,23 @@ test.describe("Page smoke tests", () => {
     await expect(page).toHaveURL(/\/login/);
 
     await freshContext.close();
+  });
+
+  test("Failed session check shows a retry screen, not the login page", async ({ page }) => {
+    // A 429/5xx from the startup session check must not look like a logout.
+    // The response is faked in the browser, so the live instance is untouched.
+    let failSessionCheck = true;
+    await page.route("**/api/auth/session", (route) =>
+      failSessionCheck ? route.fulfill({ status: 429, body: "Too many requests" }) : route.continue()
+    );
+
+    await page.goto("/settings");
+    await expect(page.getByText("Unable to load Hubarr. Please try again.")).toBeVisible();
+    await expect(page).toHaveURL(/\/settings/);
+    await expect(page.getByRole("button", { name: /login with/i })).toHaveCount(0);
+
+    failSessionCheck = false;
+    await page.getByRole("button", { name: "Retry" }).click();
+    await expect(page.getByRole("heading", { name: "Settings", exact: true, level: 1 })).toBeVisible();
   });
 });

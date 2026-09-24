@@ -1,12 +1,16 @@
+<!-- shared: structure — headings kept in sync across Migz93 self-hosted apps, content is app-specific -->
+
 # Hubarr Architecture Overview
 
 ## What Hubarr Is
 
 Hubarr is a single-purpose Plex companion app.
 
-It tracks the owner's Plex watchlist and selected friends' watchlists, stores
-that watchlist state locally, matches items against Plex libraries, and keeps
-per-user Plex collections and hub rows up to date.
+It tracks the owner's Plex watchlist and selected Plex users' watchlists,
+stores that watchlist state locally, matches items against Plex libraries, and
+keeps per-user Plex collections and hub rows up to date. Users can be Plex
+friends or people with access to the selected Plex server, subject to each
+person's watchlist privacy setting.
 
 When Seerr integration is enabled, Hubarr can also submit missing watchlist items as Seerr requests on behalf of the matching user.
 
@@ -87,7 +91,7 @@ Hubarr tries to match watchlist items against Plex library items so it can tell 
 
 ### Collection publishing
 
-Hubarr creates and updates Plex collections, applies Hubarr labels, configures sort behavior, and publishes those collections into Plex hubs.
+Hubarr creates and updates Plex collections, applies Hubarr labels, configures sort behaviour, and publishes those collections into Plex hubs.
 
 ### Frontend freshness
 

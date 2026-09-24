@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { ChevronLeft, ChevronRight, ClipboardCopy, Eye, Pause, Pencil, Play, RefreshCw, X } from "lucide-react";
 import { apiGet, apiPatch, apiPost } from "../lib/api";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
+import { useAccessibleOverlay } from "../lib/useAccessibleOverlay";
 import { formatRelativeTime } from "../lib/utils";
 import PlexConfigForm from "../components/PlexConfigForm";
 import CollectionsConfigForm from "../components/CollectionsConfigForm";
@@ -388,6 +389,8 @@ function LogsTab() {
   const [page, setPage] = useState(1);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [activeLog, setActiveLog] = useState<LogEntry | null>(null);
+  const detailDialogRef = useRef<HTMLDivElement>(null);
+  useAccessibleOverlay(detailDialogRef, activeLog !== null, () => setActiveLog(null));
   const [copied, setCopied] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -417,11 +420,11 @@ function LogsTab() {
 
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
-    if (autoRefresh) {
+    if (autoRefresh && activeLog === null) {
       intervalRef.current = setInterval(() => { void load(); }, 5000);
     }
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [autoRefresh, load]);
+  }, [activeLog, autoRefresh, load]);
 
   // Reset page when filter/search/pageSize changes
   useEffect(() => { setPage(1); }, [filter, pageSize]);
@@ -445,12 +448,16 @@ function LogsTab() {
           onClick={() => setActiveLog(null)}
         >
           <div
+            ref={detailDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="log-details-title"
             className="bg-background-container-high rounded-2xl border border-outline-variant/30 w-full max-w-2xl p-6 space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-on-surface">Log Details</h3>
-              <button onClick={() => setActiveLog(null)} className="text-on-surface-variant hover:text-on-surface">
+              <h3 id="log-details-title" className="font-semibold text-on-surface">Log Details</h3>
+              <button onClick={() => setActiveLog(null)} data-overlay-initial-focus aria-label="Close" className="text-on-surface-variant hover:text-on-surface">
                 <X size={18} />
               </button>
             </div>
@@ -561,8 +568,8 @@ function LogsTab() {
             </div>
           ) : (
             <div className="divide-y divide-outline-variant/10">
-              {results.map((entry, i) => (
-                <div key={i} className="flex items-start gap-3 px-4 py-2 text-xs font-mono hover:bg-background-container/50 group">
+              {results.map((entry) => (
+                <div key={`${entry.timestamp}:${entry.level}:${entry.message}:${JSON.stringify(entry.meta)}`} className="flex items-start gap-3 px-4 py-2 text-xs font-mono hover:bg-background-container/50 group">
                   <span className="text-on-surface-variant/60 flex-shrink-0 w-[7.5rem] truncate pt-0.5">
                     {new Date(entry.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                   </span>
@@ -669,6 +676,8 @@ function JobsTab() {
   const [loading, setLoading] = useState(true);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [editingJob, setEditingJob] = useState<JobInfo | null>(null);
+  const scheduleDialogRef = useRef<HTMLDivElement>(null);
+  useAccessibleOverlay(scheduleDialogRef, editingJob !== null, () => setEditingJob(null));
   const [editValue, setEditValue] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [fastRefreshUntil, setFastRefreshUntil] = useState<number | null>(null);
@@ -732,10 +741,10 @@ function JobsTab() {
       {/* Edit schedule modal */}
       {editingJob && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-          <div className="bg-background-container rounded-2xl border border-outline-variant/20 w-full max-w-md shadow-2xl">
+          <div ref={scheduleDialogRef} role="dialog" aria-modal="true" aria-labelledby="edit-schedule-title" className="bg-background-container rounded-2xl border border-outline-variant/20 w-full max-w-md shadow-2xl">
             <div className="flex items-center justify-between px-6 py-4 border-b border-outline-variant/20">
-              <h2 className="font-headline font-semibold text-on-surface">Edit Schedule</h2>
-              <button onClick={() => setEditingJob(null)} className="text-on-surface-variant hover:text-on-surface transition-colors">
+              <h2 id="edit-schedule-title" className="font-headline font-semibold text-on-surface">Edit Schedule</h2>
+              <button onClick={() => setEditingJob(null)} data-overlay-initial-focus aria-label="Close" className="text-on-surface-variant hover:text-on-surface transition-colors">
                 <X size={18} />
               </button>
             </div>
@@ -894,6 +903,8 @@ function AboutTab() {
   const [releases, setReleases] = useState<GitHubRelease[] | null>(null);
   const [releasesError, setReleasesError] = useState(false);
   const [changelogRelease, setChangelogRelease] = useState<GitHubRelease | null>(null);
+  const changelogDialogRef = useRef<HTMLDivElement>(null);
+  useAccessibleOverlay(changelogDialogRef, changelogRelease !== null, () => setChangelogRelease(null));
 
   useEffect(() => {
     const load = async () => {
@@ -1017,11 +1028,13 @@ function AboutTab() {
       {/* Changelog modal */}
       {changelogRelease && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-          <div className="bg-background-container rounded-2xl border border-outline-variant/20 shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+          <div ref={changelogDialogRef} role="dialog" aria-modal="true" aria-labelledby="changelog-title" className="bg-background-container rounded-2xl border border-outline-variant/20 shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
             <div className="flex items-center justify-between p-5 border-b border-outline-variant/20">
-              <h3 className="font-headline font-semibold text-on-surface">{changelogRelease.name || changelogRelease.tag_name} Changelog</h3>
+              <h3 id="changelog-title" className="font-headline font-semibold text-on-surface">{changelogRelease.name || changelogRelease.tag_name} Changelog</h3>
               <button
                 onClick={() => setChangelogRelease(null)}
+                data-overlay-initial-focus
+                aria-label="Close"
                 className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-background-container-high transition-colors"
               >
                 <X size={18} />

@@ -1,0 +1,15 @@
+services:
+  hubarr:
+    image: hubarr
+    container_name: hubarr
+    build: .
+    ports:
+      - "9301:9301"
+    volumes:
+      - /opt/hubarr:/config
+    environment:
+      - NODE_ENV=production
+      - DATA_DIR=/config
+      - TZ=UTC
+    network_mode: bridge
+    restart: unless-stopped

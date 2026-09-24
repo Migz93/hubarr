@@ -3,6 +3,7 @@ import fs from "node:fs";
 import * as winston from "winston";
 import "winston-daily-rotate-file";
 import type { LogEntry } from "../shared/types.js";
+import { LOG_LEVELS, type LogLevel } from "./config.js";
 
 const LOG_RING_SIZE = 500;
 
@@ -14,8 +15,10 @@ const humanFormat = winston.format.printf(({ level, message, timestamp, ...meta 
 export class Logger {
   private readonly ring: LogEntry[] = [];
   private readonly winstonLogger: winston.Logger;
+  private readonly minLevelIndex: number;
 
-  constructor(dataDir: string) {
+  constructor(dataDir: string, logLevel: LogLevel) {
+    this.minLevelIndex = LOG_LEVELS.indexOf(logLevel);
     const logDir = path.join(dataDir, "logs");
 
     const transports: winston.transport[] = [
@@ -65,7 +68,7 @@ export class Logger {
     }
 
     this.winstonLogger = winston.createLogger({
-      level: "debug",
+      level: logLevel,
       transports
     });
   }
@@ -78,9 +81,13 @@ export class Logger {
       ...(meta !== undefined ? { meta } : {})
     };
 
-    this.ring.push(entry);
-    if (this.ring.length > LOG_RING_SIZE) {
-      this.ring.shift();
+    // Match Winston's level so suppressed entries can't push kept ones out of
+    // the in-memory fallback.
+    if (LOG_LEVELS.indexOf(level) >= this.minLevelIndex) {
+      this.ring.push(entry);
+      if (this.ring.length > LOG_RING_SIZE) {
+        this.ring.shift();
+      }
     }
 
     if (meta !== undefined) {

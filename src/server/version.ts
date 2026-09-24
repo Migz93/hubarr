@@ -34,6 +34,4 @@ function normalizeBuildChannel(value: string | undefined): BuildChannel {
 export const BUILD_CHANNEL = normalizeBuildChannel(process.env.BUILD_CHANNEL);
 
 // Full commit SHA baked in at build time. "local" when running outside CI.
-const rawCommitSha = process.env.COMMIT_SHA ?? "local";
-// Shorten to 7 chars for display, unless it's already "local".
-export const BUILD_COMMIT = rawCommitSha === "local" ? "local" : rawCommitSha.slice(0, 7);
+export const BUILD_COMMIT = process.env.COMMIT_SHA ?? "local";

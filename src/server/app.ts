@@ -2,7 +2,6 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
-import { rateLimit } from "express-rate-limit";
 import helmet from "helmet";
 import type {
   CollectionSortOrder,
@@ -19,11 +18,12 @@ import type {
   VisibilityConfig
 } from "../shared/types.js";
 import { createSessionId } from "./auth.js";
-import type { RuntimeConfig } from "./config.js";
+import { LOG_LEVELS, type LogLevel, type RuntimeConfig } from "./config.js";
 import { HubarrDatabase } from "./db/index.js";
 import { PlexIntegration } from "./integrations/plex.js";
 import { JobScheduler } from "./job-scheduler.js";
 import { Logger } from "./logger.js";
+import { createGlobalRateLimiter, createSignInRateLimiter } from "./rate-limit.js";
 import { ImageCacheService } from "./image-cache.js";
 import { HubarrServices } from "./services.js";
 import { APP_VERSION, BUILD_CHANNEL, BUILD_COMMIT } from "./version.js";
@@ -102,7 +102,7 @@ function summarizeSettingsPatch(patch: Record<string, unknown>) {
 }
 
 export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
-  const logger = new Logger(config.dataDir);
+  const logger = new Logger(config.dataDir, config.logLevel);
   const db = new HubarrDatabase(config, logger);
   const sessionSecret = db.getSessionSecret();
   const imageCache = new ImageCacheService(config.dataDir, db, logger);
@@ -136,18 +136,9 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     hsts: false
   }));
   const clientDir = path.resolve(process.cwd(), "dist/client");
-  const logsRateLimiter = rateLimit({
-    windowMs: 60_000,
-    limit: 60,
-    standardHeaders: "draft-8",
-    legacyHeaders: false
-  });
-  const staticRateLimiter = rateLimit({
-    windowMs: 60_000,
-    limit: 600,
-    standardHeaders: "draft-8",
-    legacyHeaders: false
-  });
+  // Applies to every route. Built assets, cached images and the favicon are
+  // exempt from the count (see rate-limit.ts); /images still requires a session.
+  app.use(createGlobalRateLimiter(logger));
 
   app.use(express.json());
 
@@ -278,7 +269,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
       });
     });
     services.discoverUsers().catch((err) => {
-      logger.warn("Friend discovery failed after Plex settings save", {
+      logger.warn("Plex user discovery failed after Plex settings save", {
         error: err instanceof Error ? err.message : String(err)
       });
     });
@@ -311,7 +302,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
   // Plex OAuth auth
   // ---------------------------------------------------------------------------
 
-  app.post("/api/auth/plex", async (req, res) => {
+  app.post("/api/auth/plex", createSignInRateLimiter(logger), async (req, res) => {
     const body = req.body as { authToken?: string };
     if (!body.authToken) {
       res.status(400).json({ error: "authToken is required." });
@@ -1068,8 +1059,6 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     await handlePlexConnectionTest(req.body as PlexConfigPayload, res);
   });
 
-  app.use("/api/settings/logs", logsRateLimiter);
-
   /** Log viewer */
   app.get("/api/settings/logs", requireAuth, (req, res) => {
     const rawPage = typeof req.query["page"] === "string" ? Number(req.query["page"]) : 1;
@@ -1078,12 +1067,12 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
     const pageSize = Math.min(100, Math.max(1, Number.isFinite(rawPageSize) ? rawPageSize : 25));
 
     // Cascade: debug=all, info=info+warn+error, warn=warn+error, error=error only
-    const LEVEL_ORDER = ["debug", "info", "warn", "error"] as const;
-    type LogLevel = (typeof LEVEL_ORDER)[number];
-    const isLogLevel = (v: unknown): v is LogLevel => typeof v === "string" && (LEVEL_ORDER as readonly string[]).includes(v);
+    const isLogLevel = (v: unknown): v is (typeof LOG_LEVELS)[number] =>
+      typeof v === "string" && (LOG_LEVELS as readonly string[]).includes(v);
     const filterParam: LogLevel = isLogLevel(req.query["filter"]) ? req.query["filter"] : "debug";
-    const filterIndex = LEVEL_ORDER.indexOf(filterParam);
-    const allowed = new Set<string>(LEVEL_ORDER.slice(filterIndex));
+    const filterIndex = LOG_LEVELS.indexOf(filterParam);
+    const configuredLevelIndex = LOG_LEVELS.indexOf(config.logLevel);
+    const allowed = new Set<string>(LOG_LEVELS.slice(Math.max(filterIndex, configuredLevelIndex)));
 
     const rawSearch = req.query["search"];
     const search: string = typeof rawSearch === "string" ? rawSearch.slice(0, 200) : "";
@@ -1126,7 +1115,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
         }
       }
     } catch {
-      // File not available — fall back to ring buffer
+      // Keep the in-memory fallback consistent with the configured Winston level.
       entries = logger.getRecentLogs(500).filter((e) => allowed.has(e.level));
       if (search) {
         const needle = search.toLowerCase();
@@ -1806,7 +1795,7 @@ export function createApp(config: RuntimeConfig, scheduler?: JobScheduler) {
 
   if (fs.existsSync(clientDir)) {
     app.use(express.static(clientDir));
-    app.get("/*path", staticRateLimiter, (req, res, next) => {
+    app.get("/*path", (req, res, next) => {
       if (req.path.startsWith("/api/")) {
         next();
         return;

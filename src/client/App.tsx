@@ -16,6 +16,7 @@ interface AppState {
   bootstrap: BootstrapStatus | null;
   user: SessionUser | null;
   loading: boolean;
+  loadFailed: boolean;
 }
 
 export default function App() {
@@ -39,9 +40,13 @@ function MainApp() {
   const [state, setState] = useState<AppState>({
     bootstrap: null,
     user: null,
-    loading: true
+    loading: true,
+    loadFailed: false
   });
 
+  // Both endpoints answer 200 for a signed-out user, so a rejection here is a
+  // 429, 5xx or network failure — not a logout. Flag it so the startup check
+  // shows a retryable error instead of the login screen.
   async function loadState() {
     try {
       const [bootstrap, session] = await Promise.all([
@@ -52,7 +57,8 @@ function MainApp() {
       setState({
         bootstrap,
         user: session.authenticated ? session.user : null,
-        loading: false
+        loading: false,
+        loadFailed: false
       });
 
       return {
@@ -60,9 +66,14 @@ function MainApp() {
         session
       };
     } catch {
-      setState((s) => ({ ...s, loading: false }));
+      setState((s) => ({ ...s, loading: false, loadFailed: true }));
       return null;
     }
+  }
+
+  function retryLoad() {
+    setState((s) => ({ ...s, loading: true, loadFailed: false }));
+    void loadState();
   }
 
   useEffect(() => {
@@ -93,7 +104,7 @@ function MainApp() {
     navigate("/login");
   }
 
-  const { bootstrap, user, loading } = state;
+  const { bootstrap, user, loading, loadFailed } = state;
 
   if (loading) {
     return (
@@ -104,6 +115,23 @@ function MainApp() {
           </div>
           <div className="text-on-surface-variant text-sm">Loading Hubarr...</div>
         </div>
+      </div>
+    );
+  }
+
+  // Also covers a load that fails after sign-in, when bootstrap is already set
+  // from the first load but user is still null.
+  if (loadFailed) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4 px-4 text-center">
+        <div className="text-sm text-error">Unable to load Hubarr. Please try again.</div>
+        <button
+          type="button"
+          onClick={retryLoad}
+          className="rounded-xl bg-primary-dim px-4 py-2 text-sm font-bold text-on-surface transition-colors hover:bg-primary"
+        >
+          Retry
+        </button>
       </div>
     );
   }

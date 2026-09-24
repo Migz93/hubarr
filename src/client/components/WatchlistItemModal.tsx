@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Film, Tv, X, Star, Clock, Tag } from "lucide-react";
 import { formatWatchlistDate } from "../lib/utils";
 import { apiGet, apiPost } from "../lib/api";
 import { getPlexImageSrc } from "../lib/plexImage";
+import { useAccessibleOverlay } from "../lib/useAccessibleOverlay";
 import type { RichItemMetadata, SeerrRequestState, SeerrSettingsView, UserRecord, WatchlistUser } from "../../shared/types";
 
 interface ModalItem {
@@ -108,6 +109,8 @@ export function WatchlistItemModal({
   onClose: () => void;
   seerrSettings?: SeerrSettingsView | null;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useAccessibleOverlay(dialogRef, true, onClose);
   const [rich, setRich] = useState<RichItemMetadata | null>(null);
   const [enrichLoading, setEnrichLoading] = useState(true);
   const [seerrStates, setSeerrStates] = useState<SeerrRequestState[]>([]);
@@ -217,6 +220,10 @@ export function WatchlistItemModal({
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="watchlist-item-title"
         className="bg-background-container rounded-2xl w-full max-w-2xl border border-outline-variant/20 shadow-xl overflow-hidden flex max-h-[88vh]"
         onClick={(e) => e.stopPropagation()}
       >
@@ -246,6 +253,8 @@ export function WatchlistItemModal({
           <div className="flex justify-end p-3 pb-0">
             <button
               onClick={onClose}
+              data-overlay-initial-focus
+              aria-label="Close"
               className="p-1.5 rounded-lg bg-background-container-high text-on-surface-variant hover:text-on-surface hover:bg-background-container-highest transition-colors"
             >
               <X size={16} />
@@ -254,7 +263,7 @@ export function WatchlistItemModal({
 
           <div className="px-5 pb-5 pt-2">
             {/* Title */}
-            <h3 className="font-headline font-bold text-xl text-on-surface leading-tight mb-1">
+            <h3 id="watchlist-item-title" className="font-headline font-bold text-xl text-on-surface leading-tight mb-1">
               {item.title}
             </h3>
 

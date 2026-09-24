@@ -9,15 +9,15 @@
 
 Hubarr is a self-hosted Plex companion that turns watchlists into managed Plex collections and hub rows.
 
-It keeps your own Plex watchlist and selected friends' watchlists in sync with Plex, matches items against what is already in your libraries, and keeps per-user collections updated automatically through a simple web UI.
+It keeps your own Plex watchlist and selected Plex users' watchlists in sync with Plex, matches items against what is already in your libraries, and keeps per-user collections updated automatically through a simple web UI.
 
 ## What Hubarr Does
 
-- Tracks your and/or your friends watchlists
+- Tracks your and/or selected Plex users' watchlists
 - Matches watchlist items against content already available in Plex
 - Keeps per-user movie and TV collections synced automatically
 - Publishes those collections into Plex as hub rows
-- Applies per-user label exclusions so each friend only sees their own watchlist
+- Applies per-user label exclusions so each selected user only sees their own watchlist
 
 ## Preview
 
@@ -48,7 +48,7 @@ As with movies, admins see every managed collection for the library and users on
 ## Key Features
 
 - Plex-only sign-in with no local passwords
-- Tracks your and/or your friends watchlists
+- Tracks your and/or selected Plex users' watchlists
 - Fast watchlist updates using Plex RSS, with a scheduled GraphQL sync as a safety net
 - Separate per-user movie and TV collections with shared naming
 - Configurable publishing to Library Recommended, Home, and Friends Home
@@ -103,6 +103,8 @@ services:
       - "9301:9301"
     volumes:
       - /opt/hubarr:/config
+    environment:
+      - TZ=UTC
 ```
 
 ```bash
@@ -111,20 +113,33 @@ docker compose up -d
 
 ### Configuration
 
-Hubarr is configured through its web UI after first run. The two things you may want to adjust in your Docker setup before starting:
+Hubarr is configured through its web UI after first run. The main things you may want to adjust in your Docker setup before starting:
 
 - **Port** — change the left side of `9301:9301` to expose Hubarr on a different host port (e.g. `8080:9301`)
 - **Data directory** — change the left side of `/opt/hubarr:/config` to store Hubarr's database and logs wherever you prefer on your host
+- **Timezone** — set `TZ` to your preferred timezone if you do not want UTC
 
 ### First Setup
 
 1. Log in with Plex
 2. Select the Plex server you want Hubarr to manage, then set the target movie and TV libraries
-3. Discover friends from the Users page
+3. Discover Plex users from the Users page
 4. Enable the users you want to track
 5. Run a sync, or wait for the scheduled jobs to start working
 
 ## Important Limitations
+
+### Watchlist Privacy
+
+Hubarr can discover Plex friends and people with access to your Plex server. It
+can only sync a person's watchlist when their Plex watchlist privacy setting
+allows your account to view it.
+
+Plex defaults watchlists to **Friends Only**. A shared-server user who is not
+your Plex friend must make their watchlist visible to **Anyone signed in to
+Plex** (or a less restrictive option) before Hubarr can read it. Plex does not
+return a distinct privacy error for an unavailable watchlist, so Hubarr may show
+it as empty.
 
 ### Plex Home Managed Users
 
@@ -138,7 +153,7 @@ Plex Home managed users (sub-accounts with no independent Plex account) have two
 
 Hubarr was created with heavy AI assistance.
 
-Claude, Codex, and OpenAI Sora were all used throughout the project for design exploration, implementation help, refactoring, explanation, and iteration. The intent is not to hide that. Hubarr has been built by combining hands-on product direction with a lot of AI-assisted development work.
+Claude, Codex, Leonardo.ai, and CodeRabbit were all used throughout the project for design exploration, implementation help, refactoring, review, explanation, and iteration. The intent is not to hide that. Hubarr has been built by combining hands-on product direction with a lot of AI-assisted development work.
 
 ## Credits And Inspiration
 

@@ -1,12 +1,28 @@
 import fs from "node:fs";
 import path from "node:path";
 
+export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
+export type LogLevel = (typeof LOG_LEVELS)[number];
+
 export interface RuntimeConfig {
   port: number;
   dataDir: string;
   sessionCookieName: string;
   sessionTtlMs: number;
-  logLevel: "debug" | "info" | "warn" | "error";
+  logLevel: LogLevel;
+}
+
+export function resolveLogLevel(value: string | undefined): LogLevel {
+  if (value === undefined) {
+    return "info";
+  }
+
+  if ((LOG_LEVELS as readonly string[]).includes(value)) {
+    return value as LogLevel;
+  }
+
+  console.warn(`Invalid LOG_LEVEL "${value}"; falling back to "info".`);
+  return "info";
 }
 
 export function loadRuntimeConfig(): RuntimeConfig {
@@ -21,7 +37,6 @@ export function loadRuntimeConfig(): RuntimeConfig {
     dataDir,
     sessionCookieName: "hubarr_session",
     sessionTtlMs: 1000 * 60 * 60 * 24 * 14,
-    logLevel:
-      (process.env.LOG_LEVEL as RuntimeConfig["logLevel"] | undefined) || "info",
+    logLevel: resolveLogLevel(process.env["LOG_LEVEL"]),
   };
 }

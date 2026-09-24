@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { NavLink, Link } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -27,10 +27,12 @@ interface SidebarProps {
   user: SessionUser | null;
   onLogout: () => void;
   mobileOpen: boolean;
+  isMobileViewport: boolean;
   onMobileClose: () => void;
+  sidebarRef: RefObject<HTMLElement | null>;
 }
 
-export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: SidebarProps) {
+export default function Sidebar({ user, onLogout, mobileOpen, isMobileViewport, onMobileClose, sidebarRef }: SidebarProps) {
   const [popupOpen, setPopupOpen] = useState(false);
   const footerRef = useRef<HTMLDivElement>(null);
 
@@ -47,6 +49,13 @@ export default function Sidebar({ user, onLogout, mobileOpen, onMobileClose }: S
 
   return (
     <aside
+      ref={sidebarRef}
+      id="mobile-navigation"
+      role={mobileOpen && isMobileViewport ? "dialog" : undefined}
+      aria-modal={mobileOpen && isMobileViewport || undefined}
+      aria-label={mobileOpen && isMobileViewport ? "Navigation" : undefined}
+      inert={!mobileOpen && isMobileViewport}
+      tabIndex={-1}
       className={`fixed inset-y-0 left-0 w-64 flex flex-col bg-background-container-low border-r border-outline-variant/20 z-40 transition-transform duration-300
         md:translate-x-0 ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}
     >
@@ -155,17 +164,21 @@ function getChannelConfig(buildChannel: string) {
 
 function VersionFooter({ onMobileClose }: { onMobileClose: () => void }) {
   const [info, setInfo] = useState<AboutInfo | null>(null);
+  const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
 
   useEffect(() => {
     apiGet<AboutInfo>("/api/settings/about")
-      .then((data) => setInfo(data))
-      .catch(() => null);
+      .then((data) => {
+        setInfo(data);
+        setStatus("loaded");
+      })
+      .catch(() => setStatus("error"));
   }, []);
 
   // Don't render a channel label until the API has responded — any guess
   // before that point could misrepresent the build (e.g. showing "Stable"
   // for a develop image during the load window).
-  if (!info) {
+  if (status === "loading") {
     return (
       <div className="px-3 pb-3">
         <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg">
@@ -179,6 +192,8 @@ function VersionFooter({ onMobileClose }: { onMobileClose: () => void }) {
     );
   }
 
+  if (status === "error" || !info) return null;
+
   const { label, Icon } = getChannelConfig(info.buildChannel);
 
   // Show the commit SHA for develop/custom builds, version number for stable
@@ -186,7 +201,7 @@ function VersionFooter({ onMobileClose }: { onMobileClose: () => void }) {
     ? `v${info.version}`
     : info.commitSha === "local"
       ? "local"
-      : info.commitSha;
+      : info.commitSha.slice(0, 7);
 
   return (
     <div className="px-3 pb-3">
