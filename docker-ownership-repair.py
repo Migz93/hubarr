@@ -1,9 +1,27 @@
 #!/usr/bin/env python3
 """Repair DATA_DIR ownership without following mutable path components."""
 
+import errno
 import os
 import pwd
 import sys
+
+# Errors expected while walking a tree whose contents can change underneath
+# us: an entry removed or replaced mid-walk (ELOOP is a directory swapped for
+# a symlink), or one root isn't allowed to open. Anything else is unexpected
+# and gets a warning, but the walk still carries on.
+EXPECTED_WALK_ERRORS = {
+    errno.ENOENT,
+    errno.ENOTDIR,
+    errno.ELOOP,
+    errno.EACCES,
+    errno.EPERM,
+}
+
+
+def warn_unexpected(error: OSError, what: str) -> None:
+    if error.errno not in EXPECTED_WALK_ERRORS:
+        print(f"warning: unable to read {what}: {error.strerror}", file=sys.stderr)
 
 
 def repair_entry(name: str, directory_fd: int, node_uid: int, node_gid: int) -> None:
@@ -19,9 +37,9 @@ def repair_entry(name: str, directory_fd: int, node_uid: int, node_gid: int) -> 
             )
     except FileNotFoundError:
         return
-    except PermissionError:
+    except OSError as error:
         print(
-            f"warning: unable to repair ownership for {name!r}",
+            f"warning: unable to repair ownership for {name!r}: {error.strerror}",
             file=sys.stderr,
         )
 
@@ -38,7 +56,8 @@ def repair_tree(directory_fd: int, node_uid: int, node_gid: int) -> None:
         if child_names is None:
             try:
                 entries = list(os.scandir(current_fd))
-            except OSError:
+            except OSError as error:
+                warn_unexpected(error, "a directory listing")
                 entries = []
 
             child_names = []
@@ -63,8 +82,8 @@ def repair_tree(directory_fd: int, node_uid: int, node_gid: int) -> None:
                 os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                 dir_fd=current_fd,
             )
-        except OSError:
-            # Includes ELOOP from a directory swapped for a symlink mid-walk.
+        except OSError as error:
+            warn_unexpected(error, repr(child_name))
             continue
         stack.append((child_fd, True, None, 0))
 
@@ -82,12 +101,12 @@ def repair(data_dir: str) -> None:
         if root.st_uid != node_uid or root.st_gid != node_gid:
             try:
                 os.fchown(root_fd, node_uid, node_gid)
-            except PermissionError:
+            except OSError as error:
                 # Root can be denied on some mounts, such as NFS with
-                # root_squash. Carry on so the app still starts if the
-                # directory is already writable by node.
+                # root_squash or a read-only bind mount. Carry on: the
+                # entrypoint then checks node can write to the directory.
                 print(
-                    f"warning: unable to repair ownership for {data_dir!r}",
+                    f"warning: unable to repair ownership for {data_dir!r}: {error.strerror}",
                     file=sys.stderr,
                 )
         repair_tree(root_fd, node_uid, node_gid)
