@@ -308,12 +308,13 @@ docker run -d \
   -v /opt/hubarr:/config \
   --restart unless-stopped \
   hubarr
-docker inspect -f '{{.State.Health.Status}}' hubarr
+timeout 90 sh -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" hubarr)" = healthy ]; do sleep 3; done' \
+  && echo healthy || docker logs hubarr 2>&1 | tail -20
 ```
 
-Expect `healthy`. It reads `starting` for about the first 30 seconds. If it
-doesn't become healthy, check `docker logs hubarr 2>&1 | tail -20` for the
-startup line:
+This waits for the HEALTHCHECK, which reads `starting` until its first check
+passes, and prints `healthy`. If it prints logs instead, look for the startup
+line:
 
 ```text
 Hubarr listening on http://0.0.0.0:9301

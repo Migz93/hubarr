@@ -206,17 +206,17 @@ Keep the image and container name as `hubarr`, use bridge networking, and
 preserve the `/opt/hubarr:/config` bind mount so configuration, database, and
 logs remain intact while the container is recreated.
 
-After the container starts, confirm it is healthy. The image's HEALTHCHECK
-first runs about 30 seconds after start, and until then the status is
-`starting`:
+After the container starts, wait for it to become healthy. The status reads
+`starting` until the image's HEALTHCHECK first passes, usually within a few
+seconds, so poll rather than checking once:
 
 ```bash
-docker inspect -f '{{.State.Health.Status}}' hubarr
+timeout 90 sh -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" hubarr)" = healthy ]; do sleep 3; done' \
+  && echo healthy || docker logs hubarr 2>&1 | tail -20
 ```
 
-You should see `healthy`. If not, check the logs with
-`docker logs hubarr 2>&1 | tail -20`. A good start logs a `Hubarr listening`
-line.
+This prints `healthy`, or the recent logs if it isn't healthy within 90
+seconds. A good start logs a `Hubarr listening` line.
 
 This whole section needs Docker. On a machine where it is unavailable, say so
 rather than substituting a workspace check for a real rebuild.
