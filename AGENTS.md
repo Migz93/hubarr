@@ -117,9 +117,9 @@ Everything for Hubarr lives under a single directory on the host:
 
 All files the app needs — config, database, logs, whatever — go directly in
 there. Do not create subdirectories like `config/` or `data/` unless the app
-itself requires a specific path inside the container. Keep it flat. The one
-exception is `logs/`, which the app creates itself on startup — don't create it
-by hand.
+itself requires a specific path inside the container. Keep it flat. The
+exceptions are subdirectories the app creates itself on startup, such as
+`logs/` — don't create them by hand.
 
 ## Docker Naming Conventions
 

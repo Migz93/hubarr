@@ -91,6 +91,7 @@ test.describe("Page smoke tests", () => {
     await expect(sidebar).toHaveAttribute("inert", "");
     await expect(pageContent).not.toHaveAttribute("inert", "");
 
+    await menuButton.focus();
     await menuButton.click();
     await expect(dialog).toBeVisible();
 
@@ -99,6 +100,7 @@ test.describe("Page smoke tests", () => {
     await expect(menuButton).toBeFocused();
     await expect(pageContent).not.toHaveAttribute("inert", "");
 
+    await menuButton.focus();
     await menuButton.click();
     await expect(dialog).toBeVisible();
     await page.keyboard.press("Escape");

@@ -32,8 +32,10 @@ deployment *is*, not how to drive it.
 
 Everything Hubarr keeps — config, SQLite database, image cache, logs — lives in `/config`,
 bind-mounted from `/opt/hubarr` on the host. Keep it flat; don't add
-`config/`, `data/`, or `logs/` subdirectories. Don't use named Docker volumes for
-this app; the user needs host-visible files.
+subdirectories such as `config/` or `data/`. The only subdirectories are `logs/`
+and `image-cache/`, which the app creates itself on startup — don't create them
+by hand. Don't use named Docker volumes for this app; the user needs
+host-visible files.
 
 ## Container User
 
@@ -48,7 +50,9 @@ unprivileged `node` user. `docker-entrypoint.sh` gets it there:
    and use.
 3. Repairs ownership of `/config` via `docker-ownership-repair.py`, which walks
    the tree using directory descriptors and no-follow operations at every level,
-   and chowns only entries that don't already match `node`.
+   and chowns only entries that don't already match `node`. An entry it isn't
+   allowed to chown (for example on NFS with root_squash) gets a warning and is
+   skipped rather than stopping startup.
 4. Drops privileges with `gosu node` before `exec`ing the real `CMD`.
 
 No host-side setup is needed. A brand-new empty bind mount (root-owned when

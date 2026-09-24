@@ -63,7 +63,8 @@ def repair_tree(directory_fd: int, node_uid: int, node_gid: int) -> None:
                 os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                 dir_fd=current_fd,
             )
-        except (FileNotFoundError, NotADirectoryError, PermissionError):
+        except OSError:
+            # Includes ELOOP from a directory swapped for a symlink mid-walk.
             continue
         stack.append((child_fd, True, None, 0))
 
@@ -79,7 +80,16 @@ def repair(data_dir: str) -> None:
     try:
         root = os.fstat(root_fd)
         if root.st_uid != node_uid or root.st_gid != node_gid:
-            os.fchown(root_fd, node_uid, node_gid)
+            try:
+                os.fchown(root_fd, node_uid, node_gid)
+            except PermissionError:
+                # Root can be denied on some mounts, such as NFS with
+                # root_squash. Carry on so the app still starts if the
+                # directory is already writable by node.
+                print(
+                    f"warning: unable to repair ownership for {data_dir!r}",
+                    file=sys.stderr,
+                )
         repair_tree(root_fd, node_uid, node_gid)
     finally:
         os.close(root_fd)
