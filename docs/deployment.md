@@ -16,6 +16,11 @@ The image holds the built React client in `dist/client`, the compiled Express
 server in `dist/server`, and production dependencies only. The server command is
 `node dist/server/server/index.js`.
 
+The image's `HEALTHCHECK` polls the unauthenticated `GET /api/health` on
+`127.0.0.1:$PORT` every 30s (5s timeout, 30s start period, 3 retries) using
+Node's built-in `fetch`, so `docker inspect --format '{{.State.Health.Status}}'
+hubarr` reports `healthy` once the server is serving requests.
+
 ## Running It
 
 Build, run, and rebuild commands live in `AGENTS.md` under "Rebuilding The
