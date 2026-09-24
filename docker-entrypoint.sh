@@ -45,8 +45,10 @@ if [ "$current_uid" = "0" ]; then
 
   # The repair can be refused (for example on NFS with root_squash), so check
   # the result as node rather than let the app fail later on a bare EACCES.
-  if ! gosu node test -w "$DATA_DIR"; then
-    echo "entrypoint: $DATA_DIR isn't writable by the node user (uid $(id -u node)). Change the bind mount's ownership or permissions on the host so that uid can write to it." >&2
+  # Creating files needs search (x) as well as write permission, which a
+  # well-meant `chmod 666` on the host leaves out.
+  if ! gosu node sh -c 'test -w "$1" && test -x "$1"' sh "$DATA_DIR"; then
+    echo "entrypoint: $DATA_DIR isn't writable by the node user (uid $(id -u node)). Change the bind mount's ownership or permissions on the host so that uid has write and execute (search) permission on it." >&2
     exit 1
   fi
 

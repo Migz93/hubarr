@@ -53,8 +53,8 @@ unprivileged `node` user. `docker-entrypoint.sh` gets it there:
    and chowns only entries that don't already match `node`. An entry it isn't
    allowed to chown (for example on NFS with root_squash, or a read-only mount)
    gets a warning and is skipped rather than stopping startup.
-4. Checks, as `node`, that `/config` is writable, and refuses to start with an
-   error naming the UID if it isn't. On mounts where root can't chown, fix
+4. Checks, as `node`, that `/config` has write and search (`x`) permission,
+   and refuses to start with an error naming the UID if it doesn't. On mounts where root can't chown, fix
    the ownership or permissions on the host.
 5. Drops privileges with `gosu node` before `exec`ing the real `CMD`.
 
