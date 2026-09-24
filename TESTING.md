@@ -3,9 +3,11 @@
 # Testing
 
 Hubarr has two test layers. [Playwright](https://playwright.dev/) end-to-end
-tests run against a **live, fully set-up Hubarr instance** — no mocking, no test
-database — so you need a running app with a real Plex connection before they are
-meaningful. Server tests that need persistence use a throwaway SQLite database,
+tests run against a **live, fully set-up Hubarr instance** with no test
+database, so you need a running app with a real Plex connection before they are
+meaningful. A few tests stub individual browser requests to set up states a live
+instance can't produce on demand, such as a failed session check or a running
+sync in History. Server tests that need persistence use a throwaway SQLite database,
 with external services replaced by fakes where needed.
 
 ## Commands
@@ -306,13 +308,16 @@ docker run -d \
   -v /opt/hubarr:/config \
   --restart unless-stopped \
   hubarr
-docker logs hubarr 2>&1 | tail -5
+timeout 90 sh -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" hubarr)" = healthy ]; do sleep 3; done' \
+  && echo healthy || docker logs hubarr 2>&1 | tail -20
 ```
 
-Expected log line:
+This waits for the HEALTHCHECK, which reads `starting` until its first check
+passes, and prints `healthy`. If it prints logs instead, look for the startup
+line:
 
 ```text
-Hubarr listening on port 9301
+Hubarr listening on http://0.0.0.0:9301
 ```
 
 Then open `http://localhost:9301` and smoke-test:

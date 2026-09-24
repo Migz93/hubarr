@@ -119,7 +119,9 @@ function MainApp() {
     );
   }
 
-  if (!bootstrap && loadFailed) {
+  // Also covers a load that fails after sign-in, when bootstrap is already set
+  // from the first load but user is still null.
+  if (loadFailed) {
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4 px-4 text-center">
         <div className="text-sm text-error">Unable to load Hubarr. Please try again.</div>

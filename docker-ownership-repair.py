@@ -92,10 +92,20 @@ def repair(data_dir: str) -> None:
     node = pwd.getpwnam("node")
     node_uid = node.pw_uid
     node_gid = node.pw_gid
-    root_fd = os.open(
-        data_dir,
-        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-    )
+    try:
+        root_fd = os.open(
+            data_dir,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+    except OSError as error:
+        # On NFS with root_squash, root can be denied a directory node can
+        # still use. Skip the repair and leave it to the entrypoint's check
+        # as node.
+        print(
+            f"warning: unable to open {data_dir!r} to repair ownership: {error.strerror}",
+            file=sys.stderr,
+        )
+        return
     try:
         root = os.fstat(root_fd)
         if root.st_uid != node_uid or root.st_gid != node_gid:

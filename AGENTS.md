@@ -206,13 +206,17 @@ Keep the image and container name as `hubarr`, use bridge networking, and
 preserve the `/opt/hubarr:/config` bind mount so configuration, database, and
 logs remain intact while the container is recreated.
 
-After the container starts, confirm it is healthy with:
+After the container starts, wait for it to become healthy. The status reads
+`starting` until the image's HEALTHCHECK first passes, usually within a few
+seconds, so poll rather than checking once:
 
 ```bash
-docker logs hubarr 2>&1 | tail -5
+timeout 90 sh -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" hubarr)" = healthy ]; do sleep 3; done' \
+  && echo healthy || docker logs hubarr 2>&1 | tail -20
 ```
 
-You should see: `Hubarr listening on port 9301`.
+This prints `healthy`, or the recent logs if it isn't healthy within 90
+seconds. A good start logs a `Hubarr listening` line.
 
 This whole section needs Docker. On a machine where it is unavailable, say so
 rather than substituting a workspace check for a real rebuild.
@@ -253,7 +257,8 @@ type/branch-name branch → PR into develop → develop → chore/bump-version �
 **Step by step:**
 
 1. **Start a new branch** from `develop` for every piece of work — features, bug
-   fixes, chores, CI changes, everything. Never commit new work directly to
+   fixes, chores, CI changes, everything — unless the branch check above found
+   you already on this work's branch. Never commit new work directly to
    `develop` or `main`.
    - Branch naming: `feat/short-description`, `fix/short-description`,
      `chore/short-description`, `ci/short-description`, `docs/short-description`
