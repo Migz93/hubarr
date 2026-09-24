@@ -215,8 +215,8 @@ docker inspect -f '{{.State.Health.Status}}' hubarr
 ```
 
 You should see `healthy`. If not, check the logs with
-`docker logs hubarr 2>&1 | tail -20`. A good start logs
-`Hubarr listening on http://0.0.0.0:9301`.
+`docker logs hubarr 2>&1 | tail -20`. A good start logs a `Hubarr listening`
+line.
 
 This whole section needs Docker. On a machine where it is unavailable, say so
 rather than substituting a workspace check for a real rebuild.
