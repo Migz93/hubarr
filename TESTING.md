@@ -309,7 +309,7 @@ docker run -d \
   --restart unless-stopped \
   hubarr
 timeout 90 sh -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" hubarr)" = healthy ]; do sleep 3; done' \
-  && echo healthy || docker logs hubarr 2>&1 | tail -20
+  && echo healthy || { docker logs hubarr 2>&1 | tail -20; false; }
 ```
 
 This waits for the HEALTHCHECK, which reads `starting` until its first check
