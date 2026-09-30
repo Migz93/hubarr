@@ -212,11 +212,11 @@ seconds, so poll rather than checking once:
 
 ```bash
 timeout 90 sh -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" hubarr)" = healthy ]; do sleep 3; done' \
-  && echo healthy || docker logs hubarr 2>&1 | tail -20
+  && echo healthy || { docker logs hubarr 2>&1 | tail -20; false; }
 ```
 
-This prints `healthy`, or the recent logs if it isn't healthy within 90
-seconds. A good start logs a `Hubarr listening` line.
+This prints `healthy`, or the recent logs and a non-zero exit if it isn't
+healthy within 90 seconds. A good start logs a `Hubarr listening` line.
 
 This whole section needs Docker. On a machine where it is unavailable, say so
 rather than substituting a workspace check for a real rebuild.

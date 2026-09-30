@@ -63,8 +63,16 @@ def repair_tree(directory_fd: int, node_uid: int, node_gid: int) -> None:
             child_names = []
             for entry in entries:
                 repair_entry(entry.name, current_fd, node_uid, node_gid)
-                if entry.is_dir(follow_symlinks=False):
-                    child_names.append(entry.name)
+                # is_dir() needs an lstat on filesystems that don't report the
+                # entry type in the listing, and that can be refused.
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        child_names.append(entry.name)
+                except OSError as error:
+                    print(
+                        f"warning: unable to inspect {entry.name!r}: {error.strerror}",
+                        file=sys.stderr,
+                    )
             stack[-1] = (current_fd, close_after, child_names, 0)
             continue
 
