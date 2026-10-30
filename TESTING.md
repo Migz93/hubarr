@@ -10,6 +10,18 @@ instance can't produce on demand, such as a failed session check or a running
 sync in History. Server tests that need persistence use a throwaway SQLite database,
 with external services replaced by fakes where needed.
 
+## Docker Pull Request Checks
+
+| Workflow check | What it checks |
+|---|---|
+| Docker AMD64 build and startup | Production Docker build, fresh unconfigured startup, container health and HTTP endpoint, SQLite native module, writable `/config`, and non-root app process |
+| Docker ARM64 build | Production Docker build under QEMU for `linux/arm64`; startup is not tested |
+
+These run automatically on pull requests without publishing images or connecting
+to external services. See [Docker Pull Request Checks](docs/workflow.md#docker-pull-request-checks)
+for runner, diagnostics, and coverage details. Configured end-to-end tests remain
+separate.
+
 ## Commands
 
 | Command | What it does |
