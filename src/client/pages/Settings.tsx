@@ -7,7 +7,8 @@ import { useAccessibleOverlay } from "../lib/useAccessibleOverlay";
 import { formatRelativeTime } from "../lib/utils";
 import PlexConfigForm from "../components/PlexConfigForm";
 import CollectionsConfigForm from "../components/CollectionsConfigForm";
-import { Field, SaveBar, SectionCard, TextInput, ToggleField } from "../components/FormControls";
+import { SaveBar, SectionCard, TextInput } from "../components/FormControls";
+import { SettingsField, SettingsNumber, SettingsToggle } from "../components/SettingsControls";
 import type { AboutInfo, JobInfo, LogEntry, LogsPageResponse, SeerrSettingsView, SettingsResponse } from "../../shared/types";
 
 type Tab = "general" | "plex" | "collections" | "seerr" | "logs" | "jobs" | "about";
@@ -105,6 +106,7 @@ export default function Settings() {
           )}
           {activeTab === "plex" && settings && (
             <PlexConfigForm
+              settingsLayout
               initialConfig={settings.plex}
               saveUrl="/api/settings/plex/save"
               testUrl="/api/settings/plex/test"
@@ -116,6 +118,7 @@ export default function Settings() {
           )}
           {activeTab === "collections" && settings && (
             <CollectionsConfigForm
+              settingsLayout
               initialValue={settings.collections}
               librariesUrl="/api/settings/plex/libraries"
               saveLabel="Save Collections"
@@ -241,21 +244,21 @@ function GeneralTab({
       <div className="bg-background-container rounded-2xl border border-outline-variant/20 p-5">
         <h3 className="font-headline font-semibold text-base text-on-surface mb-1">Settings</h3>
         <p className="text-xs text-on-surface-variant mb-4">Changes to proxy support require a container restart to take effect.</p>
-        <div className="space-y-4">
-          <ToggleField
+        <div className="grid gap-5">
+          <SettingsToggle
             label="Trust Proxy"
             hint="Enable when Hubarr is running behind a reverse proxy (e.g. Nginx, Traefik, Caddy) so that rate limiting uses the real client IP from X-Forwarded-For headers."
             checked={form.trustProxy}
             onChange={(value) => setForm((current) => ({ ...current, trustProxy: value }))}
             restartRequired
           />
-          <ToggleField
+          <SettingsToggle
             label="Track All Users"
             hint="This allows you to view watchlist data for all your Plex users regardless of their enabled status. This will not publish collections."
             checked={form.trackAllUsers}
             onChange={(value) => setForm((current) => ({ ...current, trackAllUsers: value }))}
           />
-          <ToggleField
+          <SettingsToggle
             label="Startup Sync"
             hint="When Hubarr starts, run a full scan of your libraries and watchlists, then publish collections."
             checked={form.fullSyncOnStartup}
@@ -267,28 +270,17 @@ function GeneralTab({
             <div className="flex-1 h-px bg-outline-variant/20" />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-on-surface mb-1">History Retention</label>
-            <p className="text-xs text-on-surface-variant mb-2">
-              How many days of scheduled sync history to keep before trimming older entries.
-            </p>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                min={1}
-                step={1}
-                value={form.historyRetentionDays}
-                onChange={(e) =>
-                  setForm((current) => ({
-                    ...current,
-                    historyRetentionDays: Math.max(1, Math.floor(Number(e.target.value) || 1))
-                  }))
-                }
-                className="w-28 bg-background-container-low border border-outline-variant/30 rounded-xl px-3 py-2 text-sm text-on-surface focus:outline-none focus:border-primary"
-              />
-              <span className="text-sm text-on-surface-variant">days</span>
-            </div>
-          </div>
+          <SettingsNumber
+            label="History Retention"
+            hint="How many days of scheduled sync history to keep before trimming older entries."
+            unit="days"
+            min={1}
+            value={form.historyRetentionDays}
+            onChange={(value) => setForm((current) => ({
+              ...current,
+              historyRetentionDays: Math.max(1, Math.floor(Number(value) || 1))
+            }))}
+          />
 
           <div className="pt-1">
             <SaveBar saving={saving} success={success} error={error} onSave={() => void save()} label="Save General" />
@@ -1159,8 +1151,8 @@ function SeerrTab({
       <div className="bg-background-container rounded-2xl border border-outline-variant/20 p-5">
         <h3 className="font-headline font-semibold text-base text-on-surface mb-4">Seerr Integration</h3>
 
-        <div className="space-y-4">
-          <ToggleField
+        <div className="grid gap-5">
+          <SettingsToggle
             label="Enable Seerr Integration"
             hint="Connect Hubarr to Seerr so missing watchlist items can be turned into requests."
             checked={form.enabled}
@@ -1172,15 +1164,15 @@ function SeerrTab({
             <div className="flex-1 h-px bg-outline-variant/20" />
           </div>
 
-          <Field label="Seerr URL" hint="Example: http://seerr:5055">
+          <SettingsField label="Seerr URL" hint="Example: http://seerr:5055">
             <TextInput
               value={form.baseUrl}
               onChange={(v) => setForm((f) => ({ ...f, baseUrl: v }))}
               placeholder="http://seerr:5055"
             />
-          </Field>
+          </SettingsField>
 
-          <Field label="API Key" hint="Seerr API key for Hubarr to use.">
+          <SettingsField label="API Key" hint="Seerr API key for Hubarr to use.">
             <input
               type="password"
               value={apiKeyTouched ? form.apiKey : (settings.seerr.apiKeyConfigured ? "**************" : "")}
@@ -1197,21 +1189,21 @@ function SeerrTab({
               placeholder=""
               className="w-full bg-background-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-on-surface text-sm placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary/50"
             />
-          </Field>
+          </SettingsField>
 
           <div className="flex items-center gap-3 pt-1">
             <span className="text-xs font-semibold text-on-surface-variant uppercase tracking-widest">Behaviour</span>
             <div className="flex-1 h-px bg-outline-variant/20" />
           </div>
 
-          <ToggleField
+          <SettingsToggle
             label="Automatic Requests"
             hint="When enabled Hubarr creates a request in Seerr for missing watchlist items that are not already in Seerr."
             checked={form.autoRequestEnabled}
             onChange={(v) => setForm((f) => ({ ...f, autoRequestEnabled: v }))}
           />
 
-          <ToggleField
+          <SettingsToggle
             label="Use Hubarr Service Account"
             hint="When enabled Hubarr creates a dedicated Seerr user account to manage requests. When disabled, Hubarr uses the admin account associated with the API key."
             checked={form.useServiceAccount}
@@ -1225,7 +1217,7 @@ function SeerrTab({
             </div>
           )}
 
-          <div className="flex items-center justify-between gap-3 pt-2 border-t border-outline-variant/15">
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-outline-variant/15">
             <div className="flex items-center gap-3 flex-wrap">
               <button
                 onClick={() => void testConnection()}

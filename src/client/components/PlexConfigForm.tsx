@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { apiGet, apiPost } from "../lib/api";
 import type { PlexConfigPayload, PlexConnectionOption, PlexLibrary, PlexSettingsView } from "../../shared/types";
-import { Field, SectionCard, SelectInput, TextInput, ToggleField } from "./FormControls";
+import { Field as FormField, SectionCard, SelectInput, TextInput, ToggleField as FormToggleField } from "./FormControls";
+import { SettingsField, SettingsToggle } from "./SettingsControls";
 
 interface PlexConfigResponse {
   plex: PlexSettingsView | null;
@@ -15,6 +16,7 @@ export default function PlexConfigForm({
   testUrl,
   onSaved,
   onBack,
+  settingsLayout = false,
   saveLabel = "Save Plex"
 }: {
   initialConfig: PlexSettingsView | null;
@@ -23,7 +25,12 @@ export default function PlexConfigForm({
   onSaved?: (result: PlexConfigResponse) => void | Promise<void>;
   onBack?: () => void;
   saveLabel?: string;
+  settingsLayout?: boolean;
 }) {
+  const serverId = useId();
+  const hostnameId = useId();
+  const Field = settingsLayout ? SettingsField : FormField;
+  const ToggleField = settingsLayout ? SettingsToggle : FormToggleField;
   const [availableServers, setAvailableServers] = useState<PlexConnectionOption[]>([]);
   const [loadingServers, setLoadingServers] = useState(false);
   const [selectedServerUri, setSelectedServerUri] = useState<string>(initialConfig?.serverUrl ?? "");
@@ -122,10 +129,13 @@ export default function PlexConfigForm({
       title="Plex Settings"
       description="Connect Hubarr to your Plex server to start building and publishing watchlist collections."
       wide
+      settingsLayout={settingsLayout}
     >
-      <Field label="Server" hint="Press the button to load available servers">
+      <Field htmlFor={settingsLayout ? serverId : undefined} label="Server" hint="Press the button to load available servers">
         <div className="grid grid-cols-[1fr_auto] gap-2 items-stretch">
           <SelectInput
+            id={settingsLayout ? serverId : undefined}
+            aria-describedby={settingsLayout ? `${serverId}-hint` : undefined}
             value={selectedServerUri}
             onChange={(value) => {
               const match = groupedServers.find((entry) => entry.value === value)?.option;
@@ -159,20 +169,21 @@ export default function PlexConfigForm({
         </div>
       </Field>
 
-      <div className="grid grid-cols-1 md:grid-cols-[1fr_140px] gap-4">
-        <Field label="Hostname or IP Address*">
+      <div className={settingsLayout ? "grid gap-5" : "grid grid-cols-1 md:grid-cols-[1fr_140px] gap-4"}>
+        <Field htmlFor={settingsLayout ? hostnameId : undefined} label="Hostname or IP Address*">
           <div className="flex rounded-lg border border-outline-variant/30 overflow-hidden bg-background-container-low">
             <div className="px-3 py-2 text-sm text-on-surface-variant bg-background-container-high border-r border-outline-variant/20">
               {useSsl ? "https://" : "http://"}
             </div>
             <input
+              id={settingsLayout ? hostnameId : undefined}
               value={hostname}
               onChange={(event) => {
                 switchToManual();
                 setHostname(event.target.value);
               }}
               placeholder="192.168.1.10"
-              className="flex-1 bg-transparent px-3 py-2 text-on-surface text-sm placeholder:text-on-surface-variant/50 focus:outline-none"
+              className="min-w-0 flex-1 bg-transparent px-3 py-2 text-on-surface text-sm placeholder:text-on-surface-variant/50 focus:outline-none"
             />
           </div>
         </Field>
@@ -194,7 +205,7 @@ export default function PlexConfigForm({
         setUseSsl(value);
       }} />
 
-      <div className="flex items-center justify-between gap-3 pt-2 border-t border-outline-variant/15">
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-outline-variant/15">
         <div className="flex items-center gap-3 flex-wrap">
           {onBack && (
             <button
