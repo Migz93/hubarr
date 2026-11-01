@@ -84,13 +84,14 @@ export function SettingsToggle({
 }) {
   const id = useId();
   const labelId = `${id}-label`;
+  const restartId = restartRequired ? `${id}-restart` : undefined;
   const hintId = hint ? `${id}-hint` : undefined;
   return (
     <label className={`${rowClassName} cursor-pointer has-[:disabled]:cursor-not-allowed`}>
       <span className="min-w-0">
         <span className="flex flex-wrap items-center gap-2">
           <span id={labelId} className={labelClassName}>{label}</span>
-          {restartRequired && <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-warning/15 text-warning">Restart Required</span>}
+          {restartRequired && <span id={restartId} className="text-xs font-medium px-1.5 py-0.5 rounded bg-warning/15 text-warning">Restart Required</span>}
         </span>
         {hint && <span id={hintId} className={hintClassName}>{hint}</span>}
       </span>
@@ -100,7 +101,7 @@ export function SettingsToggle({
           checked={checked}
           disabled={disabled}
           aria-labelledby={labelId}
-          aria-describedby={hintId}
+          aria-describedby={[hintId, restartId].filter(Boolean).join(" ") || undefined}
           onChange={(e) => onChange(e.target.checked)}
           className="peer sr-only"
         />
