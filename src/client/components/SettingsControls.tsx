@@ -1,7 +1,8 @@
 import { Children, cloneElement, useId, type ReactElement, type ReactNode } from "react";
 
 // Negative margins extend the hover band without changing the spacing between rows.
-const rowClassName = "-mx-3 -my-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-6 gap-y-2 rounded-lg px-3 py-2 transition-colors hover:bg-background-container-high has-[:disabled]:hover:bg-transparent";
+// A disabled auxiliary button must not suppress hover while the row's form control is enabled.
+const rowClassName = "-mx-3 -my-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-6 gap-y-2 rounded-lg px-3 py-2 transition-colors hover:bg-background-container-high has-[input:disabled,select:disabled]:hover:bg-transparent";
 const labelClassName = "block text-sm font-medium text-on-surface";
 const hintClassName = "mt-0.5 block max-w-[65ch] text-xs leading-relaxed text-on-surface-variant";
 
