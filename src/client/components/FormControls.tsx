@@ -5,12 +5,14 @@ export function SectionCard({
   title,
   description,
   children,
-  wide = false
+  wide = false,
+  settingsLayout = false
 }: {
   title: string;
   description?: string;
   children: ReactNode;
   wide?: boolean;
+  settingsLayout?: boolean;
 }) {
   return (
     <div
@@ -24,7 +26,7 @@ export function SectionCard({
           <p className="text-on-surface-variant text-sm mt-1">{description}</p>
         )}
       </div>
-      <div className="space-y-4">{children}</div>
+      <div className={settingsLayout ? "grid gap-5" : "space-y-4"}>{children}</div>
     </div>
   );
 }
@@ -51,15 +53,21 @@ export function TextInput({
   value,
   onChange,
   placeholder,
-  type = "text"
+  type = "text",
+  id,
+  "aria-describedby": describedBy
 }: {
   value: string;
   onChange: (value: string) => void;
+  id?: string;
+  "aria-describedby"?: string;
   placeholder?: string;
   type?: string;
 }) {
   return (
     <input
+      id={id}
+      aria-describedby={describedBy}
       type={type}
       value={value}
       onChange={(event) => onChange(event.target.value)}
@@ -72,14 +80,20 @@ export function TextInput({
 export function SelectInput({
   value,
   onChange,
-  children
+  children,
+  id,
+  "aria-describedby": describedBy
 }: {
   value: string;
   onChange: (value: string) => void;
   children: ReactNode;
+  id?: string;
+  "aria-describedby"?: string;
 }) {
   return (
     <select
+      id={id}
+      aria-describedby={describedBy}
       value={value}
       onChange={(event) => onChange(event.target.value)}
       className="w-full bg-background-container-low border border-outline-variant/30 rounded-lg px-3 py-2 text-on-surface text-sm focus:outline-none focus:border-primary/50"
