@@ -1,4 +1,4 @@
-<!-- shared: content — keep in sync across Migz93 self-hosted apps; only the Project Facts values differ -->
+<!-- shared: conventions across Migz93 self-hosted apps, with a Hubarr-specific development and deployment workflow -->
 
 # Agent Guidelines
 
@@ -15,10 +15,8 @@ the table below says when to go and read it.
 
 ## Project Facts
 
-Everything below this table is identical across hubarr, pacearr and shelfbridge,
-apart from the app name, port and paths from this table written into the
-examples. This table is the only place the projects differ — when a rule below
-refers to "the port" or "the version files", it means the value here.
+The shared conventions below use the app-specific values in this table.
+Hubarr's development and deployment workflow is specific to this repository.
 
 | | |
 |---|---|
@@ -62,33 +60,16 @@ are specific to this app.
 
 ## Where You're Running
 
-This repo is worked on from two different places, and they are **not equally
-capable**. Check which one you're in before doing anything Docker-related:
+For the owner's server workflow, open Hubarr on the remote Codex host or
+connect to the host from a local chat. Check the development container and
+workspace mount, then edit source, install dependencies, run tests and build
+inside the Hubarr devcontainer as its development user. See the private
+`LOCAL.md` for machine-specific details. A server-side chat can execute commands
+in the development container directly through Docker. Local clients can use SSH
+to reach the same container.
 
-```bash
-uname -s
-docker info >/dev/null 2>&1 && echo "docker: available" || echo "docker: unavailable"
-```
-
-| | Devcontainer (Linux, DooD) | Mac (Claude/Codex desktop app) |
-|---|---|---|
-| `uname -s` | `Linux` | `Darwin` |
-| Docker build / run / logs | Yes | **No** |
-| `/opt/hubarr` bind mount | On the Docker host | **Absent — never create it** |
-| `npm ci`, build, checks | Yes | Yes |
-| Server tests | Yes | Yes |
-| Playwright | Yes | Only against a remote `BASE_URL` |
-| Docs, refactors, review, git, `gh` | Yes | Yes |
-
-**If a task needs a container built, run, or inspected and Docker is
-unavailable, stop and say so.** Do not improvise a workaround, do not try to
-install or configure Docker, and do not report a change as verified when it was
-only type-checked. Name the step that needs the devcontainer and let the user
-decide how to proceed.
-
-The line falls at *"does this need a running container to verify?"* — Dockerfile
-changes, entrypoint changes, and anything touching startup or the bind mount
-need the devcontainer. Docs, refactors, server tests, and review do not.
+If the required development container or Docker access is unavailable, report
+the missing step. Keep dependency installation and builds in the devcontainer.
 
 ## Docker Outside Of Docker
 
@@ -180,46 +161,16 @@ change the port unless the user explicitly asks.
 
 ## Rebuilding The Container After Code Changes
 
-Any change to source code requires rebuilding the Docker image and recreating
-the container. The app is not hot-reloaded inside the container — the image
-bakes in a production build at `docker build` time.
+For implementation changes to the running app or image, use the
+[Manual Smoke Test](TESTING.md#manual-smoke-test) procedure. Build a uniquely
+tagged candidate in the devcontainer and verify it in a disposable container
+with fresh storage. After the required checks and disposable startup and health
+checks pass, the owner's default is to deploy the **exact tested image** to live
+Hubarr and verify it. An instruction to stop at validation or skip deployment
+takes precedence. Preserve live data and runtime settings.
 
-Workspace checks are useful, but they do not verify the running deployment.
-Whenever implementation changes need end-to-end verification, rebuild from the
-current workspace and recreate the live container from it.
-
-Standard rebuild sequence (run from `/workspaces/hubarr`):
-
-```bash
-docker build -t hubarr .
-docker stop hubarr && docker rm hubarr
-docker run -d \
-  --name hubarr \
-  --network bridge \
-  -p 9301:9301 \
-  -v /opt/hubarr:/config \
-  --restart unless-stopped \
-  hubarr
-```
-
-Keep the image and container name as `hubarr`, use bridge networking, and
-preserve the `/opt/hubarr:/config` bind mount so configuration, database, and
-logs remain intact while the container is recreated.
-
-After the container starts, wait for it to become healthy. The status reads
-`starting` until the image's HEALTHCHECK first passes, usually within a few
-seconds, so poll rather than checking once:
-
-```bash
-timeout 90 sh -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" hubarr)" = healthy ]; do sleep 3; done' \
-  && echo healthy || { docker logs hubarr 2>&1 | tail -20; false; }
-```
-
-This prints `healthy`, or the recent logs and a non-zero exit if it isn't
-healthy within 90 seconds. A good start logs a `Hubarr listening` line.
-
-This whole section needs Docker. On a machine where it is unavailable, say so
-rather than substituting a workspace check for a real rebuild.
+Documentation-only and review-only tasks do not trigger this deployment flow.
+The PR and review gates below still apply.
 
 ---
 

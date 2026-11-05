@@ -310,38 +310,38 @@ When a test is agreed and written, add a row for it in the relevant table above.
 
 ## Manual Smoke Test
 
-For a local Docker verification:
+1. In the Hubarr devcontainer, run `npm run check`, `npm run lint`, and any
+   tests relevant to the change. Build the production image from the same
+   workspace with a unique candidate tag. Record the source revision and the
+   resulting image ID.
+2. Start that image ID in a uniquely named disposable container on bridge
+   networking with fresh writable storage at `/config`, such as tmpfs or an
+   anonymous volume. Use no live data mounts, live Plex or Seerr credentials,
+   or restart policy. For browser checks, use a separate loopback port. For
+   startup and health checks alone, leave the port unpublished.
+3. Wait for Docker health and check that `GET /api/health` returns HTTP 200.
+   Verify that the app runs as a non-root user. Exercise the changed behaviour
+   where possible with disposable data or mocked integrations. Record which
+   checks require real configuration or data. Collect sanitized failure
+   evidence if needed and remove the disposable container and storage in
+   either case.
+4. After the required checks pass, deploy the exact tested image ID to live
+   Hubarr by default for implementation work. Stop at validation when the
+   owner requests it. A failed required check stops the flow before replacement.
 
-```bash
-docker build -t hubarr .
-docker stop hubarr && docker rm hubarr
-docker run -d \
-  --name hubarr \
-  --network bridge \
-  -p 9301:9301 \
-  -v /opt/hubarr:/config \
-  --restart unless-stopped \
-  hubarr
-timeout 90 sh -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" hubarr)" = healthy ]; do sleep 3; done' \
-  && echo healthy || { docker logs hubarr 2>&1 | tail -20; false; }
-```
+### Live replacement and verification
 
-This waits for the HEALTHCHECK, which reads `starting` until its first check
-passes, and prints `healthy`. If it prints logs instead, look for the startup
-line:
+Inspect the current live container and preserve its data mount, port mapping,
+network, restart policy, and runtime overrides. Stop and retain the previous
+container under a temporary name while starting the replacement. Verify the
+new image ID, Docker health, HTTP health, and the relevant app behaviour. Keep
+the previous image available and remove the stopped previous container after
+verification passes. If verification fails, retain it and report the failure.
+Consider existing-data migrations before rolling back an image.
 
-```text
-Hubarr listening on http://0.0.0.0:9301
-```
-
-Then open `http://localhost:9301` and smoke-test:
-
-- Dashboard loads after authentication
-- Settings loads and the About tab reports version/build info
-- Users page lists discovered friends
-- A manual sync runs and appears in History
-- `/api/settings` returns `401` from an unauthenticated browser/session
-- `/images/...` returns `401` without a valid session
-
-This section needs Docker. See "Where You're Running" in `AGENTS.md` — where it
-is unavailable, say so rather than substituting a workspace check.
+Check configured behaviour separately from disposable startup. When relevant,
+verify that the dashboard and Settings load, that unauthenticated routes return
+the expected status, and that the changed feature works with the live
+configuration. Run a real sync or another operation that changes live data only
+when authorized. Report the limits of testing against existing data and real
+integrations.
