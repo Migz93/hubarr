@@ -1,4 +1,4 @@
-<!-- shared: conventions across Migz93 self-hosted apps, with a Hubarr-specific development and deployment workflow -->
+<!-- shared: content — keep in sync across Migz93 self-hosted apps; only Project Facts values differ -->
 
 # Agent Guidelines
 
@@ -15,8 +15,9 @@ the table below says when to go and read it.
 
 ## Project Facts
 
-The shared conventions below use the app-specific values in this table.
-Hubarr's development and deployment workflow is specific to this repository.
+The guidance in this file is shared across Hubarr, Pacearr and Shelfbridge.
+Use the values in this table wherever a rule refers to the app name, port,
+data directory, workspace or version files.
 
 | | |
 |---|---|
@@ -24,7 +25,7 @@ Hubarr's development and deployment workflow is specific to this repository.
 | Port | `9301` |
 | Host data directory | `/opt/hubarr` |
 | Container data directory | `/config` |
-| Workspace path | `/workspaces/hubarr` (host checkout location in private `LOCAL.md`) |
+| Workspace path | `/workspaces/hubarr` |
 | Version files | `package.json` and `package-lock.json` (`src/server/version.ts` reads the version from `package.json` at runtime, so there is nothing else to update) |
 | Checks to run before closing out work | `npm run check`, `npm run lint` |
 | Test suite | Server tests — `npm test`. Playwright end-to-end suite — `npm run test:e2e`. |
@@ -60,86 +61,27 @@ are specific to this app.
 
 ## Where You're Running
 
-For the owner's server workflow, open Hubarr on the remote Codex host or
-connect to it from a local chat. Check the branch and workspace for other
-work, then create or start the Hubarr devcontainer using `LOCAL.md`.
-Edit source, install dependencies and run application checks and tests inside
-it as the development user.
+For implementation work, check the branch, dirty state and concurrent use,
+then start the app's devcontainer using the commands in `LOCAL.md` when present.
+Edit source, install dependencies, and run application checks and tests inside
+the devcontainer as its development user. Run authenticated Git operations,
+CodeRabbit, Docker builds and container management on the Docker host.
 
-Run production Docker builds, disposable containers and live replacement from
-the Docker host. Use bridge networking, and run builds from the same checkout
-that was tested inside the devcontainer. Keep project dependency installation
-in the devcontainer or production image build.
+The development image definition is `.devcontainer/Dockerfile`. The devcontainer
+mounts the checkout at the workspace path in Project Facts. Keep machine-specific
+paths and launcher commands in the ignored `LOCAL.md`.
 
-## Host Filesystem Conventions
+## Live Container Conventions
 
-Everything for Hubarr lives under a single directory on the host:
-
-```
-/opt/hubarr/
-```
-
-All files the app needs — config, database, logs, whatever — go directly in
-there. Do not create subdirectories like `config/` or `data/` unless the app
-itself requires a specific path inside the container. Keep it flat. The
-exceptions are subdirectories the app creates itself on startup, such as
-`logs/` — don't create them by hand.
-
-## Docker Naming Conventions
-
-When building images or creating containers for this app, use the app name
-directly — do not suffix with `-app`, `-container`, `-service`, or similar.
-
-| Thing | Correct | Incorrect |
-|---|---|---|
-| Image name | `hubarr` | `hubarr-app`, `hubarr-image` |
-| Container name | `hubarr` | `hubarr-app`, `hubarr-container` |
-| Compose service name | `hubarr` | `app`, `hubarr-service` |
-
-If the app gains multiple distinct services (e.g. a frontend and an API), use
-`hubarr-frontend`, `hubarr-api` etc.
-
-## Bind Mounts
-
-Bind-mount the entire app directory from the host into the container as a single
-volume. Do not use named Docker volumes — the user needs to be able to inspect
-and edit files directly on the host.
-
-Map `/opt/hubarr` on the host to `/config` inside the container (the app
-reads `DATA_DIR=/config`).
-
-Example docker-compose service:
-
-```yaml
-services:
-  hubarr:
-    image: hubarr
-    container_name: hubarr
-    network_mode: bridge
-    ports:
-      - "9301:9301"
-    volumes:
-      - /opt/hubarr:/config
-    restart: unless-stopped
-```
-
-## Where Your App Code Is
-
-The devcontainer mounts the host Git checkout at `/workspaces/hubarr`.
-The development image definition lives in `.devcontainer/Dockerfile`.
-
-## Port
-
-Hubarr runs on port **9301**. Always map `9301:9301` — do not
-change the port unless the user explicitly asks.
-
-## Checklist Before Creating Any Container
-
-- [ ] Image name matches the app name
-- [ ] Container name matches the app name
-- [ ] `/opt/hubarr` on the host bind-mounted as a single volume
-- [ ] Host directory documented or created in setup steps
-- [ ] `--network bridge` / `network_mode: bridge` set
+- Use the app name for the image, container and Compose service.
+- Use bridge networking and the port from Project Facts. For Docker builds,
+  use the default build network.
+- Bind the host data directory as a single mount at the container data directory.
+  Keep the data directory flat apart from subdirectories created by the app.
+- Inspect existing runtime settings before live replacement. Preserve the data
+  mount, port mapping, network, restart policy and overrides.
+- For disposable containers, follow [TESTING.md](TESTING.md) and use fresh
+  storage with a unique name.
 
 ## Rebuilding The Container After Code Changes
 
@@ -147,8 +89,8 @@ For implementation changes to the running app or image, use the
 [Manual Smoke Test](TESTING.md#manual-smoke-test) procedure. Build a uniquely
 tagged candidate on the Docker host and verify it in a disposable container
 with fresh storage. After the required checks and disposable startup and health
-checks pass, the owner's default is to deploy the **exact tested image** to live
-Hubarr and verify it. An instruction to stop at validation or skip deployment
+checks pass, the owner's default is to replace the running app with the
+**exact tested image** and verify it. An instruction to stop at validation or skip deployment
 takes precedence. Preserve live data and runtime settings.
 
 Documentation-only and review-only tasks do not trigger this deployment flow.
@@ -269,7 +211,7 @@ number in two files with no logic to review — open it directly.
 
 #### The Cross-AI Review
 
-Hubarr is worked on by two AI agents — Claude and Codex — usually in separate
+The app is worked on by two AI agents — Claude and Codex — usually in separate
 chat sessions, with the user relaying messages between them. The changeset goes
 through a review pass by the *other* agent.
 
@@ -435,10 +377,9 @@ requires confirmation that its work was discarded before deleting its branch.
 Preserve unrelated branches and unsynchronized work. Report any cleanup that
 needs to happen on a disconnected client.
 
-When the PR closes or the owner cancels, stop and remove the Hubarr
-devcontainer using the procedure in `LOCAL.md`.
-Preserve the checkout and live deployment. Remove the container's disposable
-dependency volume with the container.
+When the PR closes or the owner cancels, stop and remove the app's
+devcontainer and its disposable dependency volume using the local launcher.
+Preserve the checkout and live deployment.
 Create the devcontainer again when starting the next implementation task.
 
 ### Branch Rules Summary

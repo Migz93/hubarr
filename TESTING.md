@@ -310,13 +310,13 @@ When a test is agreed and written, add a row for it in the relevant table above.
 
 ## Manual Smoke Test
 
-1. In the Hubarr devcontainer, run `npm run check`, `npm run lint`, and any
-   tests relevant to the change. On the Docker host, build the production image
+1. In the app's devcontainer, run the checks listed in Project Facts in
+   [AGENTS.md](AGENTS.md#project-facts) and any tests relevant to the change. On the Docker host, build the production image
    from that same checkout with a unique candidate tag. Record the source revision and the
    resulting image ID.
 2. Start that image ID in a uniquely named disposable container on bridge
    networking with fresh writable storage at `/config`, such as tmpfs or an
-   anonymous volume. Use no live data mounts, live Plex or Seerr credentials,
+   anonymous volume. Use no live data mounts, live integration credentials,
    or restart policy. For browser checks, use a separate loopback port. For
    startup and health checks alone, leave the port unpublished.
 3. Wait for Docker health and check that `GET /api/health` returns HTTP 200.
@@ -325,8 +325,8 @@ When a test is agreed and written, add a row for it in the relevant table above.
    checks require real configuration or data. Collect sanitized failure
    evidence if needed and remove the disposable container and storage in
    either case.
-4. After the required checks pass, deploy the exact tested image ID to live
-   Hubarr by default for implementation work. Stop at validation when the
+4. After the required checks pass, deploy the exact tested image ID to the
+   live app by default for implementation work. Stop at validation when the
    owner requests it. A failed required check stops the flow before replacement.
 
 ### Live replacement and verification
