@@ -1,6 +1,6 @@
 {
   "name": "dev-hubarr",
-  "image": "mcr.microsoft.com/devcontainers/javascript-node:latest",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
   "runArgs": [
     "--name",
     "zdev-hubarr"
@@ -10,13 +10,6 @@
   "remoteUser": "node",
   "updateRemoteUserUID": true,
   "features": {
-    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
-      "version": "latest",
-      "moby": false,
-      "enableNonRootDocker": true,
-      "installZsh": true,
-      "upgradePackages": false
-    },
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
   "containerEnv": {
@@ -27,7 +20,6 @@
   "customizations": {
     "vscode": {
       "extensions": [
-        "ms-azuretools.vscode-docker",
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode",
         "anthropic.claude-code",

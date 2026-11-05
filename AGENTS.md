@@ -61,32 +61,15 @@ are specific to this app.
 ## Where You're Running
 
 For the owner's server workflow, open Hubarr on the remote Codex host or
-connect to the host from a local chat. Check the development container and
-workspace mount, then edit source, install dependencies, run tests and build
-inside the Hubarr devcontainer as its development user. See the private
-`LOCAL.md` for machine-specific details. A server-side chat can execute commands
-in the development container directly through Docker. Local clients can use SSH
-to reach the same container.
+connect to it from a local chat. Check the branch and workspace for other
+work, then create or start the Hubarr devcontainer using `LOCAL.md`.
+Edit source, install dependencies and run application checks and tests inside
+it as the development user.
 
-If the required development container or Docker access is unavailable, report
-the missing step. Keep dependency installation and builds in the devcontainer.
-
-## Docker Outside Of Docker
-
-In the devcontainer you have access to the host's Docker daemon via
-Docker-outside-of-Docker (DooD). `docker` and `docker compose` work normally,
-with two constraints:
-
-- You **cannot** browse the host filesystem. Paths like `/opt/...` exist on the
-  host, not inside this container. Do not `ls`, `cat`, or browse them — just
-  reference them correctly in Docker configuration.
-- Always use **bridge networking**. It is the only mode that works reliably with
-  DooD on this host.
-  - `docker run`: include `--network bridge`
-  - Compose services: set `network_mode: bridge`
-  - `docker build`: do **not** pass `--network`
-
-  Do not use `host`, `none`, or custom named networks unless explicitly asked.
+Run production Docker builds, disposable containers and live replacement from
+the Docker host. Use bridge networking, and run builds from the same checkout
+that was tested inside the devcontainer. Keep project dependency installation
+in the devcontainer or production image build.
 
 ## Host Filesystem Conventions
 
@@ -163,7 +146,7 @@ change the port unless the user explicitly asks.
 
 For implementation changes to the running app or image, use the
 [Manual Smoke Test](TESTING.md#manual-smoke-test) procedure. Build a uniquely
-tagged candidate in the devcontainer and verify it in a disposable container
+tagged candidate on the Docker host and verify it in a disposable container
 with fresh storage. After the required checks and disposable startup and health
 checks pass, the owner's default is to deploy the **exact tested image** to live
 Hubarr and verify it. An instruction to stop at validation or skip deployment
@@ -440,6 +423,23 @@ the release PR review before marking it ready. Do not commit the fix directly
 to `develop`, `main`, or the release PR.
 
 ---
+
+### Close Out Finished Or Cancelled Work
+
+After the work PR merges or the owner cancels the work, check that the task
+checkout is clean and that no other chat is using the devcontainer. Switch
+back to the integration branch and fast-forward it. Delete leftover branches
+for this task on the server, GitHub and available clients once you have
+verified the work was merged or the owner explicitly discarded it. Check
+squash merges against the reviewed PR head. A PR closed without merging
+requires confirmation that its work was discarded before deleting its branch.
+Preserve unrelated branches and unsynchronized work. Report any cleanup that
+needs to happen on a disconnected client.
+
+When the PR closes or the owner cancels, stop and remove the Hubarr
+devcontainer using the procedure in `LOCAL.md`.
+Preserve the checkout, development home, volumes and live deployment.
+Create the devcontainer again when starting the next implementation task.
 
 ### Branch Rules Summary
 

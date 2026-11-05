@@ -118,7 +118,7 @@ or a new route that bypasses the exemptions rather than rerunning the suite.
 
 ### Devcontainer Note
 
-The tests normally run inside the VS Code devcontainer. Because the devcontainer
+Run tests inside the Hubarr devcontainer. Because the devcontainer
 has no display, a headed browser window cannot be opened — which is why auth uses
 the `SESSION_COOKIE` env var rather than a Playwright-driven OAuth flow.
 
@@ -311,8 +311,8 @@ When a test is agreed and written, add a row for it in the relevant table above.
 ## Manual Smoke Test
 
 1. In the Hubarr devcontainer, run `npm run check`, `npm run lint`, and any
-   tests relevant to the change. Build the production image from the same
-   workspace with a unique candidate tag. Record the source revision and the
+   tests relevant to the change. On the Docker host, build the production image
+   from that same checkout with a unique candidate tag. Record the source revision and the
    resulting image ID.
 2. Start that image ID in a uniquely named disposable container on bridge
    networking with fresh writable storage at `/config`, such as tmpfs or an
