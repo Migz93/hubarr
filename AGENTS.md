@@ -24,7 +24,7 @@ Hubarr's development and deployment workflow is specific to this repository.
 | Port | `9301` |
 | Host data directory | `/opt/hubarr` |
 | Container data directory | `/config` |
-| Workspace path | `/workspaces/hubarr` (same as `app/` on the host at `/opt/vscode/node/hubarr/app/`) |
+| Workspace path | `/workspaces/hubarr` (host checkout location in private `LOCAL.md`) |
 | Version files | `package.json` and `package-lock.json` (`src/server/version.ts` reads the version from `package.json` at runtime, so there is nothing else to update) |
 | Checks to run before closing out work | `npm run check`, `npm run lint` |
 | Test suite | Server tests — `npm test`. Playwright end-to-end suite — `npm run test:e2e`. |
@@ -125,9 +125,8 @@ services:
 
 ## Where Your App Code Is
 
-Your workspace is mounted at `/workspaces/hubarr` inside the devcontainer.
-This is the same directory as `app/` on the host at
-`/opt/vscode/node/hubarr/app/`.
+The devcontainer mounts the host Git checkout at `/workspaces/hubarr`.
+The development image definition lives in `.devcontainer/Dockerfile`.
 
 ## Port
 
@@ -339,7 +338,7 @@ that the **PR itself** is not opened until the gate says so.
 
 #### The CodeRabbit CLI Review
 
-Run with `--agent`, which produces structured output intended for an AI agent
+Run from the host checkout with `--agent`, which produces structured output intended for an AI agent
 rather than the interactive terminal UI:
 
 ```bash
@@ -438,7 +437,8 @@ needs to happen on a disconnected client.
 
 When the PR closes or the owner cancels, stop and remove the Hubarr
 devcontainer using the procedure in `LOCAL.md`.
-Preserve the checkout, development home, volumes and live deployment.
+Preserve the checkout and live deployment. Remove the container's disposable
+dependency volume with the container.
 Create the devcontainer again when starting the next implementation task.
 
 ### Branch Rules Summary
