@@ -5,8 +5,6 @@
     "context": ".."
   },
   "runArgs": [
-    "--name",
-    "zdev-hubarr",
     "--mount",
     "type=volume,destination=/workspaces/hubarr/node_modules,volume-nocopy"
   ],
