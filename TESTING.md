@@ -3,7 +3,7 @@
 # Testing
 
 Hubarr has two test layers. [Playwright](https://playwright.dev/) end-to-end
-tests run against a **live, fully set-up Hubarr instance** with no test
+tests run against a **running, fully set-up Hubarr instance** with no test
 database, so you need a running app with a real Plex connection before they are
 meaningful. A few tests stub individual browser requests to set up states a live
 instance can't produce on demand, such as a failed session check or a running
@@ -49,6 +49,11 @@ is removed after the test completes. They do not require a running Hubarr
 instance, Plex, or Seerr, and are safe to run locally and in CI.
 
 ## Playwright End-To-End Tests
+
+Use a configured test instance with disposable data for the full suite.
+Obtain the owner's authorization before running the suite against live data
+or real integrations.
+The live-refresh tests trigger real collection syncs.
 
 ### Reaching the App From a Devcontainer
 
@@ -347,8 +352,9 @@ When a test is agreed and written, add a row for it in the relevant table above.
    or `SESSION_COOKIE`. Reach the smoke container on a shared private bridge
    or through a loopback tunnel inside the devcontainer. Run the full
    `npm run test:e2e` suite separately against a configured instance with a
-   valid session. For startup and health checks alone, leave the port
-   unpublished.
+   valid session. Obtain the owner's authorization before running it against
+   live data or real integrations. For startup and health checks alone,
+   leave the port unpublished.
 3. Wait for Docker health and check that `GET /api/health` returns HTTP 200.
    Verify that the app runs as a non-root user. Exercise the changed behaviour
    where possible with disposable data or mocked integrations. Record which
