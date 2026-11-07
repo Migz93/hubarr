@@ -3,7 +3,7 @@
 # Testing
 
 Hubarr has two test layers. [Playwright](https://playwright.dev/) end-to-end
-tests run against a **live, fully set-up Hubarr instance** with no test
+tests run against a **running, fully set-up Hubarr instance** with no test
 database, so you need a running app with a real Plex connection before they are
 meaningful. A few tests stub individual browser requests to set up states a live
 instance can't produce on demand, such as a failed session check or a running
@@ -49,6 +49,42 @@ is removed after the test completes. They do not require a running Hubarr
 instance, Plex, or Seerr, and are safe to run locally and in CI.
 
 ## Playwright End-To-End Tests
+
+Use a configured test instance with disposable data for the full suite.
+Obtain the owner's authorization before running the suite against live data
+or real integrations.
+The live-refresh tests trigger Collection Sync, which can change collections
+and sharing filters on the connected Plex server. Use a separate test Plex
+server and account with test-only users, or get specific authorization for
+those live Plex changes. Before E2E cleanup, check Collection Sync and wait
+for active runs to finish. If its status cannot be verified, preserve the
+test instance and storage and report the gap.
+
+Disabling a job does not block its Run Now endpoint. Confirm prevention
+only when the owner has confirmed no manual runs will be triggered during
+the check-and-stop window, including browser tests and other automation.
+Otherwise, treat prevention as unconfirmed.
+
+### Reaching the App From a Devcontainer
+
+If the app runs on the Docker host, set `BASE_URL` in `.env.playwright` to
+the app's published URL on a hostname or address reachable from the
+devcontainer. Use the deployment's actual published host port or its
+configured reverse proxy URL. Inside a devcontainer, `localhost` refers to
+that container. Verify connectivity from the devcontainer before running the
+suite.
+
+For a loopback-only host port, use an existing reachable reverse proxy or
+forward the port over SSH. For a manual browser check, run the SSH local
+forward on your browser machine. For Playwright, the forward must listen
+inside the devcontainer, for example
+`ssh -N -L 127.0.0.1:<local-port>:127.0.0.1:<host-port> <docker-host>`
+from the devcontainer if it already has authorized SSH access. Set
+`BASE_URL` to the forwarded URL. Keep the host port bound to loopback.
+
+Use the same app URL in your browser to obtain the session cookie. When the
+URL changes, clear `tests/playwright/.auth/storageState.json` and set a fresh
+`SESSION_COOKIE` for the new URL before rerunning the auth setup.
 
 ### First-Time Setup
 
@@ -118,7 +154,7 @@ or a new route that bypasses the exemptions rather than rerunning the suite.
 
 ### Devcontainer Note
 
-The tests normally run inside the VS Code devcontainer. Because the devcontainer
+Run tests inside the Hubarr devcontainer. Because the devcontainer
 has no display, a headed browser window cannot be opened — which is why auth uses
 the `SESSION_COOKIE` env var rather than a Playwright-driven OAuth flow.
 
@@ -310,38 +346,192 @@ When a test is agreed and written, add a row for it in the relevant table above.
 
 ## Manual Smoke Test
 
-For a local Docker verification:
+1. Before running checks, record the source revision and planned candidate
+   tag in a task section in the Docker host checkout's ignored `LOCAL.md`.
+   Identify the task by branch or PR and a unique test ID. Create the file if
+   absent and preserve other entries. Verify that the build context matches
+   the recorded revision after applying the Docker ignore rules. If it differs,
+   record the added, changed, or missing paths, with SHA-256 hashes for added
+   or modified file contents and any relevant file modes or symlink targets.
+   Include uncommitted, untracked, or Git-ignored files that Docker includes.
+   Exclude credentials from the context and record.
+   Before checks, verify that installed devcontainer dependencies match the
+   recorded `package-lock.json`. If the lockfile changed since installation,
+   or the match cannot be verified, run `npm ci` inside the devcontainer.
+   If the Playwright version changed, rebuild the devcontainer image from the
+   recorded lockfile, then recreate the container and install the matching
+   Chromium. Follow the [devcontainer removal rules](AGENTS.md#close-out-finished-or-cancelled-work)
+   for concurrent use and retained volumes before recreating it.
+   Run the checks listed in Project Facts in [AGENTS.md](AGENTS.md#project-facts)
+   and any relevant server tests inside the app's devcontainer. Keep the
+   recorded context unchanged through those checks and the build. Recheck it
+   before building. If it changes, update the record and rerun the required
+   checks against the new context before building. On the Docker host, build
+   the production image from that verified checkout with the recorded unique
+   candidate tag. Record planned exact container and volume names and SSH
+   forward identifiers before creating them. Add the image ID and actual
+   resource IDs as they become available.
+2. Start that image ID in a disposable container named `zdev-<app>-smoke-<id>`,
+   using the app name and a unique test ID. Use bridge networking and fresh
+   writable storage at `/config`, using tmpfs or a uniquely named disposable
+   volume recorded before creation. Use no live data mounts, live integration
+   credentials, or restart policy. For a browser outside Docker, use a
+   separate loopback port and forward it as described above. Use a fresh
+   browser profile or isolated browser context for the smoke instance because
+   cookies can be shared across ports on the same hostname. Limit browser
+   checks here to unauthenticated startup and onboarding routes. For a
+   standalone Playwright smoke script, create a clean context without the
+   live `storageState.json` or `SESSION_COOKIE`. Use the smoke container's IP
+   and app port if the test runner can reach it on the default bridge.
+   Otherwise, use a loopback tunnel as described above. For startup and
+   health checks alone, leave the port unpublished.
+3. Wait for Docker health. From the Docker host, check for HTTP 200 inside
+   the smoke container, including when its port is unpublished. Set
+   `smoke` to the exact container name and `app_port` to the port in Project
+   Facts:
 
-```bash
-docker build -t hubarr .
-docker stop hubarr && docker rm hubarr
-docker run -d \
-  --name hubarr \
-  --network bridge \
-  -p 9301:9301 \
-  -v /opt/hubarr:/config \
-  --restart unless-stopped \
-  hubarr
-timeout 90 sh -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" hubarr)" = healthy ]; do sleep 3; done' \
-  && echo healthy || { docker logs hubarr 2>&1 | tail -20; false; }
-```
+   ```sh
+   docker exec "$smoke" node -e '
+     const port = process.env.PORT || process.argv[1];
+     fetch("http://127.0.0.1:" + port + "/api/health", {signal: AbortSignal.timeout(5000)})
+       .then(response => { if (response.status !== 200) process.exitCode = 1; })
+       .catch(() => { process.exitCode = 1; });
+   ' "$app_port"
+   ```
 
-This waits for the HEALTHCHECK, which reads `starting` until its first check
-passes, and prints `healthy`. If it prints logs instead, look for the startup
-line:
+   Verify that the app runs as a non-root user. Exercise the changed behaviour
+   where possible with disposable data or mocked integrations. Record which
+   checks require real configuration or data. Collect sanitized failure
+   evidence if needed and remove the disposable container and storage in
+   either case.
+4. When the change needs configured browser validation, start the candidate
+   image ID as `zdev-<app>-e2e-<id>` with the same disposable storage rules
+   at `/config` and a test URL reachable by the browser. Get the owner's
+   authorization before connecting real integrations or testing against live
+   data. Disposable `/config` storage does not isolate external resources.
+   Use isolated test integrations and test-only accounts and users, or obtain
+   specific authorization for the external writes the tests and background
+   jobs can make. Use a fresh browser profile or isolated context for
+   onboarding with test data and obtaining a test session, even on the live
+   hostname. For each disposable instance, verify its image ID and use its
+   `BASE_URL` in `.env.playwright`. Clear
+   `tests/playwright/.auth/storageState.json` and set `SESSION_COOKIE` in
+   `.env.playwright` to that instance's test session cookie,
+   even when reusing the URL. Clear any stale exported values for those
+   variables and check for concurrent use before changing shared auth files.
+   Run the relevant Playwright tests or the full `npm run test:e2e` suite as
+   needed. Record any validation gaps and follow
+   [disposable test cleanup](#disposable-test-cleanup), including on failure.
+5. After the required checks pass, deploy the exact tested image ID to the
+   live app by default for implementation work. Stop at validation when the
+   owner requests it. A failed or incomplete required check stops the flow
+   before replacement.
 
-```text
-Hubarr listening on http://0.0.0.0:9301
-```
+### Disposable test cleanup
 
-Then open `http://localhost:9301` and smoke-test:
+Clean up after validation and check for leftovers at PR close or cancellation.
+Read the task section in the Docker host checkout's `LOCAL.md` even if a
+different chat created the resources. Check exact names or IDs and concurrent
+use before removing anything. Before removing a configured E2E instance,
+confirm new scheduled and manual integration runs are prevented throughout
+the active-job check and container removal. Then check its active integration
+jobs and wait for them to finish. If prevention cannot be confirmed, job
+status cannot be verified, or a bounded wait expires, retain the instance,
+its storage, and the task record, and report the deferred cleanup.
+Otherwise, remove only the task's smoke and E2E containers with
+`docker rm -fv`, then remove its recorded disposable volumes if unused.
+Close only the task's recorded SSH forwards. At closeout, check
+task candidate tags against the live and rollback image IDs. Remove only
+unused task tags that are no longer needed for a pending deployment or review.
+Preserve resources whose ownership or use is unclear. A shared name prefix
+alone does not establish ownership. Keep the task record until cleanup is
+verified, including entries for any resources whose cleanup was deferred.
+Keep the separate `Live recovery` entry and its rollback tag according to
+[live replacement and verification](#live-replacement-and-verification).
 
-- Dashboard loads after authentication
-- Settings loads and the About tab reports version/build info
-- Users page lists discovered friends
-- A manual sync runs and appears in History
-- `/api/settings` returns `401` from an unauthenticated browser/session
-- `/images/...` returns `401` without a valid session
+### Live replacement and verification
 
-This section needs Docker. See "Where You're Running" in `AGENTS.md` — where it
-is unavailable, say so rather than substituting a workspace check.
+Before stopping or removing the live container, write a separate
+`Live recovery` entry in the Docker host checkout's ignored `LOCAL.md`.
+Link it to the task and record the live name, prior and candidate image IDs,
+the `<app>:rollback-<id>` tag, and the deployment method. Record non-secret
+settings and reference existing secure sources for credentials.
+
+Before replacement, assess pending database migrations and whether the prior
+image can use the resulting schema. Record that assessment and the owner's
+data recovery policy in the recovery entry. If compatibility is unknown or
+the migration prevents image rollback, record how to identify a compatible
+backup and restore it, including any unverified steps or recovery gaps.
+Follow the owner's selected backup policy from local instructions. Report
+recovery gaps before replacement and obtain the owner's decision if no
+usable recovery path is established. Restoring data requires owner approval.
+
+- For a standalone deployment, inspect the current container privately with
+  `docker inspect`. Record the complete recreation settings or an equivalent
+  `docker run` command. Include environment overrides, user, entrypoint,
+  command, labels, healthcheck, mounts, port bindings, network attachments,
+  restart policy, extra hosts, logging, and any other applicable host settings.
+- For a Compose deployment, prepare a persistent deployment-local override
+  outside the Git checkout. Set the service image to the tested image's
+  unique local tag and set `pull_policy: never`. Clear any inherited
+  `build` section with `build: !reset null`. Verify the merged service uses
+  that tag with pulls and builds disabled and that the tag resolves to the
+  tested image ID. Record the tag, the override's absolute path, the complete
+  ordered file list with the override last, the project and service names,
+  working directory, active profiles, any environment file paths, and
+  runtime overrides.
+
+Before stopping live, verify the record and its secure sources can recreate
+the service. Apply the rollback tag to the recorded prior image and verify it
+resolves to that ID. Follow [disposable test cleanup](#disposable-test-cleanup)
+before replacing the live app. If configured E2E cleanup is deferred, preserve
+the instance and storage, report the reason, and wait for the owner's decision
+before live replacement.
+
+Before stopping live, inspect its startup and scheduled integration settings.
+Confirm the owner's authorization covers automatic external writes when the
+replacement starts. If it does not, prevent those runs before startup or
+obtain authorization first. Record the original settings and any planned
+temporary changes in the recovery entry before applying them. Confirm new
+scheduled and manual integration runs are prevented throughout the active-job
+check and container stop. Wait for active jobs to finish. If prevention
+cannot be confirmed, job status is unknown, or a bounded wait expires, report
+the gap and wait for the owner's decision before stopping live. Apply these
+steps to standalone and Compose deployments. Restore temporary settings
+after verification only when authorization covers the resulting job runs.
+If they cannot be restored, report the changed settings and their effect,
+keep them in the recovery entry, and wait for the owner's decision. Apply
+the same rule after a rollback.
+
+- For a standalone deployment, stop and remove the current live container
+  while preserving its data. Start the exact tested image under the original
+  live name with the recorded settings.
+- For a Compose deployment, use the recorded file list and project settings
+  to stop and remove the old service container while preserving its data.
+  Recreate only that service with pulls and builds disabled. Use the same
+  file list and project settings for subsequent operations.
+
+Verify the image ID, Docker health, HTTP health, and relevant app behaviour.
+If verification fails, report the failure and keep the prior image available.
+For an approved rollback with compatible live data, repeat the integration
+authorization and temporary-setting recording steps above. Before stopping
+a running failed replacement, confirm new scheduled and manual integration
+runs are prevented throughout the active-job check and container stop, then
+wait for active jobs to finish within a bounded time. If prevention cannot
+be confirmed, job status cannot be verified, or the wait expires, report the
+risk and obtain the owner's decision before proceeding. Stop and remove
+the failed replacement if it exists, preserving its data. Recreate the live
+container from the recorded rollback tag and settings through the same
+deployment method. For Compose, set the recorded persistent image override
+to the rollback tag and use the recorded file list and project settings to
+recreate the service. Repeat the health checks. Preserve the recovery entry,
+the settings it references, and the rollback tag during task closeout.
+Remove the entry and tag only after the owner confirms fallback is no longer
+needed and the tag is verified unused.
+
+Check configured behaviour separately from disposable startup. When relevant,
+verify that the dashboard and Settings load, that unauthenticated routes return
+the expected status, and that the changed feature works with the live
+configuration. Run a real sync or another operation that changes live data only
+when authorized. Report the limits of testing against existing data and real
+integrations.
