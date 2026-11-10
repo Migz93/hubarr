@@ -176,6 +176,7 @@ instance.
 | `tests/server/logs-endpoint.test.ts` | Log-viewer fallback honors both the configured log level and the requested UI filter |
 | `tests/server/plex-reorder.test.ts` | Plex collection reordering progressively retries until the requested order converges |
 | `tests/server/plex-user-discovery.test.ts` | Plex user discovery includes shared users resolved through the Community API and falls back to friends when the broader account list is unavailable |
+| `tests/server/rate-limit-logging.test.ts` | Pipelined warning races, one warning per client/window, independent clients and window reset |
 | `tests/server/rate-limit.test.ts` | Global and sign-in rate limiters: exempt paths aren't counted, the request past each limit gets a JSON 429, only failed sign-ins count, and one warning is logged per client per window |
 | `tests/server/seerr-work.test.ts` | Seerr work only counts linked users with automatic requests enabled |
 | `tests/server/watchlist-grouping.test.ts` | Watchlist grouping merges compatible GUID chains once and orders paginated results deterministically |
