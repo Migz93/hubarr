@@ -33,8 +33,10 @@ ARG BUILD_CHANNEL=custom
 ARG COMMIT_SHA=local
 ENV BUILD_CHANNEL=$BUILD_CHANNEL
 ENV COMMIT_SHA=$COMMIT_SHA
+# Require Debian's zlib fix for CVE-2026-85091 and CVE-2026-76844.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends fontconfig fonts-dejavu-core gosu python3 \
+  && apt-get install -y --no-install-recommends fontconfig fonts-dejavu-core gosu python3 zlib1g \
+  && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' zlib1g)" ge "1:1.3.dfsg+really1.3.1-1+deb13u1" \
   && rm -rf /var/lib/apt/lists/*
 # The production image starts Node directly. Remove build-time package managers
 # to reduce the runtime attack surface; the Yarn directory includes its version.
