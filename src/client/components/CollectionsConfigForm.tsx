@@ -1,7 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiPatch } from "../lib/api";
 import type { CollectionSortOrder, PlexLibrary, VisibilityConfig } from "../../shared/types";
-import { Field, SaveBar, SectionCard, SelectInput, TextInput } from "./FormControls";
+import { Field as FormField, SaveBar, SectionCard, SelectInput, TextInput } from "./FormControls";
+import { SettingsField, SettingsGroup } from "./SettingsControls";
+
+function VisibilityGroup({ settingsLayout, children }: { settingsLayout: boolean; children: React.ReactNode }) {
+  const label = "Default Hub Visibility";
+  const hint = "Select which Plex locations this collection appears in. Multiple allowed.";
+  return settingsLayout ? (
+    <SettingsGroup label={label} hint={hint}>{children}</SettingsGroup>
+  ) : (
+    <div className="pt-2 border-t border-outline-variant/10">
+      <div className="text-sm font-medium text-on-surface mb-1">{label}</div>
+      <div className="text-xs text-on-surface-variant mb-3">{hint}</div>
+      {children}
+    </div>
+  );
+}
 
 interface CollectionsFormValue {
   collectionNamePattern: string;
@@ -16,6 +31,7 @@ export default function CollectionsConfigForm({
   librariesUrl,
   onSaved,
   onBack,
+  settingsLayout = false,
   saveLabel = "Save Collections"
 }: {
   initialValue: CollectionsFormValue;
@@ -23,7 +39,9 @@ export default function CollectionsConfigForm({
   onSaved?: (value: CollectionsFormValue) => void | Promise<void>;
   onBack?: () => void;
   saveLabel?: string;
+  settingsLayout?: boolean;
 }) {
+  const Field = settingsLayout ? SettingsField : FormField;
   const [form, setForm] = useState<CollectionsFormValue>(initialValue);
   const [libraries, setLibraries] = useState<PlexLibrary[]>([]);
   const [loadingLibraries, setLoadingLibraries] = useState(true);
@@ -86,6 +104,7 @@ export default function CollectionsConfigForm({
         title="Collections"
         description="Choose the default collection settings for your Hubarr instance."
         wide
+        settingsLayout={settingsLayout}
       >
         <Field
           label="Collection naming pattern"
@@ -115,7 +134,7 @@ export default function CollectionsConfigForm({
           </SelectInput>
         </Field>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className={settingsLayout ? "grid gap-5" : "grid grid-cols-1 md:grid-cols-2 gap-4"}>
           <Field label="Movie Library To Create Collection In">
             <SelectInput
               value={form.movieLibraryId ?? ""}
@@ -152,9 +171,7 @@ export default function CollectionsConfigForm({
           <div className="text-xs text-on-surface-variant">Loading Plex libraries...</div>
         )}
 
-        <div className="pt-2 border-t border-outline-variant/10">
-          <div className="text-sm font-medium text-on-surface mb-1">Default Hub Visibility</div>
-          <div className="text-xs text-on-surface-variant mb-3">Select which Plex locations this collection appears in. Multiple allowed.</div>
+        <VisibilityGroup settingsLayout={settingsLayout}>
           {/* Computed-key toggle: each button flips its own boolean in visibilityDefaults */}
           <div className="grid grid-cols-3 w-fit gap-2" role="group" aria-label="Default Hub Visibility options">
             {(
@@ -194,7 +211,7 @@ export default function CollectionsConfigForm({
               </button>
             ))}
           </div>
-        </div>
+        </VisibilityGroup>
 
         <SaveBar
           saving={saving}

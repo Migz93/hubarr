@@ -65,4 +65,6 @@ All text/background pairings in active use pass WCAG AA (4.5:1 for normal text).
 - Never use `primary` or `primary-dim` as a text colour on dark backgrounds — neither passes AA at small text sizes.
 - Use `on-surface` (not raw `white`) for text on coloured backgrounds to keep the off-white tone consistent.
 - Status colours (`success`, `warning`, `error`) are for text and subtle tinted backgrounds (`/10` opacity) only — do not use them as solid button backgrounds.
-- `outline-variant` is a border colour only, not used for text.
+- `outline-variant` is used for borders and the inactive toggle track fill, not for text.
+
+Settings rows use `background-container-high` on hover above the card’s `background-container`. Disabled controls suppress the row highlight.

@@ -18,3 +18,7 @@ coverage
 .devcontainer
 LOCAL.md
 plans
+
+tests/playwright/.auth
+tests/playwright-report
+tests/test-results

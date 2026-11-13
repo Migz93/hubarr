@@ -23,10 +23,15 @@ hubarr` reports `healthy` once the server is serving requests.
 
 ## Running It
 
-Build, run, and rebuild commands live in `AGENTS.md` under "Rebuilding The
-Container After Code Changes", alongside the container and environment
-conventions they have to stay consistent with. This file covers what the
-deployment *is*, not how to drive it.
+See [Manual Smoke Test](../TESTING.md#manual-smoke-test) for candidate builds
+and disposable checks, and [Live replacement and verification](../TESTING.md#live-replacement-and-verification)
+for deployment and rollback. [AGENTS.md](../AGENTS.md) covers the host and
+container conventions.
+
+An explicit request to update or replace the live image authorizes stopping
+and recreating the container with its existing startup and scheduled jobs.
+Proceed without separate confirmation about manual jobs or schedule changes.
+An idle window is not required; running jobs may be interrupted.
 
 ## Persistent Data
 
